@@ -1,0 +1,21 @@
+# python
+server/.venv/
+server/**/__pycache__/
+server/weights/*.pth
+server/weights/cvpr2024/*
+!server/weights/cvpr2024/README.md
+server/*.db
+server/data/
+server/.env
+# flutter
+**/.dart_tool/
+**/build/
+**/.flutter-plugins*
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/android/.gradle/
+**/android/local.properties
+**/*.iml
+.claude/ui-shots/
+.DS_Store
