@@ -36,6 +36,7 @@ def init_db() -> None:
 
 _ADDED_COLUMNS = {
     "project": {"preset": "VARCHAR NOT NULL DEFAULT 'balanced'", "policy_overrides": "VARCHAR NOT NULL DEFAULT '{}'"},
+    "subject": {"expires_at": "DATETIME"},
     "verifysession": {"purpose": "VARCHAR NOT NULL DEFAULT ''"},
     "verification": {"purpose": "VARCHAR NOT NULL DEFAULT ''"},
 }

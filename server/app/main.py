@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -13,6 +15,7 @@ from .policy import PRESETS, PolicyScopeMiddleware
 from .routers import debug, policy, projects, sessions, subjects, verifications
 from .services.antispoof import get_antispoof
 from .services.face import get_face_engine
+from .services.retention import retention_loop
 
 log = logging.getLogger("lumiface")
 
@@ -35,7 +38,12 @@ async def lifespan(app: FastAPI):
     bootstrap_project()
     get_face_engine()
     get_antispoof()
+    purger = asyncio.create_task(retention_loop()) if get_settings().retention_interval_seconds > 0 else None
     yield
+    if purger:
+        purger.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await purger
 
 
 def create_app() -> FastAPI:

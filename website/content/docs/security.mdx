@@ -36,5 +36,19 @@ Lumiface is not certified liveness (no ISO 30107-3 evaluation). It is a layered 
 - One project per app and per environment, so `relaxed` on a developer laptop never applies to production.
 - Set `ADMIN_API_KEY` only where project management runs; rotate keys with `POST /v1/projects/{id}/rotate-key`.
 - Leave `DEBUG=0` and `STORE_FRAMES=0` in production; both keep or return more than the verdict.
-- Embeddings are biometric data: keep the database encrypted at rest and delete subjects when people leave (`DELETE /v1/subjects/{id}`).
+- Embeddings are biometric data: keep the database encrypted at rest and delete subjects when people leave (`DELETE /v1/subjects/{id}`) or give them an expiry (see below).
 - The InsightFace `buffalo_l` weights are non-commercial research only.
+
+## Retention
+
+Nothing biometric has to live forever on the server:
+
+- **Subjects** carry an optional `expires_at`. `POST /v1/subjects` takes `ttl_seconds`; when omitted the project policy's
+  `subject_ttl_seconds` applies (`0` keeps the subject until `DELETE`). One-shot flows such as KYC against an ID photo
+  can enrol with a TTL of minutes; attendance keeps `0` and deletes on offboarding.
+- **Sessions** are single use and expire after `session_ttl_seconds`; the row stays `SESSION_PURGE_GRACE_SECONDS`
+  (default one hour) so a late client still sees `SESSION_EXPIRED`.
+- A **purge loop** runs every `RETENTION_INTERVAL_SECONDS` (default 300, `0` disables) and deletes expired subjects and
+  spent sessions. An expired subject is already invisible to the API before the purge reaches it.
+- **Verifications** are the audit log and are kept; the purge only clears their link to a deleted embedding
+  (`subject_id`) while `subject_external_id` and the scores remain.

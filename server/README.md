@@ -42,7 +42,7 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 | POST | `/v1/projects/{id}/rotate-key` | | admin |
 | DELETE | `/v1/projects/{id}` | | admin |
 | GET/PUT/DELETE | `/v1/policy` | `{preset?, overrides?, merge?}` | project policy; `/presets`, `/schema` |
-| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace` | enrol; 422 with `reason_code` if rejected |
+| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` | enrol; 422 with `reason_code` if rejected; `ttl_seconds` omitted = policy `subject_ttl_seconds`, 0 = keep |
 | GET | `/v1/subjects`, `/v1/subjects/{id}` | | |
 | DELETE | `/v1/subjects/{external_id}` | | |
 | POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns challenges, `flash_colors`, `frame_kinds`, `client_config` |
@@ -70,6 +70,15 @@ Environment variables (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are the defaults
 **env → preset → overrides** per request (`app/policy.py`); services read `get_policy()`. Presets: `balanced`, `strict`,
 `relaxed`, `emulator`. `GET /v1/policy/schema` lists every field with its description; the docs site generates
 `policy-reference` from it.
+
+## Retention
+
+Embeddings are biometric data, so every subject can carry an expiry. `subject_ttl_seconds` (env, preset or project
+override) is the default for `POST /v1/subjects`; `ttl_seconds` on the request wins, `0` keeps the subject until
+`DELETE`. An expired subject answers `SUBJECT_NOT_FOUND` at once and can be enrolled again without `replace`.
+A background loop (`app/services/retention.py`, every `RETENTION_INTERVAL_SECONDS`, default 300; `0` disables) deletes
+expired subjects and sessions older than `SESSION_PURGE_GRACE_SECONDS` (default 3600). Verifications are kept as the
+audit log with their `subject_id` link cleared.
 
 ## Tests
 

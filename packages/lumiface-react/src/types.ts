@@ -98,6 +98,8 @@ export interface Subject {
   externalId: string;
   name: string;
   enrollSpoofScore: number;
+  /** ISO time when the server drops the embedding; null keeps it until deleted. */
+  expiresAt: string | null;
 }
 
 export interface VerifyResult {

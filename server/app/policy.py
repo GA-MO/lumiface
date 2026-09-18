@@ -74,6 +74,7 @@ class Policy(BaseModel):
     smile_min_lift: float = Field(description="Mouth corner lift vs the neutral frame (inter-ocular units).")
 
     session_ttl_seconds: int = Field(description="A session must be verified within this time.")
+    subject_ttl_seconds: int = Field(description="Default retention of an enrolled face in seconds; 0 keeps it until deleted.")
     challenge_count: int = Field(description="Challenges per session.")
     challenge_pool: str = Field(description="Comma separated pool: blink, turn_left, turn_right, smile, nod.")
     required_challenge: str = Field(description="Always included when in the pool; empty for none.")

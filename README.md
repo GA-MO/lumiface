@@ -107,7 +107,7 @@ The answer is the same from every client:
 
 | Step | Who | What happens |
 |---|---|---|
-| **Enrol** | `POST /v1/subjects` with a photo, or `FaceFlow.enroll` from the camera | One frontal face, anti-spoof checked, stored as a 512-d ArcFace embedding under `external_id`. A second photo with `replace` updates it. |
+| **Enrol** | `POST /v1/subjects` with a photo, or `FaceFlow.enroll` from the camera | One frontal face, anti-spoof checked, stored as a 512-d ArcFace embedding under `external_id`. A second photo with `replace` updates it; `ttl_seconds` (or the policy's `subject_ttl_seconds`) drops it again after a while, a purge loop deletes the row. |
 | **Session** | `POST /v1/sessions` (the SDK does this) | The server picks the challenges and flash colours, stamps a TTL and returns the project's client tunables. |
 | **Challenge** | on the device | Blink / turn / nod / smile with timing and parallax checks, then the flash; a frame is captured per step. |
 | **Verify** | `POST /v1/sessions/{id}/verify` with seven JPEGs | Timing → face → anti-spoof → pose and smile → flash → **match against `E001`** → consistency. The first failing check names the `reason_code`. |

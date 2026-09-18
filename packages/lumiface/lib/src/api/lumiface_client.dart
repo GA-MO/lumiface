@@ -54,11 +54,14 @@ class LumifaceClient {
     required List<int> photoJpeg,
     String name = '',
     bool replace = false,
+    /// Retention in seconds; null uses the policy's `subject_ttl_seconds`, 0 keeps until deleted.
+    int? ttlSeconds,
   }) async {
     final form = FormData.fromMap({
       'external_id': externalId,
       'name': name,
       'replace': replace.toString(),
+      if (ttlSeconds != null) 'ttl_seconds': ttlSeconds.toString(),
       'photo': MultipartFile.fromBytes(photoJpeg, filename: 'photo.jpg'),
     });
     final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form);

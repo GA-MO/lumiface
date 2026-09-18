@@ -205,16 +205,20 @@ class VerifyResult {
 }
 
 class Subject {
-  const Subject({required this.externalId, required this.name, required this.enrollSpoofScore});
+  const Subject({required this.externalId, required this.name, required this.enrollSpoofScore, this.expiresAt});
 
   final String externalId;
   final String name;
   final double enrollSpoofScore;
 
+  /// When the server drops the embedding; null keeps it until deleted.
+  final DateTime? expiresAt;
+
   factory Subject.fromJson(Map<String, dynamic> j) => Subject(
         externalId: j['external_id'] as String,
         name: (j['name'] as String?) ?? '',
         enrollSpoofScore: (j['enroll_spoof_score'] as num).toDouble(),
+        expiresAt: j['expires_at'] == null ? null : DateTime.parse(j['expires_at'] as String),
       );
 }
 

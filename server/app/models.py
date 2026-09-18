@@ -26,6 +26,11 @@ class Subject(SQLModel, table=True):
     embedding: bytes
     enroll_spoof_score: float = 0.0
     created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = Field(default=None, index=True)  # None keeps the subject until deleted
+
+    @property
+    def expired(self) -> bool:
+        return self.expires_at is not None and self.expires_at < utcnow()
 
 
 class VerifySession(SQLModel, table=True):

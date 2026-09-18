@@ -72,7 +72,7 @@ export class FakeClient extends LumifaceClient {
       const { LumifaceError } = await import("../src/types.ts");
       throw new LumifaceError("POSE_NOT_FRONTAL");
     }
-    return { externalId: options.externalId, name: options.name ?? "", enrollSpoofScore: 0.9 };
+    return { externalId: options.externalId, name: options.name ?? "", enrollSpoofScore: 0.9, expiresAt: null };
   }
 }
 

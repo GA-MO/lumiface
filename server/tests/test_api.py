@@ -206,3 +206,70 @@ def test_admin_creates_project_with_its_own_policy(client, person_crops):
     assert rotated != key
     assert client.get("/v1/subjects", headers=tenant).status_code == 401
     assert client.delete(f"/v1/projects/{created['id']}", headers=ADMIN).status_code == 204
+
+
+def _enrol(client, crop, external_id, **data):
+    return client.post("/v1/subjects", headers=HEADERS, data={"external_id": external_id, **data},
+                       files={"photo": ("a.jpg", crop, "image/jpeg")})
+
+
+def test_subject_ttl_expires_and_purges(client, person_crops):
+    from datetime import timedelta
+
+    from sqlmodel import Session, select
+
+    from app.db import get_engine
+    from app.models import Subject, Verification, VerifySession, utcnow
+    from app.services.retention import purge
+
+    assert _enrol(client, person_crops[0], "TMP", ttl_seconds="-1").status_code == 422
+    r = _enrol(client, person_crops[0], "TMP", ttl_seconds="3600")
+    assert r.status_code == 201, r.text
+    assert r.json()["expires_at"] is not None
+    _, r = _run_session(client, person_crops[0], subject_id="TMP")
+    assert r.status_code == 200 and r.json()["ok"], r.text
+    assert client.get("/v1/subjects/E001", headers=HEADERS).json()["expires_at"] is None  # policy default 0 keeps
+
+    # Back-date the expiry: the subject vanishes from the API before the purge runs.
+    with Session(get_engine()) as db:
+        row = db.exec(select(Subject).where(Subject.external_id == "TMP")).one()
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        db.add(row)
+        db.commit()
+    assert client.get("/v1/subjects/TMP", headers=HEADERS).status_code == 404
+    assert "TMP" not in [s["external_id"] for s in client.get("/v1/subjects", headers=HEADERS).json()]
+    _, r = _run_session(client, person_crops[0], subject_id="TMP")
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "SUBJECT_NOT_FOUND"
+    # Re-enrolling an expired id needs no replace flag.
+    assert _enrol(client, person_crops[0], "TMP").status_code == 201
+    assert client.get("/v1/subjects/TMP", headers=HEADERS).json()["expires_at"] is None
+
+    with Session(get_engine()) as db:
+        row = db.exec(select(Subject).where(Subject.external_id == "TMP")).one()
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        db.add(row)
+        db.commit()
+        before = len(db.exec(select(VerifySession)).all())
+        counts = purge(db, now=utcnow() + timedelta(days=1))
+        assert counts["subjects"] == 1 and counts["sessions"] == before
+        assert db.exec(select(Subject).where(Subject.external_id == "TMP")).first() is None
+        assert db.exec(select(Subject).where(Subject.external_id == "E001")).first() is not None
+        # The audit log survives without the link to the deleted embedding.
+        logged = db.exec(select(Verification).where(Verification.subject_external_id == "TMP")).all()
+        assert logged and all(v.subject_id is None for v in logged)
+    assert client.get("/v1/verifications", headers=HEADERS, params={"subject_id": "TMP"}).json()
+
+
+def test_subject_ttl_from_policy(client, person_crops):
+    r = client.put("/v1/policy", headers=HEADERS, json={"overrides": {"subject_ttl_seconds": 60}, "merge": True})
+    assert r.status_code == 200, r.text
+    assert r.json()["effective"]["subject_ttl_seconds"] == 60
+    try:
+        r = _enrol(client, person_crops[0], "POL")
+        assert r.status_code == 201 and r.json()["expires_at"] is not None
+        r = _enrol(client, person_crops[0], "POL2", ttl_seconds="0")
+        assert r.status_code == 201 and r.json()["expires_at"] is None
+    finally:
+        client.put("/v1/policy", headers=HEADERS, json={"overrides": {"subject_ttl_seconds": 0}, "merge": True})
+        client.delete("/v1/subjects/POL", headers=HEADERS)
+        client.delete("/v1/subjects/POL2", headers=HEADERS)

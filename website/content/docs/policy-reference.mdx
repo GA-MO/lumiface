@@ -38,6 +38,7 @@ The same names, upper-cased, are the environment variables that set the defaults
 | `smile_min_width_gain` | float | `1.08` | Mouth width gain vs the neutral frame. |
 | `smile_min_lift` | float | `0.04` | Mouth corner lift vs the neutral frame (inter-ocular units). |
 | `session_ttl_seconds` | int | `60` | A session must be verified within this time. |
+| `subject_ttl_seconds` | int | `0` | Default retention of an enrolled face in seconds; 0 keeps it until deleted. |
 | `challenge_count` | int | `2` | Challenges per session. |
 | `challenge_pool` | str | `"blink,turn_left,turn_right,smile,nod"` | Comma separated pool: blink, turn_left, turn_right, smile, nod. |
 | `required_challenge` | str | `"smile"` | Always included when in the pool; empty for none. |

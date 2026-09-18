@@ -36,6 +36,7 @@ function toSubject(j: Record<string, unknown>): Subject {
     externalId: j.external_id as string,
     name: (j.name as string) ?? "",
     enrollSpoofScore: j.enroll_spoof_score as number,
+    expiresAt: (j.expires_at as string | null | undefined) ?? null,
   };
 }
 
@@ -136,11 +137,19 @@ export class LumifaceClient {
     };
   }
 
-  async enroll(options: { externalId: string; photo: Blob; name?: string; replace?: boolean }): Promise<Subject> {
+  async enroll(options: {
+    externalId: string;
+    photo: Blob;
+    name?: string;
+    replace?: boolean;
+    /** Retention in seconds; undefined uses the policy's `subject_ttl_seconds`, 0 keeps until deleted. */
+    ttlSeconds?: number;
+  }): Promise<Subject> {
     const form = new FormData();
     form.set("external_id", options.externalId);
     form.set("name", options.name ?? "");
     form.set("replace", String(options.replace ?? false));
+    if (options.ttlSeconds !== undefined) form.set("ttl_seconds", String(options.ttlSeconds));
     form.set("photo", options.photo, "photo.jpg");
     const j = await this.json<Record<string, unknown>>("/v1/subjects", { method: "POST", body: form });
     return toSubject(j);

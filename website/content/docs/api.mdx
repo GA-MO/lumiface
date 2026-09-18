@@ -9,12 +9,17 @@ Base path `/v1`. Project endpoints authenticate with `X-API-Key`; admin endpoint
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` |
+| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` or `TTL_INVALID` |
 | `GET` | `/subjects` | | list |
 | `GET` | `/subjects/{external_id}` | | subject or 404 `SUBJECT_NOT_FOUND` |
 | `DELETE` | `/subjects/{external_id}` | | 204 |
 
-Subject: `{external_id, name, enroll_spoof_score, created_at}`.
+Subject: `{external_id, name, enroll_spoof_score, created_at, expires_at}`.
+
+`ttl_seconds` sets when the embedding is dropped; omitted it takes the policy's `subject_ttl_seconds`, `0` keeps the
+subject until `DELETE`. Past `expires_at` the subject answers `SUBJECT_NOT_FOUND` on every route and the same
+`external_id` can be enrolled again without `replace`; the server's retention loop deletes the row shortly after.
+See [security](/docs/security#retention).
 
 ## Sessions
 

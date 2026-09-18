@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     smile_min_lift: float = 0.04
 
     session_ttl_seconds: int = 60
+    subject_ttl_seconds: int = 0
+    retention_interval_seconds: int = 300
+    session_purge_grace_seconds: int = 3600
     challenge_count: int = 2
     challenge_pool: str = "blink,turn_left,turn_right,smile,nod"
     required_challenge: str = "smile"

@@ -73,6 +73,7 @@ class FakeApi extends LumifaceClient {
     required List<int> photoJpeg,
     String name = '',
     bool replace = false,
+    int? ttlSeconds,
   }) async {
     enrollCalls++;
     if (externalId == 'REJECT') throw LumifaceException('POSE_NOT_FRONTAL');
