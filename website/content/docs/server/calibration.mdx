@@ -52,6 +52,22 @@ Results on 2026-09-18:
 
 How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over the key frames** (neutral, the peak of each challenge, neutral again), so the per-session FRR is higher than the single-frame column (turned and nodding frames score lower). Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
 
+## Replaying stored sessions
+
+`STORE_FRAMES=1` keeps every frame of a session together with `session.json`: the plan, both clocks of every frame
+and event, the client, and the verdict. `scripts/replay_sessions.py` runs the pipeline over such folders again, so
+a change to a window, a threshold or the frame placement is checked against real sessions instead of asking someone
+back in front of the camera:
+
+```bash
+cd server && uv run python scripts/replay_sessions.py data/frames/1            # every stored session, verdict now vs then
+FLASH_MIN_RESPONSE=4 uv run python scripts/replay_sessions.py data/frames/1    # the same under another policy
+```
+
+Sort sessions you have labelled into `data/sessions/genuine/` and `data/sessions/attack/` (with the enrolled
+embedding as `data/sessions/subjects/<id>.npy`) and `tests/test_replay.py` turns them into a regression gate:
+genuine must pass, attack must be refused, under the balanced preset.
+
 ## STORE_FRAMES and DEBUG
 
 `STORE_FRAMES=1` keeps every streamed frame of a failed verification under `data/frames/<project>/<session_id>/` (named by arrival time, with `events.json` for the timeline); with `DEBUG=1` every verification is kept. The verdict's `details` — the server's windows, per-challenge readings, flash scores and key frames — are in the verification row's `details` column. `POST /v1/debug/score` scores a single photo.

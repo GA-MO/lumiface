@@ -18,7 +18,7 @@ from ..models import Project, Verification, VerifySession, utcnow
 from ..policy import ClientPolicy, get_policy
 from ..services.challenge import new_challenges
 from ..services.flash import new_flash_colors
-from ..services.stream import StreamEvent, StreamFrame, analyze_stream
+from ..services.stream import StreamEvent, StreamFrame, VerifyResult, analyze_stream
 from .subjects import find_subject
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -115,14 +115,25 @@ def get_session(session_id: str, project: Project = Depends(current_project), db
                          result=_verify_out(row) if row else None)
 
 
-def _store_frames(project_id: int, session_id: str, frames: list[StreamFrame], events: list[StreamEvent]) -> None:
-    """Calibration aid: the whole streamed session, named by the server, plus the event timeline."""
+def _store_frames(project_id: int, session_id: str, frames: list[StreamFrame], events: list[StreamEvent],
+                  challenges: list[str], flash_colors: list[str], subject_id: str | None,
+                  client_info: dict, result: VerifyResult) -> None:
+    """The whole streamed session as the server saw it, replayable by `scripts/replay_sessions.py`
+    against a changed pipeline without anyone in front of a camera again: every frame with both
+    clocks, the events, the plan, and the verdict this run produced."""
     d = Path(get_settings().frames_dir).resolve() / str(project_id) / session_id
     d.mkdir(parents=True, exist_ok=True)
     t0 = frames[0].recv_ms if frames else 0
+    names = []
     for i, f in enumerate(frames):
-        (d / f"{i:04d}_{f.recv_ms - t0:06d}.jpg").write_bytes(f.data)
-    (d / "events.json").write_text(json.dumps([{"name": e.name, "index": e.index, "t": e.recv_ms - t0} for e in events]))
+        names.append(f"{i:04d}_{f.recv_ms - t0:06d}.jpg")
+        (d / names[-1]).write_bytes(f.data)
+    (d / "session.json").write_text(json.dumps({
+        "session_id": session_id, "subject_id": subject_id, "challenges": challenges, "flash_colors": flash_colors,
+        "client": client_info, "verdict": {"ok": result.ok, "reason_code": result.reason_code},
+        "frames": [{"file": n, "recv_ms": f.recv_ms, "client_ms": f.client_ms} for n, f in zip(names, frames)],
+        "events": [{"name": e.name, "index": e.index, "recv_ms": e.recv_ms, "client_ms": e.client_ms} for e in events],
+    }, indent=1))
 
 
 class _StreamError(Exception):
@@ -231,7 +242,8 @@ async def stream_session(ws: WebSocket, session_id: str):
 
         result = await asyncio.to_thread(analyze_stream, frames, events, challenges, flash_colors, enrolled)
         if s.store_frames and (s.debug or not result.ok):
-            await asyncio.to_thread(_store_frames, project_id, session_id, frames, events)
+            await asyncio.to_thread(_store_frames, project_id, session_id, frames, events, challenges, flash_colors,
+                                    subject_id, client_info, result)
         t0 = frames[0].recv_ms if frames else 0
         with Session(get_engine()) as db:
             row = Verification(project_id=project_id, subject_id=subject_row_id, subject_external_id=subject_id,
