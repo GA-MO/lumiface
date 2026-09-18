@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..config import get_settings
+from ..policy import get_policy
 
 # iBUG 68-point indices
 _L_EYE_OUTER, _R_EYE_OUTER = 36, 45
@@ -44,7 +44,7 @@ def mouth_metrics(landmarks: np.ndarray | None) -> MouthMetrics | None:
 
 def smile_ok(neutral: MouthMetrics | None, smiling: MouthMetrics | None) -> tuple[bool, dict]:
     """True when the smile frame's mouth widened or its corners lifted enough vs the neutral frame."""
-    s = get_settings()
+    s = get_policy()
     if neutral is None or smiling is None:
         return True, {"skipped": "no landmarks"}
     gain = smiling.width / neutral.width if neutral.width > 1e-3 else 0.0

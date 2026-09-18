@@ -1,0 +1,40 @@
+{
+  "name": "facegate-website",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "react-router dev --port 3002",
+    "build": "bun scripts/generate-policy-reference.ts && react-router build",
+    "start": "bun --bun react-router-serve ./build/server/index.js",
+    "typecheck": "react-router typegen && tsc --noEmit",
+    "generate:policy": "bun scripts/generate-policy-reference.ts",
+    "build:static": "bun scripts/generate-policy-reference.ts && VITE_FACEGATE_STATIC=1 react-router build && bun scripts/assemble-static.ts"
+  },
+  "dependencies": {
+    "@react-router/node": "8.3.1",
+    "@react-router/serve": "8.3.1",
+    "fumadocs-core": "16.15.9",
+    "fumadocs-mdx": "15.4.0",
+    "fumadocs-ui": "16.15.9",
+    "isbot": "^5.2.2",
+    "lucide-react": "^0.563.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-router": "8.3.1",
+    "@facegate/react": "workspace:*",
+    "@mediapipe/tasks-vision": "^1.0.1"
+  },
+  "devDependencies": {
+    "@react-router/dev": "8.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/mdx": "^2.0.13",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.7.2",
+    "vite": "8.3.0"
+  }
+}

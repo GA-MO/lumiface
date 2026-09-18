@@ -1,0 +1,61 @@
+---
+title: Policy and presets
+description: Tune every threshold per project through the API. Presets are starting points; overrides are yours.
+---
+
+## Read
+
+```bash
+curl $SERVER/v1/policy -H "X-API-Key: $KEY"
+```
+
+```json
+{
+  "project": "default",
+  "preset": "balanced",
+  "overrides": {},
+  "effective": { "match_threshold": 0.45, "challenge_count": 2, "flash_enforce": true, "client": { "parallax_min_shift": 0.08, "...": "..." } }
+}
+```
+
+`effective` is what the next session will use: environment defaults, then the preset, then the overrides.
+
+## Change
+
+```bash
+# switch preset, keep overrides
+curl -X PUT $SERVER/v1/policy -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"preset": "strict"}'
+
+# merge overrides (default merge: true)
+curl -X PUT ... -d '{"overrides": {"match_threshold": 0.5, "client": {"challenge_timeout_ms": 8000}}}'
+
+# replace all overrides
+curl -X PUT ... -d '{"overrides": {"flash_enforce": false}, "merge": false}'
+
+# back to balanced with no overrides
+curl -X DELETE $SERVER/v1/policy -H "X-API-Key: $KEY"
+```
+
+Unknown fields and wrong types answer `422` with `reason_code: POLICY_INVALID` and the pydantic errors; an unknown preset answers `UNKNOWN_PRESET`. Changes apply to the next session; sessions already issued keep the flash colours and challenges they were given.
+
+`GET /v1/policy/presets` lists the presets with their overrides and fully resolved policies; `GET /v1/policy/schema` returns every field with type, default and description (the [policy reference](/docs/policy-reference) is generated from it).
+
+## Presets
+
+| Preset | When |
+|---|---|
+| `balanced` | The phone-calibrated defaults. Attendance check-in. |
+| `strict` | Match 0.55, spoof 0.60, CVPR 0.40, three challenges, commanded turn direction, flash correlation 0.7. Access control, KYC. |
+| `relaxed` | Match 0.40, lower floors, flash and smile record scores only, longer timeouts. Low-risk flows, poor lighting, laptops. |
+| `emulator` | Flash off, faces from 60 px, smaller minimum face width. Android emulator with a webcam, CI demos. |
+
+## How the app follows the policy
+
+Every session response carries `client_config`, the `client.*` fields. `FaceVerifyView` (Flutter) and `FacegateView` (React) apply it unless you pass an explicit `config`, so raising `client.challenge_timeout_ms` for a project takes effect on the next check-in without shipping an app update.
+
+## Which knobs matter
+
+- **False rejects of real people**: lower `match_threshold` (0.40), `spoof_hard_floor` (0.20), raise `client.challenge_timeout_ms`, `max_challenge_ms`. Check `details.smile` and `details.flash` with `DEBUG=1` before loosening `smile_*` and `flash_*`.
+- **Screen replay getting through**: keep `cvpr_enabled`, keep `flash_enforce`, raise `flash_min_correlation`.
+- **Masks**: `required_challenge=smile` with `smile_enforce` is the only gate; there is no passive detector for silicone.
+- **Emulators and webcams**: `flash_enforce=false` (the "screen" is a small window), `min_face_size=60`.

@@ -1,0 +1,66 @@
+---
+title: Custom UI
+description: Replace one part of the overlay, all of it, or skip the view and drive the headless controller with your own camera source.
+---
+
+## Replace one part
+
+Each builder gets the same `FaceVerifyScope`:
+
+```dart
+FaceVerifyView(
+  client: client,
+  subjectId: id,
+  promptBuilder: (context, scope) => Chip(label: Text(scope.message)),
+  progressBuilder: (context, scope) => StepDots(done: scope.state.challengeIndex, total: scope.state.challengeCount),
+  resultBuilder: (context, scope) => scope.state.phase == LivenessPhase.success
+      ? const SizedBox()
+      : TextButton(onPressed: () => Navigator.pop(context), child: Text(scope.strings.retry)),
+  onResult: done,
+)
+```
+
+`FaceVerifyScope` fields: `controller`, `state` (`LivenessState`), `signal` (latest `FaceSignal` or null), `strings`, `theme`, `flow`, `source`, and helpers `message`, `result`, `isDone`, `displayBox` (the face box flipped for a mirrored preview) and `cancel()`.
+
+## Replace the whole overlay
+
+```dart
+FaceVerifyView(
+  client: client,
+  subjectId: id,
+  overlayBuilder: (context, scope) => Stack(children: [
+    if (scope.displayBox != null) FaceBoxOutline(box: scope.displayBox!),
+    Align(alignment: Alignment.bottomCenter, child: MyPromptCard(scope)),
+  ]),
+  onResult: done,
+)
+```
+
+The camera preview and the flash colour stay underneath and on top respectively; `FaceGuide`, `FaceGuidePainter` and `FaceDebugBar` are exported for reuse inside your overlay. The example's `custom_ui_page.dart` draws a live box around the face, step dots and a result card this way.
+
+## Headless: the controller alone
+
+`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`) and `FrameCapturer` (JPEG bytes on demand), observe `state`, and call `start()`:
+
+```dart
+final source = createCameraFaceSource();           // ML Kit or MediaPipe for the platform
+await source.initialize();
+final c = FaceVerifyController(source: source, capturer: source, client: client, subjectId: id);
+c.state.addListener(() {
+  final s = c.state.value;
+  if (s.phase == LivenessPhase.flash) fillScreenWith(s.flashColor!);
+  if (s.isDone) handle(s.result!);
+});
+await source.startStream();
+await c.start();
+```
+
+`LivenessState`: `phase` (idle, starting, aligning, challenge, flash, uploading, success, failed), `hint` (noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill), `challenge`, `challengeIndex`, `challengeCount`, `flashColor`, `flashIndex`, `result`, plus `progress` (0..1) and `isDone`.
+
+The flash step **must** fill the whole screen with `flashColor` for at least `session.flashHoldMs`; the server measures the reflection on the cheeks.
+
+`FaceEnrollController` has the same shape for enrolment. Both are deterministic under test: timing comes from `FaceSignal.tsMs`, so the package tests drive them with synthetic signals and a fake client (`test/fakes.dart`).
+
+## Your own camera or detector
+
+Implement `CameraFaceSource` (signals, `captureJpeg`, `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`) and pass it through `sourceFactory`. The widget tests do this with a fake camera to run the whole overlay without a device.

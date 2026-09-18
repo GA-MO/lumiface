@@ -1,0 +1,43 @@
+---
+title: Server
+description: Deploy the FastAPI server with Docker or uv, configure it through the environment, keep the weights and the database.
+---
+
+## Docker
+
+```bash
+cd server
+cp .env.example .env            # BOOTSTRAP_API_KEY, ADMIN_API_KEY, defaults for the balanced preset
+docker compose up --build       # buffalo_l is downloaded into a volume on first start
+```
+
+The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet50.onnx` (convert it once, see [Get started](/docs/get-started)). `data/` holds the SQLite database and, with `STORE_FRAMES=1`, the frames of failed verifications for calibration.
+
+## Environment
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./data/facegate.db` | any SQLAlchemy URL, Postgres included |
+| `BOOTSTRAP_PROJECT_NAME` | `default` | project created on first start when the table is empty |
+| `BOOTSTRAP_API_KEY` | random | its API key (logged when generated) |
+| `BOOTSTRAP_PRESET` | `balanced` | its preset |
+| `ADMIN_API_KEY` | unset | enables `/v1/projects` (`X-Admin-Key`) |
+| `DEBUG` | `0` | mounts `/v1/debug/score` and returns `details` on verify |
+| `STORE_FRAMES` | `0` | keep uploaded frames of failed (or, with DEBUG, all) verifications |
+| `WEIGHTS_DIR` | `weights` | ONNX files |
+| `CVPR_ENABLED` | `1` | load the CVPR-2024 gate (can also be switched per project) |
+| every policy field | see reference | the defaults of the `balanced` preset |
+
+Policy fields in the environment (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are the server-wide defaults; per-project changes go through the [policy API](/docs/server/policy).
+
+## Database
+
+SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`).
+
+## Health and versions
+
+`GET /health` returns `{"ok": true, "presets": [...]}`. The OpenAPI document is at `/docs` (FastAPI) when the server runs.
+
+## Licences
+
+InsightFace `buffalo_l` weights are non-commercial research only. MiniFASNet weights are Apache-2.0, the CVPR-2024 model MIT, the rest MIT or Apache-2.0.

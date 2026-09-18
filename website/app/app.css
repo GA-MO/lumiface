@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/lib/default-colors.css";
+@import "fumadocs-ui/css/preset.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --color-brand: #0d9488;
+  --color-brand-dark: #115e59;
+  --font-display: "Manrope", "Manrope Fallback", ui-sans-serif, system-ui, sans-serif;
+}
+
+@font-face {
+  font-family: "Manrope Fallback";
+  src: local("Arial"), local("Helvetica Neue");
+  size-adjust: 104%;
+  ascent-override: 92%;
+  descent-override: 24%;
+}
+
+:root {
+  --color-fd-primary: #0d9488;
+}
+
+.dark {
+  --color-fd-primary: #2dd4bf;
+}
+
+.font-display {
+  font-family: var(--font-display);
+}

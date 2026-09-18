@@ -1,0 +1,45 @@
+---
+title: Reason codes
+description: Every code a verification, an enrolment or the SDK can end with, who raises it, and what the user should do.
+---
+
+## Verify pipeline (server)
+
+| Code | Meaning | Usual fix |
+|---|---|---|
+| `OK` | passed | |
+| `FRAME_COUNT` | number of files differs from `meta.frames` | client bug |
+| `FRAME_KINDS` | kinds or order differ from the session's `frame_kinds` | client bug |
+| `TIMING_ORDER` | timestamps not increasing | client bug |
+| `TIMING_TOO_FAST` | whole session under `min_session_ms` or a challenge under `min_challenge_ms` | scripted upload |
+| `TIMING_TOO_SLOW` | over the TTL or a challenge over `max_challenge_ms` | retry |
+| `TIMING_DURATIONS` | `challenge_durations_ms` length differs from the challenges | client bug |
+| `NO_FACE` | no face in a frame | lighting, framing |
+| `MULTIPLE_FACES` | more than one comparable face | one person in frame |
+| `FACE_TOO_SMALL` | face box under `min_face_size` | move closer |
+| `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
+| `POSE_MISMATCH` | turn or nod frame does not show the pose | perform the challenge |
+| `EXPRESSION_MISMATCH` | server could not see the smile | smile wider |
+| `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
+| `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
+| `INCONSISTENT` | frames not the same person | one person for the whole session |
+
+## Enrolment (server)
+
+`NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL`, `SPOOF`, `SUBJECT_EXISTS`.
+
+## HTTP level
+
+`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `SUBJECT_MISMATCH`, `SUBJECT_NOT_FOUND`, `META_INVALID`, `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, and `HTTP_<status>` when the server answered without a code.
+
+## SDK (device)
+
+| Code | Meaning |
+|---|---|
+| `TIMEOUT` | a challenge ran past `challenge_timeout_ms`, or the session TTL passed |
+| `FACE_LOST` | no face for longer than `face_lost_grace_ms` |
+| `CANCELLED` | `cancel()` was called |
+| `NETWORK_ERROR` | session or verify request failed |
+| `CAPTURE_ERROR` | the camera could not deliver a frame |
+
+Both SDKs map every code to a user-facing line in `LivenessStrings` (en, th); unknown codes are shown as is.

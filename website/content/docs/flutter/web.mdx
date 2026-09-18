@@ -1,0 +1,38 @@
+---
+title: Flutter web
+description: The same package on Chrome and Safari through MediaPipe FaceLandmarker; what changes and what to watch.
+---
+
+`flutter build web` works out of the box. On the web the package uses `MediaPipeCameraSource`:
+
+- `getUserMedia` opens the front camera at 1280×720 and shows it mirrored.
+- A small ES module in the package assets (`assets/facegate_mediapipe.js`) imports `@mediapipe/tasks-vision@1.0.1` from jsDelivr and the `face_landmarker` model from Google's CDN, and returns one JSON signal per frame.
+- Blendshapes give eye-open (`1 - eyeBlink`) and smile probabilities; the facial transformation matrix gives yaw and pitch; the nose tip and eye centres give the parallax. The output is the same `FaceSignal` the ML Kit source produces, so the controller and the thresholds are unchanged.
+- Frames are captured by drawing the video onto a canvas (JPEG quality 0.9).
+
+## Self-hosting the model
+
+Pass URLs when you construct the source yourself:
+
+```dart
+FaceVerifyView(
+  client: client,
+  sourceFactory: () => MediaPipeCameraSource(
+    tasksVisionUrl: '/vendor/tasks-vision',   // folder with vision_bundle.mjs and wasm/
+    modelUrl: '/vendor/face_landmarker.task',
+  ),
+  ...
+)
+```
+
+Serve the wasm folder with the right MIME types. No COOP/COEP headers are needed for the default (non-threaded) build.
+
+## Things that differ from a phone
+
+- **Flash response is lower.** A laptop screen lights the face less than a phone held close: a MacBook in a bright room measured response 2.05 against the default minimum of 2.0. Use the `relaxed` preset while developing on a laptop, or lower `flash_min_response` for a web-only project.
+- **The guide relates to the camera frame, not the viewport.** A landscape webcam cropped into a portrait box hides its sides; the user should sit centred in front of the camera.
+- **Exposure lock is unavailable** in the browser; the settle window after the flash still keeps tinted frames out of `neutral_end`.
+- **Yaw sign.** If a turn to the user's left reads as negative yaw on some camera, construct `MediaPipeCameraSource(yawSign: -1)`.
+- The camera needs `https` or `localhost`.
+
+Verified on Chrome desktop with the Mac webcam: alignment, blink, smile, three flash colours and upload all pass with the relaxed preset (liveness only, no subject).

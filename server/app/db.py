@@ -33,8 +33,12 @@ def init_db() -> None:
     _add_missing_columns(engine)
 
 
-# Columns added after the first release; SQLite has no migrations here.
-_ADDED_COLUMNS = {"checkinsession": {"flash_colors": "VARCHAR NOT NULL DEFAULT ''"}}
+
+_ADDED_COLUMNS = {
+    "project": {"preset": "VARCHAR NOT NULL DEFAULT 'balanced'", "policy_overrides": "VARCHAR NOT NULL DEFAULT '{}'"},
+    "verifysession": {"purpose": "VARCHAR NOT NULL DEFAULT ''"},
+    "verification": {"purpose": "VARCHAR NOT NULL DEFAULT ''"},
+}
 
 
 def _add_missing_columns(engine) -> None:

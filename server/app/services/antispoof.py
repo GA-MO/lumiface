@@ -18,6 +18,7 @@ import numpy as np
 import onnxruntime as ort
 
 from ..config import get_settings
+from ..policy import get_policy
 
 MODELS = (("minifasnet_v2_2.7.onnx", 2.7), ("minifasnet_v1se_4.0.onnx", 4.0))
 
@@ -100,8 +101,8 @@ class AntiSpoof:
             logits = sess.run(None, {"input": crop})[0][0]
             per[name] = float(_softmax(logits)[1])
         cvpr = None
-        if self.cvpr is not None:
-            face = cv2.resize(face_crop_margin(img_bgr, bbox, get_settings().cvpr_crop_margin), (224, 224))
+        if self.cvpr is not None and get_policy().cvpr_enabled:
+            face = cv2.resize(face_crop_margin(img_bgr, bbox, get_policy().cvpr_crop_margin), (224, 224))
             rgb = cv2.cvtColor(face, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             inp = ((rgb - _MEAN) / _STD).transpose(2, 0, 1)[None]
             cvpr = float(self.cvpr.run(None, {"input": inp})[0][0][0])

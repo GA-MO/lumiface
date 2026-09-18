@@ -1,0 +1,17 @@
+{
+  "name": "facegate-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/facegate-react",
+    "website"
+  ],
+  "scripts": {
+    "dev:site": "bun run --cwd website dev",
+    "build:site": "bun run --cwd website build",
+    "build:pages": "bun run --cwd website build:static",
+    "dev:react": "bun run --cwd packages/facegate-react dev",
+    "test:react": "bun run --cwd packages/facegate-react test",
+    "typecheck": "bun run --cwd packages/facegate-react typecheck && bun run --cwd website typecheck"
+  }
+}

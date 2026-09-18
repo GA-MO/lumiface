@@ -1,0 +1,46 @@
+---
+title: Custom UI (React)
+description: Render props for single parts, a full custom overlay, or your own markup around useFacegate.
+---
+
+## Render props
+
+Every render prop receives a `FacegateScope`: the hook's handle (`state`, `signal`, `flow`, `controller`, `source`, `cancel`) plus `strings`, `theme`, `message`, `result`, `isDone` and `displayBox` (the face box flipped for the mirrored preview).
+
+```tsx
+<FacegateView
+  client={client}
+  subjectId={id}
+  renderPrompt={(s) => <h2 className="prompt">{s.message}</h2>}
+  renderProgress={(s) => <Dots done={s.state.challengeIndex} total={s.state.challengeCount} />}
+  renderResult={(s) => (s.state.phase === "failed" ? <button onClick={retry}>{s.strings.retry}</button> : null)}
+  onResult={done}
+/>
+```
+
+## Whole overlay
+
+```tsx
+<FacegateView
+  client={client}
+  subjectId={id}
+  renderOverlay={(s) => (
+    <div style={{ position: "absolute", inset: 0 }}>
+      {s.displayBox && <div style={boxStyle(s.displayBox)} />}
+      <div className="card">{s.message}</div>
+    </div>
+  )}
+  onResult={done}
+/>
+```
+
+`FaceGuide` and `FaceDebugBar` are exported for reuse. The flash layer is still drawn by the view unless you pass `renderFlash`.
+
+## Your own markup
+
+```tsx
+const fg = useFacegate({ client, purpose: "kiosk", onResult });
+const scope = { message: messageFor(TH, fg.state, fg.flow), progress: progressOf(fg.state) };
+```
+
+Mount the video with `ref={fg.mountVideo}` on a positioned container; it is mirrored for the front camera. Keep the flash rule: while `state.phase === "flash"`, fill the viewport with `#${state.flashColor}`.

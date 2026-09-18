@@ -1,0 +1,84 @@
+---
+title: Flutter package
+description: Install facegate, show FaceVerifyView, read the result. iOS, Android and web from one code base.
+---
+
+## Install
+
+```yaml
+dependencies:
+  facegate:
+    path: ../facegate/packages/facegate   # or a git url with a tag
+```
+
+- iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer.
+- Android: `minSdk` 23 or newer.
+- Web: nothing to add; the MediaPipe glue is loaded from the package assets. See [Web](/docs/flutter/web).
+
+## The view
+
+```dart
+FaceVerifyView(
+  client: FacegateClient(baseUrl: 'https://faces.example.com', apiKey: key),
+  subjectId: 'E001',          // omit for liveness only
+  purpose: 'checkin',
+  strings: LivenessStrings.th,
+  theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme),
+  onResult: (VerifyResult r) { ... },
+  onFlashChanged: (on) => ...,  // push brightness to max while the screen flashes
+)
+```
+
+It fills its parent, so put it in a `Scaffold` body or any sized box. The result arrives once through `onResult`; the default overlay then shows a Done or Try again button that pops the route.
+
+<TypeTable
+  type={{
+    client: { type: "FacegateClient", required: true, description: "Server URL plus project API key." },
+    flow: { type: "FaceFlow?", description: "verify, liveness or enroll. Defaults to verify with a subjectId, liveness without." },
+    subjectId: { type: "String?", description: "Who to match against, or the id to enrol." },
+    purpose: { type: "String", description: "Label stored with the verification." },
+    config: { type: "LivenessConfig?", description: "Overrides the project's client_config. Leave null to follow the policy." },
+    strings: { type: "LivenessStrings", description: "Every text. en and th are built in; copyWith changes single lines." },
+    theme: { type: "FaceVerifyTheme", description: "Colours, guide shape and geometry, progress bar, message style." },
+    facing: { type: "CameraFacing", description: "front (default) or back." },
+    showDebug: { type: "bool", description: "Draws the face box and a line of raw signals." },
+    autoStart: { type: "bool", description: "false hands you the controller through onController to start later." },
+    overlayBuilder: { type: "FaceScopeBuilder?", description: "Replaces the whole overlay; the camera stays underneath." },
+    promptBuilder: { type: "FaceScopeBuilder?", description: "Replaces the message line." },
+    progressBuilder: { type: "FaceScopeBuilder?", description: "Replaces the progress bar." },
+    resultBuilder: { type: "FaceScopeBuilder?", description: "Replaces the Done / Try again area." },
+    flashBuilder: { type: "FaceScopeBuilder?", description: "Draws the flash; must fill the screen with scope.state.flashColor." },
+    onResult: { type: "void Function(VerifyResult)", required: true, description: "Called once when the flow ends." },
+    onFlashChanged: { type: "void Function(bool)?", description: "true when the flash step starts, false when it ends." },
+    onStateChanged: { type: "void Function(LivenessState)?", description: "Every state change." },
+  }}
+/>
+
+## The result
+
+```dart
+class VerifyResult {
+  bool ok;
+  String mode;            // verify | liveness | enroll
+  String reasonCode;      // OK or a code from the reason-codes page
+  VerifyScores scores;    // match, spoof, consistency (null when not applicable)
+  int? verificationId;    // set on success for verify and liveness
+  Subject? subject;       // set on success for enroll
+}
+```
+
+## The client
+
+`FacegateClient` wraps the HTTP API: `createSession`, `verify`, `enroll`, `listSubjects`, `getSubject`, `deleteSubject`, `listVerifications`, `getPolicy`, `updatePolicy`, `resetPolicy`, `listPresets`. Errors other than a verify verdict throw `FacegateException(reasonCode, details)`.
+
+## Theme
+
+`FaceVerifyTheme` covers `backgroundColor`, `maskColor`, `guideColor` / `guideActiveColor` / `guideSuccessColor` / `guideFailedColor`, `guideShape` (`oval`, `roundedRect`, `none`), `guideWidthFraction`, `guideAspectRatio`, `guideCenterY`, `guideStrokeWidth`, `progressColor`, `progressBackgroundColor`, `messageStyle`, `messagePadding`, `showProgress`, `showButtons`. `FaceVerifyTheme.fromScheme(colorScheme)` derives the colours from your Material theme.
+
+## Strings
+
+`LivenessStrings.en` and `LivenessStrings.th`. `copyWith` replaces single lines and merges `reasons`, so a login screen can say "Welcome back" instead of "Verified" without redefining the rest:
+
+```dart
+strings: LivenessStrings.en.copyWith(success: 'Welcome back'),
+```

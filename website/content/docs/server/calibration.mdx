@@ -1,0 +1,40 @@
+---
+title: Calibration
+description: Measure your own people and your own attack material before trusting a preset.
+---
+
+Thresholds were calibrated on one team, a Galaxy S25+, an Android emulator with a Mac webcam, the AxonData sample set and a MacBook in Chrome. Your cameras, lighting and screens differ. Two scripts and one flag help.
+
+## scripts/calibrate.py
+
+```
+server/data/samples/
+  real/<subject_id>/*.jpg     genuine photos, several per person, including the enrolled one
+  fake/*.jpg                  prints, screens, whatever you want to reject
+```
+
+```bash
+cd server && uv run python scripts/calibrate.py data/samples
+```
+
+Prints the distribution of match cosine (genuine vs cross-person) and of the MiniFASNet and CVPR scores (real vs fake), so you can pick `match_threshold`, `spoof_threshold` and `cvpr_threshold` with a margin.
+
+## scripts/eval_videos.py
+
+Runs whole recorded sessions (folders of frames per attempt) through the verify pipeline and reports the reason codes. Used with the AxonData set (genuine, replay, cut-out, paper mask, latex, silicone).
+
+## STORE_FRAMES and DEBUG
+
+`STORE_FRAMES=1` keeps the frames of every failed verification under `data/frames/<session_id>/`; with `DEBUG=1` every verification is kept and the verify response includes `details`: per-frame spoof and CVPR scores, yaw and pitch, the smile metrics, the flash correlation, response and background ratio. `POST /v1/debug/score` scores a single photo.
+
+## Numbers from the reference devices
+
+| Signal | Genuine | Attack |
+|---|---|---|
+| Flash correlation (S25+) | 0.95–0.99 | replay on a phone screen 0.77–0.83 |
+| Flash response (S25+) | 11–19 | replay 6–11, emulator 0.3 |
+| Flash background ratio | 0.47–0.52 (phone), 0.04 (MacBook) | replay 1.15–2.31 |
+| Flash response (MacBook, Chrome) | 2.05 | |
+| Smile width gain | 1.14–1.24 | neutral 0.93–1.05 |
+| CVPR live prob, crop margin 0.3 | ≥ 0.30 | replay ≤ 0.015 |
+| Nose parallax shift at 25° | ≈ 0.11–0.15 | rotated flat photo 0.026 |

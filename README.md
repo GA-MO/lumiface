@@ -1,27 +1,28 @@
-# flutter-face-check-in
+<p align="center"><strong>Facegate</strong></p>
 
-Face check-in with liveness for internal use: a reusable Flutter package + a self-hosted Python server.
+<p align="center">
+  Self-hosted face verification with active liveness.<br>
+  One FastAPI server, a policy per project, and camera SDKs for Flutter (iOS, Android, web) and React.
+</p>
 
 ```
-server/                    FastAPI · InsightFace buffalo_l · MiniFASNet anti-spoof · SQLite   (see server/README.md)
-packages/face_checkin/     Flutter package: FaceCheckinScreen, LivenessController, CheckinApi
-packages/face_checkin/example/   demo app (settings · enroll · check-in · history)
-docs/plans/face-check-in.md      plan + status (use /go phase N, /handoff, /ship)
+server/                    FastAPI · InsightFace buffalo_l · MiniFASNet + CVPR-2024 anti-spoof · screen flash · SQLite/Postgres
+packages/facegate/         Flutter package: FaceVerifyView, FaceVerifyController, FacegateClient (ML Kit / MediaPipe)
+packages/facegate/example/ demo app: use cases · subjects · history · policy presets
+packages/facegate-react/   React SDK: FacegateView, useFacegate, headless controller, MediaPipe source, Vite demo
+website/                   docs site (fumadocs + React Router), builds to pages-site/ for GitHub Pages
+docs/plans/face-check-in.md plan + status
 ```
 
-## How it works
+## What it does
 
-1. App asks the server for a session; the server picks 2 random challenges (blink / smile / turn / nod).
-2. On device, ML Kit face detection drives the challenges with timing checks (a genuine blink lasts 40–600 ms,
-   the face must stay in frame, each challenge must take ≥ 300 ms) and captures 4 JPEG frames. A head turn also
-   needs real nose parallax from ML Kit landmarks (a rotated flat photo has none); if the server picked no turn,
-   the app adds one locally. After the challenges the screen flashes 3 server-chosen colours and one frame per
-   colour is uploaded; the server checks the face reflected that sequence (shadow mode until calibrated).
-3. Server re-checks timing, runs MiniFASNet anti-spoof on every frame, verifies head pose for turn/nod frames,
-   matches every frame against the enrolled ArcFace embedding, and requires the same identity across frames.
+1. The app asks the server for a session. The server picks two random challenges (a smile is always one), three flash colours and returns the project's client tunables.
+2. On the device, ML Kit (mobile) or MediaPipe (web) drives the challenges with timing checks and nose parallax, captures a frame per step, flashes the screen and uploads seven JPEGs.
+3. The server re-checks timing, runs MiniFASNet and the CVPR-2024 gate on every frame, verifies head pose and the smile, checks the flash reflection and its locality, matches every frame against the enrolled ArcFace embedding and requires the same identity across frames.
 
-Not certified liveness (no ISO 30107-3): stops printed photos and most screen replays, not real-time deepfakes
-or 3D masks. See `docs/plans/face-check-in.md` for the research summary and upgrade path (Azure/AWS liveness).
+Flows: **verify** (a subject id), **liveness** (no subject), **enroll** (camera enrolment). Every project has an API key and a **policy**: a preset (`balanced`, `strict`, `relaxed`, `emulator`) plus overrides for every threshold, changed through `PUT /v1/policy` without a redeploy or an app update.
+
+Not certified liveness (no ISO 30107-3): stops prints, screen replays, cut-outs and paper masks; latex and silicone masks only through the smile challenge; not real-time deepfakes injected as a camera.
 
 ## Run
 
@@ -30,44 +31,45 @@ or 3D masks. See `docs/plans/face-check-in.md` for the research summary and upgr
 cd server && uv sync && uv run python weights/download.py && cp .env.example .env
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 
-# app (real device; ML Kit + camera do not run in the iOS simulator)
-cd packages/face_checkin/example && flutter run -d <device>
-# Settings tab -> server URL http://<mac-lan-ip>:8000, api key from .env, then Employees -> enroll from gallery
+# Flutter example (phone, emulator or Chrome)
+cd packages/facegate/example && flutter run -d <device>       # or: flutter run -d chrome
+
+# React demo
+bun install && bun run dev:react                              # http://localhost:3010
+
+# docs
+bun run dev:site                                              # http://localhost:3002
 ```
 
-## Test without a phone: Android emulator + Mac webcam
+Android emulator with the Mac webcam: see `docs/plans/face-check-in.md` (AVD `face_test`, server at `http://10.0.2.2:8000`, preset `emulator`).
 
-```bash
-brew install openjdk@17 && brew install --cask android-commandlinetools
-export JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install platform-tools "platforms;android-36" "build-tools;36.0.0" \
-  emulator "system-images;android-35;google_apis;arm64-v8a"
-flutter config --android-sdk "$ANDROID_HOME" --jdk-dir "$JAVA_HOME" && yes | flutter doctor --android-licenses
-$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager create avd -n face_test -k "system-images;android-35;google_apis;arm64-v8a" -d pixel_6
-$ANDROID_HOME/emulator/emulator -webcam-list          # pick the built-in camera, e.g. webcam1
-$ANDROID_HOME/emulator/emulator -avd face_test -camera-front webcam1 -camera-back webcam1 &
-cd packages/face_checkin/example && flutter run -d emulator-5554
-```
-
-In the app set the server URL to `http://10.0.2.2:8000` (the host machine as seen from the emulator). The emulator
-crops the landscape webcam into a portrait frame, so sit centred and close to the Mac camera.
-Enrol yourself from the Mac: `imagesnap -w 1.5 /tmp/me.jpg` then POST it to `/v1/employees`.
-
-## Use in another project
-
-```yaml
-dependencies:
-  face_checkin:
-    path: ../flutter-face-check-in/packages/face_checkin   # or a git url
-```
+## Use it
 
 ```dart
-final api = CheckinApi(baseUrl: 'http://host:8000', apiKey: 'key');
-FaceCheckinScreen(api: api, employeeId: 'E001', strings: LivenessStrings.th, onResult: (r) { ... });
+final client = FacegateClient(baseUrl: 'http://host:8000', apiKey: 'key');
+FaceVerifyView(client: client, subjectId: 'E001', purpose: 'checkin', strings: LivenessStrings.th, onResult: (r) { ... });
 ```
 
-iOS: add `NSCameraUsageDescription`, platform ≥ 15.5. Android: minSdk ≥ 23. Web: not yet (phase 5).
+```tsx
+const client = new FacegateClient({ baseUrl: "http://host:8000", apiKey: "key" });
+<FacegateView client={client} subjectId="E001" purpose="login" onResult={(r) => ...} />
+```
+
+```bash
+curl -X PUT http://host:8000/v1/policy -H "X-API-Key: key" -H "Content-Type: application/json" -d '{"preset":"strict"}'
+```
+
+Full documentation, API and the generated policy reference: `website/content/docs` (or the published site).
+
+## Verify
+
+```bash
+cd server && uv run pytest -q                         # 53 tests
+cd packages/facegate && flutter analyze && flutter test   # 39 tests
+bun run typecheck && bun run test:react                # 21 tests
+bun run build:pages                                   # pages-site/
+```
 
 ## Licences
 
-InsightFace `buffalo_l` weights are **non-commercial research only**. MiniFASNet weights Apache-2.0. Everything else MIT/Apache.
+InsightFace `buffalo_l` weights are **non-commercial research only**. MiniFASNet weights Apache-2.0, the CVPR-2024 model MIT, everything else MIT/Apache.

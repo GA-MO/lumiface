@@ -1,0 +1,73 @@
+---
+title: HTTP API
+description: Every endpoint of the Facegate server with its headers, bodies and answers.
+---
+
+Base path `/v1`. Project endpoints authenticate with `X-API-Key`; admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
+
+## Subjects
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` |
+| `GET` | `/subjects` | | list |
+| `GET` | `/subjects/{external_id}` | | subject or 404 `SUBJECT_NOT_FOUND` |
+| `DELETE` | `/subjects/{external_id}` | | 204 |
+
+Subject: `{external_id, name, enroll_spoof_score, created_at}`.
+
+## Sessions
+
+`POST /sessions` with `{"subject_id": "E001" | null, "purpose": "checkin"}`:
+
+```json
+{
+  "session_id": "…", "mode": "verify", "purpose": "checkin",
+  "challenges": ["smile", "blink"], "flash_colors": ["ff0000", "00ff00", "0000ff"],
+  "frame_kinds": ["neutral_start", "challenge_0", "challenge_1", "flash_0", "flash_1", "flash_2", "neutral_end"],
+  "expires_at": "…Z", "ttl_seconds": 60, "flash_hold_ms": 450,
+  "client_config": { "align_hold_ms": 600, "...": "..." }
+}
+```
+
+`POST /sessions/{id}/verify`, multipart: `subject_id` (optional when the session was created with one, forbidden to differ), `meta` (JSON), `frames[]` in `frame_kinds` order. Single use.
+
+```json
+{"frames": [{"kind": "neutral_start", "ts_ms": 0}, {"kind": "challenge_0", "ts_ms": 900}, "..."],
+ "challenge_durations_ms": [420, 380], "client": {"platform": "ios"}}
+```
+
+Answer: `{ok, mode, reason_code, scores: {match, spoof, consistency}, verification_id, details}` (`details` only with `DEBUG=1`). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID`.
+
+## Verifications
+
+`GET /verifications?from&to&subject_id&purpose&ok&limit` → `[{id, subject_id, purpose, ok, reason_code, match_score, spoof_score, consistency_score, created_at}]`, newest first.
+
+## Policy
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| `GET` | `/policy` | | `{project, preset, overrides, effective}` |
+| `PUT` | `/policy` | `{preset?, overrides?, merge?}` | same; 422 `UNKNOWN_PRESET` / `POLICY_INVALID` |
+| `DELETE` | `/policy` | | reset to `balanced`, no overrides |
+| `GET` | `/policy/presets` | | `[{name, summary, overrides, effective}]` |
+| `GET` | `/policy/schema` | | `[{name, type, default, description}]` |
+
+## Projects (admin)
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| `POST` | `/projects` | `{name, preset?}` | 201 `{id, name, preset, api_key, ...}` |
+| `GET` | `/projects` | | list with counts, no keys |
+| `POST` | `/projects/{id}/rotate-key` | | project with the new `api_key` |
+| `DELETE` | `/projects/{id}` | | 204 |
+
+Without `ADMIN_API_KEY` these answer 403.
+
+## Debug
+
+`POST /debug/score` (multipart `photo`, `DEBUG=1` only): per face `bbox`, `det_score`, `yaw`, `pitch`, `roll`, `spoof_real`, `spoof_per_model`, `cvpr_live`, `embedding`.
+
+## Health
+
+`GET /health` → `{"ok": true, "presets": ["balanced", "strict", "relaxed", "emulator"]}`.

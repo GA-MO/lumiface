@@ -5,6 +5,7 @@ from pathlib import Path
 os.environ.update({
     "DATABASE_URL": f"sqlite:///{tempfile.mkdtemp()}/test.db",
     "BOOTSTRAP_API_KEY": "test-key",
+    "ADMIN_API_KEY": "admin-key",
     "MIN_FACE_SIZE": "60",
     "ENROLL_MAX_PITCH": "35",
     "CHALLENGE_POOL": "blink,smile",
@@ -23,6 +24,7 @@ from insightface.data import get_image  # noqa: E402
 from app.main import app  # noqa: E402
 
 HEADERS = {"X-API-Key": "test-key"}
+ADMIN = {"X-Admin-Key": "admin-key"}
 
 
 def _jpeg(img: np.ndarray) -> bytes:

@@ -1,0 +1,17 @@
+---
+title: Facegate documentation
+description: Self-hosted face verification with active liveness, a policy per project, and camera SDKs for Flutter and React.
+---
+
+Facegate has three parts:
+
+- **Server** (`server/`): FastAPI, InsightFace ArcFace for matching, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof, a screen-flash reflection check and a smile re-check. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy.
+- **Flutter package** (`packages/facegate`): `FaceVerifyView` plus the headless `FaceVerifyController`. ML Kit on iOS and Android, MediaPipe on the web.
+- **React SDK** (`packages/facegate-react`): `FacegateView`, `useFacegate` and the same headless controller, MediaPipe in the browser.
+
+Pick a door:
+
+- [Get started](/docs/get-started): run everything locally in ten minutes.
+- [Concepts](/docs/concepts): sessions, flows, frames, policies.
+- [Flutter](/docs/flutter), [React](/docs/react), [Server](/docs/server).
+- [Policy reference](/docs/policy-reference), [API](/docs/api), [Reason codes](/docs/reason-codes), [Security model](/docs/security).

@@ -1,0 +1,94 @@
+---
+title: React SDK
+description: FacegateView and useFacegate for React 18 and 19, MediaPipe in the browser, the same server and policy as Flutter.
+---
+
+## Install
+
+```json
+{
+  "dependencies": {
+    "@facegate/react": "github:your-org/facegate#path:packages/facegate-react",
+    "@mediapipe/tasks-vision": "^1.0.1"
+  }
+}
+```
+
+The package ships TypeScript source (`src/`), so Next.js needs `transpilePackages: ["@facegate/react"]`; Vite needs nothing. `@facegate/react/core` is the browser-free part (client, controller, detectors, strings) for tests and workers.
+
+## The view
+
+```tsx
+import { FacegateClient, FacegateView, TH } from "@facegate/react";
+
+const client = new FacegateClient({ baseUrl: "https://faces.example.com", apiKey: key });
+
+export function LoginWithFace({ userId }: { userId: string }) {
+  return (
+    <div style={{ height: "70vh" }}>
+      <FacegateView
+        client={client}
+        subjectId={userId}
+        purpose="login"
+        strings={TH}
+        theme={{ guideShape: "roundedRect", guideActive: "#2dd4bf" }}
+        onResult={(r) => (r.ok ? signIn(r.verificationId) : toast(r.reasonCode))}
+        onDone={() => close()}
+      />
+    </div>
+  );
+}
+```
+
+It fills its parent, so size the parent. Props mirror the Flutter view:
+
+<TypeTable
+  type={{
+    client: { type: "FacegateClient", required: true, description: "Server URL plus project API key." },
+    flow: { type: '"verify" | "liveness" | "enroll"', description: "Defaults to verify with a subjectId, liveness without." },
+    subjectId: { type: "string | null", description: "Who to match against, or the id to enrol." },
+    purpose: { type: "string", description: "Label stored with the verification." },
+    config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
+    strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
+    theme: { type: "Partial<FacegateTheme>", description: "Colours, guide shape and geometry, message style, progress." },
+    camera: { type: "MediaPipeSourceOptions", description: "facing, wasmUrl, modelUrl, delegate, yawSign, detectIntervalMs." },
+    showDebug: { type: "boolean", description: "Face box and a line of raw signals." },
+    autoStart: { type: "boolean", description: "false: call start() from useFacegate yourself." },
+    renderOverlay: { type: "(scope) => ReactNode", description: "Replaces the whole overlay." },
+    renderPrompt: { type: "(scope) => ReactNode", description: "Replaces the message line." },
+    renderProgress: { type: "(scope) => ReactNode", description: "Replaces the progress bar." },
+    renderResult: { type: "(scope) => ReactNode", description: "Replaces the Done / Try again button." },
+    renderFlash: { type: "(scope) => ReactNode", description: "Must fill the box with #{scope.state.flashColor}." },
+    onResult: { type: "(result) => void", required: true, description: "Once, when the flow ends." },
+    onFlashChanged: { type: "(flashing) => void", description: "Raise and restore brightness on kiosks that allow it." },
+    onDone: { type: "() => void", description: "The default button." },
+  }}
+/>
+
+## The hook
+
+`useFacegate(options)` runs the camera and the controller without any markup:
+
+```tsx
+const fg = useFacegate({ client, subjectId, purpose: "checkin" });
+return (
+  <div ref={fg.mountVideo} style={{ position: "relative", height: 480 }}>
+    <p>{messageFor(EN, fg.state, fg.flow)}</p>
+    {fg.state.phase === "flash" && <div style={{ position: "absolute", inset: 0, background: `#${fg.state.flashColor}` }} />}
+  </div>
+);
+```
+
+It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. The effect re-runs when `client`, `flow`, `subjectId` or `purpose` change.
+
+## Headless
+
+`FaceVerifyController` and `FaceEnrollController` take a `FaceSignalSource` (`subscribe(listener)`) and a `FrameCapturer` (`captureJpeg(): Promise<Blob>`), expose `state`, `subscribe`, `start`, `cancel`, `dispose`. `MediaPipeSource` implements both over `getUserMedia` + FaceLandmarker and owns a `<video>` you mount anywhere. The test suite (`test/controller.test.ts`) drives the controller with synthetic signals exactly like the Flutter tests.
+
+## Demo
+
+```bash
+bun install && bun run dev:react     # http://localhost:3010
+```
+
+Check-in, login (themed), liveness only, enrol from camera, custom overlay; server URL, key and subject id are remembered in `localStorage`.

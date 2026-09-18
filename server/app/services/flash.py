@@ -10,7 +10,7 @@ from itertools import permutations
 
 import numpy as np
 
-from ..config import get_settings
+from ..policy import get_policy
 
 # Saturated primaries/secondaries: maximal chroma difference, zero-mean after centring.
 PALETTE = {"FF0000": (1, 0, 0), "00FF00": (0, 1, 0), "0000FF": (0, 0, 1),
@@ -18,7 +18,7 @@ PALETTE = {"FF0000": (1, 0, 0), "00FF00": (0, 1, 0), "0000FF": (0, 0, 1),
 
 
 def new_flash_colors() -> list[str]:
-    n = min(get_settings().flash_count, len(PALETTE))
+    n = min(get_policy().flash_count, len(PALETTE))
     keys = list(PALETTE)
     picked: list[str] = []
     while len(picked) < n:
@@ -113,7 +113,7 @@ def score_flash(observed_rgb: list[np.ndarray], colors: list[str],
 
 
 def flash_passes(r: FlashResult) -> bool:
-    s = get_settings()
+    s = get_policy()
     if r.background_ratio is not None and r.background_ratio > s.flash_max_background_ratio:
         return False
     return r.correlation >= s.flash_min_correlation and r.response >= s.flash_min_response and r.order_ok

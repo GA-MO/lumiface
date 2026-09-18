@@ -1,0 +1,462 @@
+import type { FacegateClient } from "./client.ts";
+import { configFromJson, DEFAULT_CONFIG, type LivenessConfig } from "./config.ts";
+import { detectorFor, type ChallengeDetector } from "./detectors.ts";
+import {
+  clientError,
+  isPresent,
+  type CapturedFrame,
+  type Challenge,
+  type FaceFlow,
+  type FaceSession,
+  type FaceSignal,
+  type VerifyResult,
+} from "./types.ts";
+
+export type LivenessPhase = "idle" | "starting" | "aligning" | "challenge" | "flash" | "uploading" | "success" | "failed";
+
+export type AlignHint = "noFace" | "multipleFaces" | "tooFar" | "tooClose" | "notCentered" | "lookStraight" | "holdStill";
+
+export interface LivenessState {
+  phase: LivenessPhase;
+  hint: AlignHint | null;
+  challenge: Challenge | null;
+  challengeIndex: number;
+  challengeCount: number;
+  /** Hex colour (no '#') the UI must fill the screen with while `phase` is "flash". */
+  flashColor: string | null;
+  flashIndex: number;
+  result: VerifyResult | null;
+}
+
+export const IDLE_STATE: LivenessState = {
+  phase: "idle",
+  hint: null,
+  challenge: null,
+  challengeIndex: 0,
+  challengeCount: 0,
+  flashColor: null,
+  flashIndex: 0,
+  result: null,
+};
+
+export function isDone(s: LivenessState): boolean {
+  return s.phase === "success" || s.phase === "failed";
+}
+
+/** 0..1 for a progress bar, null while idle or failed. */
+export function progressOf(s: LivenessState): number | null {
+  switch (s.phase) {
+    case "aligning":
+      return 0;
+    case "challenge":
+      return s.challengeCount === 0 ? 0 : (s.challengeIndex + 0.5) / (s.challengeCount + 1);
+    case "flash":
+    case "uploading":
+      return s.challengeCount / (s.challengeCount + 1);
+    case "success":
+      return 1;
+    default:
+      return null;
+  }
+}
+
+/** Streams face observations from a camera. */
+export interface FaceSignalSource {
+  subscribe(listener: (s: FaceSignal) => void): () => void;
+}
+
+/** Grabs the most recent camera frame as a JPEG blob. */
+export interface FrameCapturer {
+  captureJpeg(): Promise<Blob>;
+}
+
+export function alignHint(s: FaceSignal, config: LivenessConfig): AlignHint | null {
+  if (s.faceCount === 0 || !s.box) return "noFace";
+  if (s.faceCount > 1) return "multipleFaces";
+  const b = s.box;
+  if (b.width < config.minFaceWidthFraction) return "tooFar";
+  if (b.width > config.maxFaceWidthFraction) return "tooClose";
+  const dx = Math.abs(b.left + b.width / 2 - 0.5);
+  const dy = Math.abs(b.top + b.height / 2 - 0.5);
+  if (dx > config.centerTolerance || dy > config.centerTolerance) return "notCentered";
+  if (Math.abs(s.yaw ?? 0) > config.neutralMaxYaw || Math.abs(s.pitch ?? 0) > config.neutralMaxPitch) {
+    return "lookStraight";
+  }
+  return null;
+}
+
+type Listener = (state: LivenessState) => void;
+
+/** Headless driver of one camera flow: observe `state`, feed it a source and a capturer. */
+export abstract class FaceFlowController {
+  private listeners = new Set<Listener>();
+  private current: LivenessState = IDLE_STATE;
+  protected disposed = false;
+
+  constructor(
+    readonly source: FaceSignalSource,
+    readonly capturer: FrameCapturer,
+  ) {}
+
+  abstract readonly flow: FaceFlow;
+  abstract get config(): LivenessConfig;
+  abstract start(): Promise<void>;
+  abstract cancel(): void;
+
+  get state(): LivenessState {
+    return this.current;
+  }
+
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  protected set(patch: Partial<LivenessState>) {
+    if (this.disposed) return;
+    this.current = { ...this.current, ...patch };
+    for (const l of this.listeners) l(this.current);
+  }
+
+  dispose() {
+    this.disposed = true;
+    this.listeners.clear();
+  }
+}
+
+export interface FaceVerifyOptions {
+  source: FaceSignalSource;
+  capturer: FrameCapturer;
+  client: FacegateClient;
+  subjectId?: string | null;
+  purpose?: string;
+  /** Overrides the project's client_config; omit to use what the server sends. */
+  config?: LivenessConfig;
+  clientInfo?: Record<string, unknown>;
+  random?: () => number;
+}
+
+/**
+ * Drives one verification: session -> align -> challenges -> screen flash -> upload.
+ * Without a subjectId the session only proves liveness. When the server picked no
+ * turn and `parallaxWhenNoTurn` is set, a client-only turn is appended (no frame,
+ * no duration reported). Timing comes from `FaceSignal.tsMs`, so the controller is
+ * deterministic under test; a wall-clock watchdog only guards a stalled stream.
+ */
+export class FaceVerifyController extends FaceFlowController {
+  readonly client: FacegateClient;
+  readonly subjectId: string | null;
+  readonly purpose: string;
+  readonly clientInfo: Record<string, unknown>;
+  private readonly explicitConfig: LivenessConfig | undefined;
+  private readonly random: () => number;
+  private currentConfig: LivenessConfig = DEFAULT_CONFIG;
+
+  session: FaceSession | null = null;
+  private plan: Challenge[] = [];
+  private unsubscribe: (() => void) | null = null;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private busy = false;
+  private frames: CapturedFrame[] = [];
+  private durations: number[] = [];
+  private alignedSince: number | null = null;
+  private challengeStartedAt: number | null = null;
+  private lastFaceSeenAt: number | null = null;
+  private settleUntil: number | null = null;
+  private flashStartedAt: number | null = null;
+  private flashDone = false;
+  private detector: ChallengeDetector | null = null;
+
+  constructor(options: FaceVerifyOptions) {
+    super(options.source, options.capturer);
+    this.client = options.client;
+    this.subjectId = options.subjectId ?? null;
+    this.purpose = options.purpose ?? "";
+    this.clientInfo = options.clientInfo ?? {};
+    this.explicitConfig = options.config;
+    this.random = options.random ?? Math.random;
+  }
+
+  get flow(): FaceFlow {
+    return this.subjectId ? "verify" : "liveness";
+  }
+
+  get config(): LivenessConfig {
+    return this.currentConfig;
+  }
+
+  async start(): Promise<void> {
+    if (this.state.phase !== "idle") return;
+    this.set({ phase: "starting" });
+    try {
+      this.session = await this.client.createSession({ subjectId: this.subjectId, purpose: this.purpose });
+    } catch (e) {
+      this.finish(clientError("NETWORK_ERROR", String(e)));
+      return;
+    }
+    if (this.disposed) return;
+    this.currentConfig = this.explicitConfig ?? configFromJson(this.session.clientConfig);
+    this.plan = this.planChallenges(this.session.challenges);
+    this.set({ ...IDLE_STATE, phase: "aligning", hint: "noFace", challengeCount: this.plan.length });
+    this.watchdog = setTimeout(() => this.finish(clientError("TIMEOUT")), this.session.ttlSeconds * 1000);
+    this.unsubscribe = this.source.subscribe((s) => this.onSignal(s));
+  }
+
+  cancel() {
+    this.finish(clientError("CANCELLED"));
+  }
+
+  override dispose() {
+    this.unsubscribe?.();
+    if (this.watchdog) clearTimeout(this.watchdog);
+    super.dispose();
+  }
+
+  private planChallenges(server: Challenge[]): Challenge[] {
+    const hasTurn = server.some((c) => c === "turn_left" || c === "turn_right");
+    if (hasTurn || !this.config.parallaxWhenNoTurn || this.config.parallaxMinShift <= 0) return server;
+    return [...server, this.random() < 0.5 ? "turn_left" : "turn_right"];
+  }
+
+  private isServerChallenge(i: number) {
+    return i < (this.session?.challenges.length ?? 0);
+  }
+
+  private finish(r: VerifyResult) {
+    if (this.disposed || isDone(this.state)) return;
+    this.unsubscribe?.();
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.set({ phase: r.ok ? "success" : "failed", result: r, hint: null });
+  }
+
+  private onSignal(s: FaceSignal) {
+    if (this.busy || this.disposed || isDone(this.state)) return;
+    if (isPresent(s)) this.lastFaceSeenAt = s.tsMs;
+    switch (this.state.phase) {
+      case "aligning":
+        this.align(s);
+        break;
+      case "challenge":
+        this.challenge(s);
+        break;
+      case "flash":
+        this.flash(s);
+        break;
+    }
+  }
+
+  private align(s: FaceSignal) {
+    const hint = alignHint(s, this.config);
+    if (hint) {
+      this.alignedSince = null;
+      this.set({ hint });
+      return;
+    }
+    this.alignedSince ??= s.tsMs;
+    this.set({ hint: "holdStill" });
+    if (s.tsMs - this.alignedSince >= this.config.alignHoldMs) {
+      this.guard(async () => {
+        await this.capture("neutral_start", s.tsMs);
+        this.startChallenge(0, s);
+      });
+    }
+  }
+
+  private startChallenge(i: number, s: FaceSignal) {
+    const c = this.plan[i];
+    this.detector = detectorFor(c, this.config);
+    this.detector.feed(s);
+    this.challengeStartedAt = s.tsMs;
+    this.settleUntil = null;
+    this.set({ phase: "challenge", challenge: c, challengeIndex: i, hint: null });
+  }
+
+  private faceLost(s: FaceSignal): boolean {
+    if (isPresent(s)) return false;
+    if (this.lastFaceSeenAt !== null && s.tsMs - this.lastFaceSeenAt > this.config.faceLostGraceMs) {
+      this.finish(clientError("FACE_LOST"));
+    }
+    return true;
+  }
+
+  private challenge(s: FaceSignal) {
+    if (this.faceLost(s)) return;
+    if (s.faceCount > 1) return;
+    if (s.tsMs - (this.challengeStartedAt ?? 0) > this.config.challengeTimeoutMs) {
+      this.finish(clientError("TIMEOUT"));
+      return;
+    }
+    if (this.settleUntil !== null) {
+      if (s.tsMs < this.settleUntil) return;
+      const next = this.state.challengeIndex + 1;
+      if (next < this.plan.length) {
+        this.startChallenge(next, s);
+        return;
+      }
+      const hint = alignHint(s, this.config);
+      if (hint) {
+        this.set({ hint });
+        return;
+      }
+      if (!this.flashDone && this.session!.flashColors.length > 0) {
+        this.startFlash(0, s.tsMs);
+        return;
+      }
+      this.guard(async () => {
+        await this.capture("neutral_end", s.tsMs);
+        await this.upload();
+      });
+      return;
+    }
+    if (this.detector!.feed(s)) {
+      const i = this.state.challengeIndex;
+      if (!this.isServerChallenge(i)) {
+        this.settleUntil = s.tsMs + this.config.settleAfterChallengeMs;
+        return;
+      }
+      this.durations.push(s.tsMs - (this.challengeStartedAt ?? 0));
+      this.guard(async () => {
+        await this.capture(`challenge_${i}`, s.tsMs);
+        this.settleUntil = s.tsMs + this.config.settleAfterChallengeMs;
+      });
+    }
+  }
+
+  private startFlash(i: number, tsMs: number) {
+    this.flashStartedAt = tsMs;
+    this.set({ phase: "flash", flashIndex: i, flashColor: this.session!.flashColors[i], hint: null });
+  }
+
+  private flash(s: FaceSignal) {
+    if (this.faceLost(s)) return;
+    if (s.tsMs - (this.flashStartedAt ?? 0) < this.session!.flashHoldMs) return;
+    const i = this.state.flashIndex;
+    this.guard(async () => {
+      await this.capture(`flash_${i}`, s.tsMs);
+      if (i + 1 < this.session!.flashColors.length) {
+        this.startFlash(i + 1, s.tsMs);
+        return;
+      }
+      this.flashDone = true;
+      this.challengeStartedAt = s.tsMs;
+      this.settleUntil = s.tsMs + this.config.settleAfterFlashMs;
+      this.set({ phase: "challenge", flashColor: null });
+    });
+  }
+
+  private async capture(kind: string, tsMs: number) {
+    const jpeg = await this.capturer.captureJpeg();
+    this.frames.push({ kind, tsMs, jpeg });
+  }
+
+  private async upload() {
+    this.unsubscribe?.();
+    this.set({ phase: "uploading", hint: null });
+    try {
+      const r = await this.client.verify({
+        sessionId: this.session!.id,
+        subjectId: this.subjectId,
+        frames: this.frames,
+        challengeDurationsMs: this.durations,
+        client: this.clientInfo,
+      });
+      this.finish(r);
+    } catch (e) {
+      this.finish(clientError("NETWORK_ERROR", String(e)));
+    }
+  }
+
+  private guard(body: () => Promise<void>) {
+    this.busy = true;
+    body()
+      .catch((e) => this.finish(clientError("CAPTURE_ERROR", String(e))))
+      .finally(() => {
+        this.busy = false;
+      });
+  }
+}
+
+export interface FaceEnrollOptions {
+  source: FaceSignalSource;
+  capturer: FrameCapturer;
+  client: FacegateClient;
+  externalId: string;
+  name?: string;
+  replace?: boolean;
+  config?: LivenessConfig;
+  timeoutMs?: number;
+}
+
+/** Aligns the face, captures one frontal frame and enrols it. */
+export class FaceEnrollController extends FaceFlowController {
+  readonly flow: FaceFlow = "enroll";
+  readonly config: LivenessConfig;
+  private readonly options: FaceEnrollOptions;
+  private unsubscribe: (() => void) | null = null;
+  private watchdog: ReturnType<typeof setTimeout> | null = null;
+  private busy = false;
+  private alignedSince: number | null = null;
+
+  constructor(options: FaceEnrollOptions) {
+    super(options.source, options.capturer);
+    this.options = options;
+    this.config = options.config ?? DEFAULT_CONFIG;
+  }
+
+  async start(): Promise<void> {
+    if (this.state.phase !== "idle") return;
+    this.set({ phase: "aligning", hint: "noFace" });
+    this.watchdog = setTimeout(() => this.finish(clientError("TIMEOUT")), this.options.timeoutMs ?? 60000);
+    this.unsubscribe = this.source.subscribe((s) => this.onSignal(s));
+  }
+
+  cancel() {
+    this.finish(clientError("CANCELLED"));
+  }
+
+  override dispose() {
+    this.unsubscribe?.();
+    if (this.watchdog) clearTimeout(this.watchdog);
+    super.dispose();
+  }
+
+  private onSignal(s: FaceSignal) {
+    if (this.busy || this.disposed || this.state.phase !== "aligning") return;
+    const hint = alignHint(s, this.config);
+    if (hint) {
+      this.alignedSince = null;
+      this.set({ hint });
+      return;
+    }
+    this.alignedSince ??= s.tsMs;
+    this.set({ hint: "holdStill" });
+    if (s.tsMs - this.alignedSince < this.config.alignHoldMs) return;
+    this.busy = true;
+    this.unsubscribe?.();
+    this.set({ phase: "uploading", hint: null });
+    void this.submit();
+  }
+
+  private async submit() {
+    try {
+      const photo = await this.capturer.captureJpeg();
+      const subject = await this.options.client.enroll({
+        externalId: this.options.externalId,
+        name: this.options.name,
+        replace: this.options.replace,
+        photo,
+      });
+      this.finish({ ...clientError("OK"), ok: true, mode: "enroll", subject });
+    } catch (e) {
+      const code = e instanceof Error && "reasonCode" in e ? (e as { reasonCode: string }).reasonCode : "NETWORK_ERROR";
+      this.finish({ ...clientError(code, String(e)), mode: "enroll" });
+    }
+  }
+
+  private finish(r: VerifyResult) {
+    if (this.disposed || isDone(this.state)) return;
+    this.unsubscribe?.();
+    if (this.watchdog) clearTimeout(this.watchdog);
+    this.set({ phase: r.ok ? "success" : "failed", result: r, hint: null });
+  }
+}

@@ -1,0 +1,40 @@
+---
+title: Security model
+description: What Facegate stops, what it does not, the numbers behind the thresholds, and how to deploy it safely.
+---
+
+Facegate is not certified liveness (no ISO 30107-3 evaluation). It is a layered defence that was measured against printed photos, phone and monitor replays, cut-outs, paper masks and latex or silicone masks.
+
+## Layers
+
+1. **Random challenges with timing** on the device: a blink must last 40–600 ms, each challenge at least 300 ms and at most 5 s, the whole session at least 1.5 s. A prerecorded video reacts at random times; a still photo cannot blink.
+2. **Nose parallax** during every session (a client-only turn is added when the server picked none): a real head shifts the nose against the eyes by about 0.11–0.15 at 25° of yaw; a rotated print or screen shifts it by 0.026.
+3. **Passive anti-spoof** on the server for every frame: MiniFASNet V2 + V1SE (needs a hard floor per frame and a mean), then the CVPR-2024 ResNet50 on a face crop with margin 0.3, which catches bezel-free screen replay (replay ≤ 0.015 against genuine ≥ 0.30).
+4. **Screen flash**: three random saturated colours chosen by the server, one frame each; the hue shift on the cheeks must correlate with the commanded sequence and beat every other permutation, and the surroundings may reflect at most 0.8× what the face does (real faces 0.47–0.52 on a phone, 0.04 on a laptop; a replayed phone screen 1.15–2.31 because the whole sheet reflects).
+5. **Smile re-check** from 68 landmarks: a rigid mask passes both passive gates and cannot smile. Mouth width gain ≥ 1.08 or corner lift ≥ 0.04 (genuine 1.14–1.24 and 0.068–0.073).
+6. **Identity**: every frame ≥ `match_threshold` against the enrolled embedding, and every pair of frames ≥ 0.60 (0.40 when one is mid turn or nod) against each other.
+
+## Measured results
+
+| Material | Result |
+|---|---|
+| Genuine (AxonData 14 sessions, team phones, emulator, MacBook) | pass |
+| Phone and monitor replay (12) | 0 pass |
+| Cut-outs (5), paper masks (5) | 0 pass |
+| Latex (3), silicone (3) masks | pass both passive gates; stopped only by the smile challenge |
+| Still photo rotated in front of the camera | never satisfies the turn (parallax) |
+
+## Not covered
+
+- Real-time deepfakes injected as a virtual camera: the flash and the timing help, but a fast enough renderer that also renders the flash tint would pass. Pair with device attestation where it matters.
+- 3D masks that can articulate a mouth.
+- Twins.
+
+## Deploying safely
+
+- Keep the server private (VPN, allow-list) and terminate TLS in front of it; API keys are bearer secrets.
+- One project per app and per environment, so `relaxed` on a developer laptop never applies to production.
+- Set `ADMIN_API_KEY` only where project management runs; rotate keys with `POST /v1/projects/{id}/rotate-key`.
+- Leave `DEBUG=0` and `STORE_FRAMES=0` in production; both keep or return more than the verdict.
+- Embeddings are biometric data: keep the database encrypted at rest and delete subjects when people leave (`DELETE /v1/subjects/{id}`).
+- The InsightFace `buffalo_l` weights are non-commercial research only.

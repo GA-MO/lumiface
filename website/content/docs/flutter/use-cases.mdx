@@ -1,0 +1,79 @@
+---
+title: Use cases
+description: The same view configured for attendance, login, a kiosk, enrolment and a fully custom screen, as in the example app.
+---
+
+All five live in `packages/facegate/example/lib/pages/usecases_page.dart`.
+
+## Attendance check-in
+
+Verify against the saved subject, label it `checkin`, a custom success line (`LivenessStrings.th` for Thai):
+
+```dart
+FaceVerifyView(
+  client: client,
+  subjectId: employeeId,
+  purpose: 'checkin',
+  strings: LivenessStrings.en.copyWith(success: 'Checked in'),
+  onResult: done,
+  onFlashChanged: setMaxBrightness,
+)
+```
+
+## Login with face
+
+Same flow, the app's colours and a rounded guide:
+
+```dart
+FaceVerifyView(
+  client: client,
+  subjectId: userId,
+  purpose: 'login',
+  strings: LivenessStrings.en.copyWith(success: 'Welcome back'),
+  theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme).copyWith(
+    guideShape: FaceGuideShape.roundedRect,
+    guideWidthFraction: 0.8,
+    guideAspectRatio: 1.2,
+  ),
+  onResult: done,
+)
+```
+
+## Liveness only (kiosk, gating a form)
+
+No subject: the server proves a live person and records the verification with `subject_id: null`.
+
+```dart
+FaceVerifyView(client: client, purpose: 'kiosk', onResult: done)
+```
+
+## Enrol from the camera
+
+`FaceFlow.enroll` aligns the face, captures one frontal frame and calls `POST /v1/subjects`. The result carries the created `Subject` or the server's rejection code.
+
+```dart
+FaceVerifyView(
+  client: client,
+  flow: FaceFlow.enroll,
+  subjectId: newId,
+  subjectName: 'Person A',
+  replaceEnrollment: true,
+  onResult: (r) => r.ok ? saved(r.subject!) : rejected(r.reasonCode),
+)
+```
+
+## Custom UI
+
+`overlayBuilder` receives a `FaceVerifyScope` (state, latest signal, strings, theme, flow, `message`, `displayBox`, `cancel()`) and draws everything on top of the preview. See [Custom UI](/docs/flutter/custom-ui).
+
+## Screen brightness
+
+The flash check works best at full brightness. The package adds no brightness plugin; the example uses `screen_brightness` in `onFlashChanged`:
+
+```dart
+Future<void> setMaxBrightness(bool on) async {
+  if (kIsWeb) return;
+  final sb = ScreenBrightness.instance;
+  on ? await sb.setApplicationScreenBrightness(1.0) : await sb.resetApplicationScreenBrightness();
+}
+```

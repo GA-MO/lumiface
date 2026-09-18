@@ -11,10 +11,12 @@ class Project(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str
     api_key: str = Field(index=True, unique=True)
+    preset: str = "balanced"
+    policy_overrides: str = "{}"
     created_at: datetime = Field(default_factory=utcnow)
 
 
-class Employee(SQLModel, table=True):
+class Subject(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("project_id", "external_id"),)
 
     id: int | None = Field(default=None, primary_key=True)
@@ -26,22 +28,24 @@ class Employee(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
 
 
-class CheckinSession(SQLModel, table=True):
+class VerifySession(SQLModel, table=True):
     id: str = Field(primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
-    employee_external_id: str | None = None
-    challenges: str  # comma separated, in order
-    flash_colors: str = ""  # comma separated hex, in order; empty = no flash step
+    subject_external_id: str | None = None
+    purpose: str = ""
+    challenges: str
+    flash_colors: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
     used: bool = False
 
 
-class Checkin(SQLModel, table=True):
+class Verification(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
-    employee_id: int | None = Field(default=None, foreign_key="employee.id", index=True)
-    employee_external_id: str
+    subject_id: int | None = Field(default=None, foreign_key="subject.id", index=True)
+    subject_external_id: str | None = None
+    purpose: str = ""
     session_id: str
     ok: bool
     reason_code: str

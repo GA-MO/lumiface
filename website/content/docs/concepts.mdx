@@ -1,0 +1,45 @@
+---
+title: Concepts
+description: Projects, subjects, sessions, flows, frames and policies, and how the server and the SDKs split the work.
+---
+
+## Project
+
+A tenant. It owns an API key (`X-API-Key`), its subjects, its verifications and its [policy](/docs/server/policy). Projects are created with the admin key (`POST /v1/projects`), or bootstrapped from the environment on first start.
+
+## Subject
+
+Whoever can be verified: an employee, a customer, a member. Identified by your own `external_id`; the server stores one ArcFace embedding per subject, never the photo.
+
+## Session and flow
+
+A session is one attempt. It holds the challenges, the flash colours, a TTL and the client tunables. The **flow** decides what the session proves:
+
+| Flow | subject_id | Proves |
+|---|---|---|
+| `verify` | required | a live person who matches the enrolled subject |
+| `liveness` | omitted | a live person (kiosks, gating a form, pre-checks) |
+| `enroll` | your id | captures one frontal frame and enrols it (SDK-side; the server sees a normal enrolment) |
+
+`purpose` is a free label (`checkin`, `login`, `kiosk`, ...) stored with the verification for filtering; it does not change the checks.
+
+## Frames
+
+The app uploads one JPEG per point in the flow: `neutral_start`, `challenge_<i>` at the moment each challenge was satisfied, `flash_<i>` while each colour fills the screen, `neutral_end` once the face is frontal again. Timestamps come with them and are checked for order, total duration and per-challenge duration.
+
+## Policy
+
+Every threshold and every client tunable, resolved per request as environment defaults → preset → overrides. Server fields drive the pipeline; `client` fields are sent to the app in `client_config` and applied by the SDKs. See the [policy reference](/docs/policy-reference).
+
+## Who checks what
+
+| Check | Where | Beats |
+|---|---|---|
+| Blink timing, smile hold, turn and nod angles | device | scripted photos, slow videos |
+| Nose parallax during a turn | device | a flat print or screen rotated in front of the camera |
+| Timing order and durations | server | replayed recordings responding at random times |
+| MiniFASNet ensemble | server | prints, screens with visible bezels |
+| CVPR-2024 ResNet50 on a face crop | server | bezel-free screen replay |
+| Screen-flash reflection and locality | server | any replay that cannot know the colours, phone screens that reflect the whole sheet |
+| Smile re-check from 68 landmarks | server | rigid latex or silicone masks |
+| ArcFace match and cross-frame consistency | server | the wrong person, swapping people mid-session |

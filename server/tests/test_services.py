@@ -20,8 +20,8 @@ def test_new_challenges_from_pool():
 
 
 def test_new_challenges_always_include_required(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "challenge_pool", "blink,turn_left,turn_right,smile,nod")
+    from app.policy import default_policy
+    monkeypatch.setattr(default_policy(), "challenge_pool", "blink,turn_left,turn_right,smile,nod")
     firsts = set()
     for _ in range(40):
         c = new_challenges()
@@ -193,8 +193,8 @@ def _face(yaw=0.0, pitch=0.0):
 
 
 def test_pose_checks_strict_direction(monkeypatch):
-    from app.config import get_settings
-    monkeypatch.setattr(get_settings(), "turn_strict_direction", True)
+    from app.policy import default_policy
+    monkeypatch.setattr(default_policy(), "turn_strict_direction", True)
     assert _pose_ok("turn_right", _face(yaw=45))
     assert not _pose_ok("turn_right", _face(yaw=-45))
     assert _pose_ok("turn_left", _face(yaw=-30))

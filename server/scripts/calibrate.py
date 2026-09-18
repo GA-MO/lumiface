@@ -1,7 +1,7 @@
 """Print match / spoof score distributions from folders of photos to pick thresholds.
 
 Layout:
-  <root>/real/<employee_id>/*.jpg      genuine photos (several per person, incl. the enrolled one)
+  <root>/real/<subject_id>/*.jpg      genuine photos (several per person, incl. the enrolled one)
   <root>/spoof/*.jpg                   photos of printed pictures / phone screens (any person)
 
 Usage: uv run python scripts/calibrate.py <root>

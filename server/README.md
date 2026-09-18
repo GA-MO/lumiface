@@ -1,6 +1,6 @@
-# Face Check-in Server
+# Facegate Server
 
-Self-hosted face verification (1:1) + passive liveness for the `face_checkin` Flutter package.
+Self-hosted face verification (1:1) + passive liveness for the `facegate` Flutter package and the `@facegate/react` SDK. Multi-tenant: every project has an API key and a policy (preset + overrides) changed through `PUT /v1/policy`; the session carries the client tunables. Full docs in `website/content/docs/server`.
 
 - Detection / pose / embedding: InsightFace **buffalo_l** (ArcFace r50). *Non-commercial licence on the weights.*
 - Passive anti-spoof, two gates: **MiniFASNet V2 + V1SE** ensemble (Apache-2.0, ONNX committed in `weights/`) and the
@@ -33,17 +33,22 @@ uv run uvicorn app.main:app --reload --port 8000
 
 Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on first start).
 
-## API (header `X-API-Key`)
+## API (header `X-API-Key`; admin endpoints `X-Admin-Key`)
 
 | Method | Path | Body | Notes |
 |---|---|---|---|
-| POST | `/v1/employees` | multipart `external_id`, `name`, `photo`, `replace` | enrol; 422 with `reason_code` if photo rejected |
-| GET | `/v1/employees` | | |
-| DELETE | `/v1/employees/{external_id}` | | |
-| POST | `/v1/sessions` | json `{employee_id?}` | returns `session_id`, random `challenges`, `flash_colors` (hex), `flash_hold_ms`, `frame_kinds`, TTL |
-| POST | `/v1/sessions/{id}/verify` | multipart `employee_id`, `meta` (json), `frames[]` in `frame_kinds` order | single use |
-| GET | `/v1/checkins?from&to&employee_id&ok` | | history |
-| POST | `/v1/debug/score` | multipart `photo` | only with `DEBUG=1`; raw scores for calibration |
+| POST | `/v1/projects` | json `{name, preset?}` | admin; returns the api key once |
+| GET | `/v1/projects` | | admin |
+| POST | `/v1/projects/{id}/rotate-key` | | admin |
+| DELETE | `/v1/projects/{id}` | | admin |
+| GET/PUT/DELETE | `/v1/policy` | `{preset?, overrides?, merge?}` | project policy; `/presets`, `/schema` |
+| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace` | enrol; 422 with `reason_code` if rejected |
+| GET | `/v1/subjects`, `/v1/subjects/{id}` | | |
+| DELETE | `/v1/subjects/{external_id}` | | |
+| POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns challenges, `flash_colors`, `frame_kinds`, `client_config` |
+| POST | `/v1/sessions/{id}/verify` | multipart `subject_id?`, `meta` (json), `frames[]` in `frame_kinds` order | single use |
+| GET | `/v1/verifications?from&to&subject_id&purpose&ok` | | history |
+| POST | `/v1/debug/score` | multipart `photo` | only with `DEBUG=1` |
 
 `meta` for verify:
 
@@ -54,47 +59,19 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
  "challenge_durations_ms":[420,380],"client":{"platform":"ios"}}
 ```
 
-Verify response: `{ok, reason_code, scores:{match, spoof, consistency}, checkin_id}`.
+Verify response: `{ok, mode, reason_code, scores:{match, spoof, consistency}, verification_id}`.
 Reason codes: `OK, FRAME_COUNT, FRAME_KINDS, TIMING_ORDER, TIMING_TOO_FAST, TIMING_TOO_SLOW, TIMING_DURATIONS,
 NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL, SPOOF, POSE_MISMATCH, EXPRESSION_MISMATCH, FLASH_FAIL, NO_MATCH, INCONSISTENT`
-plus HTTP-level
-`SESSION_USED (409), SESSION_EXPIRED (410), EMPLOYEE_NOT_FOUND (404), EMPLOYEE_MISMATCH (400)`.
+plus HTTP-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_MISMATCH, SUBJECT_NOT_FOUND, META_INVALID`.
 
-## Curl walkthrough
+## Policy
 
-```bash
-K='X-API-Key: change-me'
-curl -H "$K" -F external_id=E001 -F name=Alice -F photo=@alice.jpg localhost:8000/v1/employees
-S=$(curl -s -H "$K" -H 'content-type: application/json' -d '{"employee_id":"E001"}' localhost:8000/v1/sessions)
-echo $S   # note session_id + challenges
-curl -H "$K" -F employee_id=E001 -F 'meta={"frames":[...],"challenge_durations_ms":[400,400]}' \
-  -F frames=@f0.jpg -F frames=@f1.jpg -F frames=@f2.jpg -F frames=@f3.jpg \
-  localhost:8000/v1/sessions/<session_id>/verify
-```
-
-## Thresholds (`.env`)
-
-`MATCH_THRESHOLD` (0.45), `CONSISTENCY_THRESHOLD` (0.60), `SPOOF_THRESHOLD` (0.50), `SPOOF_HARD_FLOOR` (0.30),
-`CVPR_CROP_MARGIN` (0.30), `CVPR_THRESHOLD` (0.30), `CVPR_HARD_FLOOR` (0.05), `MAX_CHALLENGE_MS` (5000),
-`TURN_MIN_YAW` (20), `NOD_MIN_PITCH` (15), `MIN_SESSION_MS` (1500), `MIN_CHALLENGE_MS` (300).
-Run `uv run python scripts/calibrate.py <photos-root>` with team photos to tune them.
-`TURN_STRICT_DIRECTION=1` also enforces left/right sign once the camera mirroring convention is confirmed.
-Smile re-check: `SMILE_ENFORCE` (1), `SMILE_MIN_WIDTH_GAIN` (1.08), `SMILE_MIN_LIFT` (0.04).
-Screen-flash: `FLASH_COUNT` (3, 0 disables), `FLASH_ENFORCE` (1), `FLASH_MIN_CORRELATION` (0.5),
-`FLASH_MIN_RESPONSE` (2.0, RMS hue change in 8-bit units), `FLASH_MAX_BACKGROUND_RATIO` (0.8), `FLASH_HOLD_MS` (450).
-Consistency: `CONSISTENCY_THRESHOLD` (0.60 between frontal frames), `CONSISTENCY_POSE_THRESHOLD` (0.40 for frames
-taken mid turn/nod), `POSE_FRAME_MAX_ANGLE` (20). Measured 2026-09-18 on a Galaxy S25+ (9 genuine, 2 replay):
-genuine correlation 0.95-0.99 / response 11-19 / ratio 0.47-0.52; replay 0.77-0.83 / 6-11 / 1.15-2.31.
-
-## Evaluate against public attack videos
-
-`uv run python scripts/eval_videos.py data/samples/axondata` scores folders of videos/stills with the same two
-passive gates as verify and prints pass rates per category. The AxonData sample set (Hugging Face
-`AxonData/face-anti-spoofing-dataset`, CC BY-NC 4.0, internal testing only) gave on 2026-09-17: genuine 14/14 pass;
-phone replay 0/12, cut-out photo 0/5 and 3D paper mask 0/5 pass; **latex mask 3/3 and silicone mask 2/3 pass**,
-hence the mandatory smile.
+Environment variables (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are the defaults of the `balanced` preset. A project resolves
+**env → preset → overrides** per request (`app/policy.py`); services read `get_policy()`. Presets: `balanced`, `strict`,
+`relaxed`, `emulator`. `GET /v1/policy/schema` lists every field with its description; the docs site generates
+`policy-reference` from it.
 
 ## Tests
 
-`uv run pytest -q` (uses InsightFace's bundled sample photo; no spoof fixtures yet - drop printed/screen photos
-into `tests/fixtures/spoof/` and extend `test_api.py` once the team has captured some).
+`uv run pytest -q` (53). API tests run with `CHALLENGE_POOL=blink,smile`, `SMILE_ENFORCE=0`, `FLASH_ENFORCE=0` because they
+upload the same still for every frame; the enforced paths are covered through `PUT /v1/policy` overrides.

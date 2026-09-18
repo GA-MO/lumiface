@@ -1,0 +1,30 @@
+---
+title: Projects and API keys
+description: One server, many apps. Create projects with the admin key, hand each one its API key and preset.
+---
+
+Set `ADMIN_API_KEY` in the environment, then:
+
+```bash
+curl -X POST $SERVER/v1/projects -H "X-Admin-Key: $ADMIN" -H "Content-Type: application/json" \
+  -d '{"name": "kiosk-app", "preset": "relaxed"}'
+# {"id": 2, "name": "kiosk-app", "preset": "relaxed", "api_key": "…", "subjects": 0, "verifications": 0, ...}
+```
+
+The API key is shown once, on creation and on rotation.
+
+| Method | Path | Does |
+|---|---|---|
+| `POST` | `/v1/projects` | create; body `{name, preset?}`; 409 when the name exists |
+| `GET` | `/v1/projects` | list with subject and verification counts (no keys) |
+| `POST` | `/v1/projects/{id}/rotate-key` | new key, the old one stops working immediately |
+| `DELETE` | `/v1/projects/{id}` | removes the project with its subjects and verifications |
+
+Everything else (`/v1/subjects`, `/v1/sessions`, `/v1/verifications`, `/v1/policy`) is scoped by the `X-API-Key` header: a project only ever sees its own rows.
+
+## One project per app, or per environment
+
+A project is the unit of policy and of data. Typical layouts:
+
+- **One per app**: attendance, door, KYC each with their own key and preset.
+- **One per environment**: `myapp-dev` on `emulator` or `relaxed`, `myapp-prod` on `balanced` or `strict`, so a developer's laptop never loosens production.

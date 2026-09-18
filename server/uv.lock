@@ -102,8 +102,8 @@ wheels = [
 ]
 
 [[package]]
-name = "face-checkin-server"
-version = "0.1.0"
+name = "facegate-server"
+version = "0.2.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },

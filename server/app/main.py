@@ -3,16 +3,18 @@ import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
 from .config import get_settings
 from .db import get_engine, init_db
 from .models import Project
-from .routers import checkins, debug, employees, sessions
+from .policy import PRESETS, PolicyScopeMiddleware
+from .routers import debug, policy, projects, sessions, subjects, verifications
 from .services.antispoof import get_antispoof
 from .services.face import get_face_engine
 
-log = logging.getLogger("face_checkin")
+log = logging.getLogger("facegate")
 
 
 def bootstrap_project() -> None:
@@ -21,9 +23,10 @@ def bootstrap_project() -> None:
         if db.exec(select(Project)).first():
             return
         key = s.bootstrap_api_key or secrets.token_urlsafe(24)
-        db.add(Project(name=s.bootstrap_project_name, api_key=key))
+        preset = s.bootstrap_preset if s.bootstrap_preset in PRESETS else "balanced"
+        db.add(Project(name=s.bootstrap_project_name, api_key=key, preset=preset))
         db.commit()
-        log.warning("created project '%s' with api key: %s", s.bootstrap_project_name, key)
+        log.warning("created project '%s' (preset %s) with api key: %s", s.bootstrap_project_name, preset, key)
 
 
 @asynccontextmanager
@@ -37,16 +40,21 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="Face Check-in Server", version="0.1.0", lifespan=lifespan)
-    app.include_router(employees.router)
+    app = FastAPI(title="Facegate Server", version="0.2.0", lifespan=lifespan)
+    app.add_middleware(PolicyScopeMiddleware)
+    app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+                       allow_headers=["*"], expose_headers=["*"])
+    app.include_router(projects.router)
+    app.include_router(policy.router)
+    app.include_router(subjects.router)
     app.include_router(sessions.router)
-    app.include_router(checkins.router)
+    app.include_router(verifications.router)
     if s.debug:
         app.include_router(debug.router)
 
     @app.get("/health")
     def health():
-        return {"ok": True}
+        return {"ok": True, "presets": list(PRESETS)}
 
     return app
 

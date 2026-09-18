@@ -5,13 +5,13 @@ import secrets
 
 from pydantic import BaseModel, Field
 
-from ..config import get_settings
+from ..policy import get_policy
 
 ALL_CHALLENGES = ("blink", "turn_left", "turn_right", "smile", "nod")
 
 
 def new_challenges() -> list[str]:
-    s = get_settings()
+    s = get_policy()
     pool = [c for c in s.challenges if c in ALL_CHALLENGES]
     n = min(s.challenge_count, len(pool))
     picked: list[str] = []
@@ -44,7 +44,7 @@ def expected_frame_kinds(challenges: list[str], flash_colors: list[str] | None =
 
 def validate_timing(meta: VerifyMeta, challenges: list[str], flash_colors: list[str] | None = None) -> str | None:
     """Return a reason code when the timings look scripted/replayed, else None."""
-    s = get_settings()
+    s = get_policy()
     kinds = [f.kind for f in meta.frames]
     if kinds != expected_frame_kinds(challenges, flash_colors):
         return "FRAME_KINDS"

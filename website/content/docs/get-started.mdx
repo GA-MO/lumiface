@@ -1,0 +1,86 @@
+---
+title: Get started
+description: Run the server, enrol one face, verify it from the Flutter example or the React demo.
+---
+
+<Steps>
+<Step>
+## Run the server
+
+```bash
+cd server
+uv sync
+uv run python weights/download.py          # buffalo_l (~300MB) + MiniFASNet weights
+cp .env.example .env                        # set BOOTSTRAP_API_KEY and ADMIN_API_KEY
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+The CVPR-2024 ResNet50 ONNX (94 MB) is not in git. Convert it once with
+`uv run --with gdown --with torch --with onnx --with onnxscript python weights/convert_cvpr.py`, or set `CVPR_ENABLED=0` to run without it (weaker against bezel-free screen replay).
+
+`GET /health` answers `{"ok": true, "presets": [...]}`. The first start creates a project named `default` with `BOOTSTRAP_API_KEY` and the `BOOTSTRAP_PRESET` preset.
+</Step>
+<Step>
+## Enrol a subject
+
+```bash
+curl -X POST localhost:8000/v1/subjects -H "X-API-Key: change-me" \
+  -F external_id=E001 -F name="Person A" -F photo=@me.jpg
+```
+
+A frontal photo with one face. The server rejects it with a `reason_code` (`NO_FACE`, `POSE_NOT_FRONTAL`, `SPOOF`, ...) instead of enrolling a bad reference. Both SDKs also enrol from the camera (`FaceFlow.enroll`).
+</Step>
+<Step>
+## Pick a preset
+
+```bash
+curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
+  -H "Content-Type: application/json" -d '{"preset": "balanced"}'
+```
+
+`balanced` is the phone-calibrated default. Use `emulator` on the Android emulator, `relaxed` while developing on a laptop (the flash check records scores without enforcing), `strict` for access control. See [Policy](/docs/server/policy).
+</Step>
+<Step>
+## Verify from an app
+
+<Tabs items={["Flutter", "React", "curl"]}>
+<Tab value="Flutter">
+```dart
+final client = FacegateClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');
+
+FaceVerifyView(
+  client: client,
+  subjectId: 'E001',
+  purpose: 'checkin',
+  strings: LivenessStrings.th,
+  onResult: (r) => print('${r.ok} ${r.reasonCode} ${r.scores.match}'),
+);
+```
+
+The example app (`packages/facegate/example`) has every use case on its first tab and a preset picker on the Settings tab. On a phone, use the Mac's LAN IP; on the Android emulator, `http://10.0.2.2:8000`.
+</Tab>
+<Tab value="React">
+```tsx
+import { FacegateClient, FacegateView } from "@facegate/react";
+
+const client = new FacegateClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" });
+
+<div style={{ height: "70vh" }}>
+  <FacegateView client={client} subjectId="E001" purpose="login" onResult={(r) => console.log(r)} />
+</div>
+```
+
+`bun run dev:react` serves the demo at http://localhost:3010. The browser needs `https` or `localhost` for the camera.
+</Tab>
+<Tab value="curl">
+Sessions are single-use and carry the challenges the client must perform, so a raw HTTP client has to run the camera side itself. The [API](/docs/api) page lists the session and verify contract; both SDKs are the reference implementation.
+</Tab>
+</Tabs>
+</Step>
+</Steps>
+
+## What a verification looks like
+
+The app asks for a session, aligns the face, performs two random challenges (a smile is always one of them), flashes three server-chosen colours, and uploads seven JPEG frames with their timestamps. The server re-checks timing, runs both anti-spoof gates on every frame, verifies head pose and the smile, checks the flash reflection, matches every frame against the enrolled embedding, and requires the same identity across frames. The answer is `ok`, a `reason_code` and three scores.
+
+Measured on a MacBook webcam in Chrome (relaxed preset, liveness only): flash correlation 0.99, flash response 2.05, background ratio 0.04, smile width gain 1.24, spoof 0.99, CVPR 0.998.
