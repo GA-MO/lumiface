@@ -1,0 +1,161 @@
+import { Check, ScanFace, Server, Smartphone } from "lucide-react";
+
+const T = "10s";
+
+const PROMPTS = [
+  { text: "Center your face", from: 0, to: 8, color: "#fff" },
+  { text: "Blink", from: 8, to: 22, color: "#ffc107" },
+  { text: "Smile", from: 22, to: 38, color: "#ffc107" },
+  { text: "Turn your head left", from: 38, to: 54, color: "#ffc107" },
+  { text: "Hold still", from: 54, to: 72, color: "#fff" },
+  { text: "Checking", from: 72, to: 97, color: "#fff" },
+  { text: "Verified", from: 97, to: 100, color: "#4caf50" },
+];
+
+const FLASHES = [
+  { color: "#ff0000", from: 54, to: 60 },
+  { color: "#00ff00", from: 60, to: 66 },
+  { color: "#0000ff", from: 66, to: 72 },
+];
+
+const GATES = [
+  { name: "MiniFASNet", detail: "print / screen, every frame", at: 84 },
+  { name: "CVPR-2024 ResNet50", detail: "bezel-free replay, face crop", at: 88 },
+  { name: "Flash reflection", detail: "cheeks follow the 3 colours", at: 91 },
+  { name: "ArcFace match", detail: "every frame vs the enrolled face", at: 94 },
+];
+
+const FRAMES = ["neutral_start", "challenge_0", "challenge_1", "challenge_2", "flash_0", "flash_1", "flash_2", "neutral_end"];
+
+function windowKeyframes(name: string, from: number, to: number, on: string, off: string) {
+  const pre = from > 0 ? `0%,${from - 0.01}%{${off}}` : "";
+  const post = to < 100 ? `${to + 0.01}%,100%{${off}}` : "";
+  return `@keyframes ${name}{${pre}${from}%,${to}%{${on}}${post}}`;
+}
+
+const css = [
+  `.fa *{animation-duration:${T};animation-iteration-count:infinite;animation-timing-function:linear}`,
+  ...PROMPTS.map((p, i) => windowKeyframes(`fa-prompt-${i}`, p.from, p.to, "opacity:1", "opacity:0")),
+  ...FLASHES.map((f, i) => windowKeyframes(`fa-flash-${i}`, f.from, f.to, "opacity:1", "opacity:0")),
+  ...GATES.map((g, i) => windowKeyframes(`fa-gate-${i}`, g.at, 100, "opacity:1;transform:scale(1)", "opacity:0;transform:scale(0.4)")),
+  ...GATES.map((g, i) => windowKeyframes(`fa-gate-row-${i}`, g.at, 100, "border-color:color-mix(in oklab,#10b981 45%,transparent);background:color-mix(in oklab,#10b981 8%,transparent)", "border-color:var(--color-fd-border);background:transparent")),
+  `@keyframes fa-guide{0%,7.99%{stroke:#fff}8%,53.99%{stroke:#ffc107}54%,96.99%{stroke:#fff}97%,100%{stroke:#4caf50}}`,
+  windowKeyframes("fa-result", 97, 100, "opacity:1;transform:translateY(0)", "opacity:0;transform:translateY(6px)"),
+  windowKeyframes("fa-wire-on", 72, 84, "opacity:1", "opacity:0.25"),
+  `@keyframes fa-dash{to{stroke-dashoffset:-48}}`,
+  ...[0, 1, 2, 3, 4].map((i) => `@keyframes fa-packet-${i}{0%,${72 + i * 1.6}%{offset-distance:0%;opacity:0}${72.5 + i * 1.6}%{opacity:1}${80 + i * 1.6}%{offset-distance:100%;opacity:1}${80.5 + i * 1.6}%,100%{offset-distance:100%;opacity:0}}`),
+  windowKeyframes("fa-progress-1", 22, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  windowKeyframes("fa-progress-2", 38, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  windowKeyframes("fa-progress-3", 54, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  windowKeyframes("fa-head", 38, 54, "transform:translateX(-7px) scaleX(0.9)", "transform:translateX(0) scaleX(1)"),
+  windowKeyframes("fa-mouth", 22, 38, "d:path('M36 76 Q45 85 54 76')", "d:path('M38 78 Q45 80 52 78')"),
+  windowKeyframes("fa-eyes", 12, 14, "transform:scaleY(0.1)", "transform:scaleY(1)"),
+  `@media (prefers-reduced-motion: reduce){.fa *{animation-play-state:paused}}`,
+].join("\n");
+
+function Wire({ vertical }: { vertical: boolean }) {
+  const d = vertical ? "M30 4 L30 116" : "M4 30 L236 30";
+  return (
+    <svg viewBox={vertical ? "0 0 60 120" : "0 0 240 60"} className={vertical ? "mx-auto h-28 w-16" : "h-16 w-full"} aria-hidden>
+      <path d={d} fill="none" stroke="var(--color-fd-border)" strokeWidth="2" />
+      <path d={d} fill="none" stroke="var(--color-fd-primary)" strokeWidth="2" strokeDasharray="8 8" style={{ animationName: "fa-dash, fa-wire-on", animationDuration: "1s, " + T }} />
+      {[0, 1, 2, 3, 4].map((i) => (
+        <circle key={i} r="4" fill="var(--color-fd-primary)" style={{ offsetPath: `path('${d}')`, animationName: `fa-packet-${i}` }} />
+      ))}
+    </svg>
+  );
+}
+
+/** The whole flow on a loop: device challenges, flash, upload, four server gates, verdict. */
+export function FlowAnimation() {
+  return (
+    <div className="fa mt-12 grid items-center gap-4 rounded-3xl border border-fd-border bg-fd-card p-6 shadow-sm sm:grid-cols-[auto_1fr_auto] sm:gap-6 sm:p-8">
+      <style>{css}</style>
+
+      <div className="flex flex-col items-center gap-3">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Smartphone className="h-4 w-4 text-fd-primary" />
+          On the device
+        </div>
+        <div className="relative aspect-[9/17] w-[150px] overflow-hidden rounded-[1.4rem] border-[5px] border-[#1a222d] bg-[#232c38]">
+          <svg viewBox="0 0 90 170" className="absolute inset-0 h-full w-full" aria-hidden>
+            <rect width="90" height="170" fill="#2b3542" />
+            <path d="M-10 170 V138 C10 118 30 112 45 112 C60 112 80 118 100 138 V170 Z" fill="#3a4554" />
+            <g style={{ animationName: "fa-head", transformOrigin: "45px 70px" }}>
+              <rect x="39" y="90" width="12" height="20" rx="5" fill="#6b7a8c" />
+              <ellipse cx="45" cy="70" rx="22" ry="27" fill="#7d8ca0" />
+              <g style={{ animationName: "fa-eyes", transformOrigin: "45px 62px" }}>
+                <ellipse cx="37" cy="62" rx="3" ry="2" fill="#1f2730" />
+                <ellipse cx="53" cy="62" rx="3" ry="2" fill="#1f2730" />
+              </g>
+              <path d="M38 78 Q45 80 52 78" fill="none" stroke="#1f2730" strokeWidth="1.5" strokeLinecap="round" style={{ animationName: "fa-mouth" }} />
+            </g>
+            <rect x="0" y="0" width="90" height="170" fill="rgba(0,0,0,0.5)" mask="url(#fa-cut)" />
+            <defs>
+              <mask id="fa-cut">
+                <rect width="90" height="170" fill="#fff" />
+                <ellipse cx="45" cy="72" rx="32" ry="43" fill="#000" />
+              </mask>
+            </defs>
+            <ellipse cx="45" cy="72" rx="32" ry="43" fill="none" strokeWidth="2.5" style={{ animationName: "fa-guide" }} />
+          </svg>
+          {FLASHES.map((f, i) => (
+            <div key={f.color} className="absolute inset-0" style={{ background: f.color, animationName: `fa-flash-${i}` }} />
+          ))}
+          <div className="absolute inset-x-0 top-3 flex justify-center gap-1">
+            {[1, 2, 3].map((n) => (
+              <span key={n} className="h-1 w-5 rounded-full" style={{ animationName: `fa-progress-${n}` }} />
+            ))}
+          </div>
+          {PROMPTS.map((p, i) => (
+            <div key={p.text} className="absolute inset-x-0 bottom-4 text-center text-[11px] font-semibold" style={{ color: p.color, animationName: `fa-prompt-${i}` }}>
+              {p.text}
+            </div>
+          ))}
+        </div>
+        <p className="text-center text-xs text-fd-muted-foreground">Random challenges, then 3 server colours</p>
+      </div>
+
+      <div className="min-w-0">
+        <div className="hidden sm:block">
+          <Wire vertical={false} />
+        </div>
+        <div className="sm:hidden">
+          <Wire vertical />
+        </div>
+        <div className="flex flex-wrap justify-center gap-1 font-mono text-[10px] text-fd-muted-foreground">
+          {FRAMES.map((f) => (
+            <span key={f} className="rounded border border-fd-border px-1 py-px">
+              {f}
+            </span>
+          ))}
+        </div>
+        <p className="mt-2 text-center font-mono text-[10px] text-fd-muted-foreground">POST /v1/verify · X-API-Key</p>
+      </div>
+
+      <div className="w-full sm:w-[260px]">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Server className="h-4 w-4 text-fd-primary" />
+          On your server
+        </div>
+        <ul className="mt-3 space-y-2">
+          {GATES.map((g, i) => (
+            <li key={g.name} className="flex items-center gap-3 rounded-xl border px-3 py-2" style={{ animationName: `fa-gate-row-${i}` }}>
+              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-emerald-500 text-white" style={{ animationName: `fa-gate-${i}` }}>
+                <Check className="h-3 w-3" />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-medium leading-tight">{g.name}</span>
+                <span className="block truncate text-[11px] text-fd-muted-foreground">{g.detail}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-600 dark:text-emerald-400" style={{ animationName: "fa-result" }}>
+          <ScanFace className="h-4 w-4" />
+          OK · verified E001 · match 0.82
+        </div>
+      </div>
+    </div>
+  );
+}

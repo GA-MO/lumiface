@@ -9,6 +9,7 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ command }) => ({
   base: process.env.VITE_FACEGATE_BASE_PATH ?? "/",
+  define: { "process.env.FACEGATE_SITE_URL": JSON.stringify(process.env.FACEGATE_SITE_URL ?? "") },
   plugins: [fumadocsMdx(), tailwindcss(), reactRouter()],
   ssr: { noExternal: command === "build" ? true : [] },
   resolve: { alias: [{ find: /^@\//, replacement: `${path.join(root, "app")}/` }] },

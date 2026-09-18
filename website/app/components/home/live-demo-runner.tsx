@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import { FacegateClient, FacegateView, type CapturedFrame, type Challenge, type FaceSession, type LivenessState, type VerifyResult } from "@facegate/react";
+import type { DemoLine } from "./live-demo";
 
 const POOL: Challenge[] = ["blink", "smile", "turn_left", "turn_right", "nod"];
 const PALETTE = ["ff0000", "00ff00", "0000ff", "ff00ff", "ffff00", "00ffff"];
@@ -39,45 +40,28 @@ class StandInClient extends FacegateClient {
   }
 }
 
-function setLines(lines: string[]) {
-  const ul = document.getElementById("live-demo-lines");
-  if (!ul) return;
-  ul.replaceChildren(
-    ...lines.map((l) => {
-      const li = document.createElement("li");
-      li.textContent = l;
-      if (l.startsWith("OK")) li.className = "text-emerald-600 dark:text-emerald-400";
-      return li;
-    }),
-  );
-}
-
-export default function LiveDemoRunner({ onClose }: { onClose: () => void }) {
+export default function LiveDemoRunner({ landscape, onLine, onClose }: { landscape: boolean; onLine: (line: DemoLine) => void; onClose: () => void }) {
   const client = useMemo(() => new StandInClient(), []);
-  const [lines, setLinesState] = useState<string[]>(["Opening the camera and loading MediaPipe (first time takes a few seconds)."]);
   const startedAt = useRef<Record<number, number>>({});
   const last = useRef<LivenessState | null>(null);
-
-  useEffect(() => setLines(lines), [lines]);
-
-  const add = (line: string) => setLinesState((ls) => [...ls, line].slice(-9));
 
   const onStateChanged = (s: LivenessState) => {
     const prev = last.current;
     last.current = s;
     if (prev?.phase !== s.phase) {
-      if (s.phase === "aligning") add(`session  ${s.challengeCount} challenges incl. a client-only turn`);
-      if (s.phase === "flash") add("flash  filling the screen with 3 server colours");
-      if (s.phase === "uploading") add("uploading  neutral_start, challenge frames, flash frames, neutral_end");
-      if (s.phase === "success") add(`OK  ${s.result?.verificationId} frames would go to the server`);
-      if (s.phase === "failed") add(`failed  ${s.result?.reasonCode}`);
+      if (s.phase === "starting") onLine({ kind: "info", text: "Opening the camera, loading MediaPipe" });
+      if (s.phase === "aligning") onLine({ kind: "step", text: `session  ${s.challengeCount} challenges, 3 flash colours` });
+      if (s.phase === "flash") onLine({ kind: "step", text: "flash  3 server colours, one frame each" });
+      if (s.phase === "uploading") onLine({ kind: "step", text: "upload  neutral, challenge and flash frames" });
+      if (s.phase === "success") onLine({ kind: "ok", text: `OK  ${s.result?.verificationId} frames verified by the stand-in` });
+      if (s.phase === "failed") onLine({ kind: "fail", text: `failed  ${s.result?.reasonCode}` });
     }
-    if (s.phase === "challenge" && s.challenge && prev?.challengeIndex !== s.challengeIndex) {
+    if (s.phase === "challenge" && s.challenge && (prev?.phase !== "challenge" || prev.challengeIndex !== s.challengeIndex)) {
       startedAt.current[s.challengeIndex] = performance.now();
       if (prev && prev.phase === "challenge" && prev.challenge) {
-        add(`challenge_${prev.challengeIndex} ${prev.challenge}  ${Math.round(performance.now() - startedAt.current[prev.challengeIndex])} ms`);
+        onLine({ kind: "ok", text: `${prev.challenge}  ${Math.round(performance.now() - startedAt.current[prev.challengeIndex])} ms` });
       }
-      add(`prompt  ${s.challenge}`);
+      onLine({ kind: "step", text: `challenge_${s.challengeIndex}  ${s.challenge}` });
     }
   };
 
@@ -85,10 +69,24 @@ export default function LiveDemoRunner({ onClose }: { onClose: () => void }) {
     <FacegateView
       client={client}
       purpose="demo"
-      showDebug
+      theme={landscape ? { guideWidthFraction: 0.34, guideCenterY: 0.48 } : {}}
       onStateChanged={onStateChanged}
       onResult={() => {}}
       onDone={onClose}
+      renderPrompt={(s) => (
+        <div className="pointer-events-none flex justify-center px-4 pb-5">
+          <span className={`rounded-full px-4 py-2 text-[15px] font-semibold text-white shadow-lg backdrop-blur ${s.state.phase === "failed" ? "bg-red-600/85" : s.state.phase === "success" ? "bg-emerald-600/85" : "bg-black/60"}`}>
+            {s.message}
+          </span>
+        </div>
+      )}
+      renderResult={(s) => (
+        <div className="flex justify-center pb-5">
+          <button type="button" onClick={onClose} className="rounded-lg bg-white px-5 py-2 text-sm font-medium text-black shadow-sm hover:bg-white/90">
+            {s.state.phase === "success" ? s.strings.done : s.strings.retry}
+          </button>
+        </div>
+      )}
       renderError={(e) => <div className="grid h-full place-items-center p-6 text-center text-sm text-white/80">Camera unavailable: {e.message}</div>}
     />
   );

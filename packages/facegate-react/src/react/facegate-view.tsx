@@ -1,4 +1,4 @@
-import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { progressOf, type LivenessState } from "../controller.ts";
 import { EN, messageFor, type LivenessStrings } from "../strings.ts";
@@ -73,10 +73,24 @@ export interface FacegateViewProps extends UseFacegateOptions {
   onStateChanged?: (state: LivenessState) => void;
 }
 
-function displayBoxOf(signal: FaceSignal | null, mirrored: boolean): Box | null {
+/** Maps a full-frame box into the part of the frame that `object-fit: cover` shows in a container of `containerAspect`, mirrored if needed. */
+function displayBoxOf(signal: FaceSignal | null, mirrored: boolean, videoAspect: number, containerAspect: number): Box | null {
   const b = signal?.box ?? null;
-  if (!b || !mirrored) return b;
-  return { ...b, left: 1 - b.left - b.width };
+  if (!b) return null;
+  let { left, top, width, height } = b;
+  if (videoAspect > 0 && containerAspect > 0 && videoAspect !== containerAspect) {
+    if (videoAspect > containerAspect) {
+      const visible = containerAspect / videoAspect;
+      left = (left - (1 - visible) / 2) / visible;
+      width /= visible;
+    } else {
+      const visible = videoAspect / containerAspect;
+      top = (top - (1 - visible) / 2) / visible;
+      height /= visible;
+    }
+  }
+  if (mirrored) left = 1 - left - width;
+  return { left, top, width, height };
 }
 
 function guideColor(theme: FacegateTheme, phase: LivenessState["phase"]) {
@@ -88,36 +102,42 @@ function guideColor(theme: FacegateTheme, phase: LivenessState["phase"]) {
 
 /** Dimmed mask with a face-shaped cut-out whose colour follows the phase. */
 export function FaceGuide({ theme, phase, box }: { theme: FacegateTheme; phase: LivenessState["phase"]; box?: Box | null }) {
-  const w = theme.guideWidthFraction * 100;
+  const ref = useRef<SVGSVGElement>(null);
+  const [size, setSize] = useState({ width: 0, height: 0 });
+  const maskId = useId();
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const update = () => setSize({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const { width, height } = size;
+  const w = width * theme.guideWidthFraction;
   const h = w * theme.guideAspectRatio;
+  const x = (width - w) / 2;
+  const y = height * theme.guideCenterY - h / 2;
+  const rx = theme.guideShape === "oval" ? w / 2 : w * 0.2;
+  const ry = theme.guideShape === "oval" ? h / 2 : w * 0.2;
   const color = guideColor(theme, phase);
-  const rx = theme.guideShape === "oval" ? "50%" : "20%";
   return (
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }}>
-      {theme.guideShape !== "none" && (
+    <svg ref={ref} width={width || undefined} height={height || undefined} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", display: "block" }}>
+      {theme.guideShape !== "none" && width > 0 && (
         <>
           <defs>
-            <mask id="facegate-guide-mask">
-              <rect width="100" height="100" fill="#fff" />
-              <rect x={50 - w / 2} y={theme.guideCenterY * 100 - h / 2} width={w} height={h} rx={rx} fill="#000" />
+            <mask id={maskId}>
+              <rect width={width} height={height} fill="#fff" />
+              <rect x={x} y={y} width={w} height={h} rx={rx} ry={ry} fill="#000" />
             </mask>
           </defs>
-          <rect width="100" height="100" fill={theme.mask} mask="url(#facegate-guide-mask)" />
-          <rect
-            x={50 - w / 2}
-            y={theme.guideCenterY * 100 - h / 2}
-            width={w}
-            height={h}
-            rx={rx}
-            fill="none"
-            stroke={color}
-            strokeWidth={theme.guideStrokeWidth / 4}
-            vectorEffect="non-scaling-stroke"
-          />
+          <rect width={width} height={height} fill={theme.mask} mask={`url(#${maskId})`} />
+          <rect x={x} y={y} width={w} height={h} rx={rx} ry={ry} fill="none" stroke={color} strokeWidth={theme.guideStrokeWidth} />
         </>
       )}
-      {box && (
-        <rect x={box.left * 100} y={box.top * 100} width={box.width * 100} height={box.height * 100} fill="none" stroke="#00e5ff" strokeWidth={0.5} vectorEffect="non-scaling-stroke" />
+      {box && width > 0 && (
+        <rect x={box.left * width} y={box.top * height} width={box.width * width} height={box.height * height} fill="none" stroke="#00e5ff" strokeWidth={2} />
       )}
     </svg>
   );
@@ -192,7 +212,18 @@ export function FacegateView(props: FacegateViewProps) {
   const { strings = EN, theme: themePatch, showDebug = false, style, className, renderOverlay, renderPrompt, renderProgress, renderResult, renderFlash, renderLoading, renderError, onDone, onStateChanged, ...options } = props;
   const theme = { ...DEFAULT_THEME, ...themePatch };
   const handle = useFacegate(options);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [containerAspect, setContainerAspect] = useState(0);
   const lastReported = useRef<LivenessState | null>(null);
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const update = () => setContainerAspect(el.clientHeight > 0 ? el.clientWidth / el.clientHeight : 0);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   useEffect(() => {
     if (lastReported.current === handle.state) return;
     lastReported.current = handle.state;
@@ -205,11 +236,11 @@ export function FacegateView(props: FacegateViewProps) {
     message: messageFor(strings, handle.state, handle.flow),
     result: handle.state.result,
     isDone: handle.state.phase === "success" || handle.state.phase === "failed",
-    displayBox: displayBoxOf(handle.signal, handle.source?.isMirrored ?? true),
+    displayBox: displayBoxOf(handle.signal, handle.source?.isMirrored ?? true, handle.source?.aspectRatio ?? 0, containerAspect),
   };
   const flashing = handle.state.phase === "flash" && handle.state.flashColor;
   return (
-    <div className={className} style={{ position: "relative", overflow: "hidden", background: theme.background, width: "100%", height: "100%", ...style }}>
+    <div ref={rootRef} className={className} style={{ position: "relative", overflow: "hidden", background: theme.background, width: "100%", height: "100%", ...style }}>
       <div ref={handle.mountVideo} style={{ position: "absolute", inset: 0 }} />
       {handle.error ? (
         renderError ? renderError(handle.error) : <div style={theme.message}>{strings.cameraError}<br />{handle.error.message}</div>
