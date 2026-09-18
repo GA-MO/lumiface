@@ -5,7 +5,7 @@ description: Projects, subjects, sessions, flows, frames and policies, and how t
 
 ## Project
 
-A tenant. It owns an API key (`X-API-Key`), its subjects, its verifications and its [policy](/docs/server/policy). Projects are created with the admin key (`POST /v1/projects`), or bootstrapped from the environment on first start.
+A tenant. It owns an API key (`X-API-Key`, backend only), its subjects, its verifications and its [policy](/docs/server/policy). Devices authenticate with short-lived tokens the backend obtains with that key: a `session_token` per session and an enrol token per enrolment. Projects are created with the admin key (`POST /v1/projects`), or bootstrapped from the environment on first start.
 
 ## Subject
 

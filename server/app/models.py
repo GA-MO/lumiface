@@ -36,12 +36,26 @@ class Subject(SQLModel, table=True):
 class VerifySession(SQLModel, table=True):
     id: str = Field(primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)
+    token: str = ""  # bearer secret handed to the device; only good for this session's verify
     subject_external_id: str | None = None
     purpose: str = ""
     challenges: str
     flash_colors: str = ""
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
+    used: bool = False
+
+
+class EnrolToken(SQLModel, table=True):
+    """Single-use bearer token letting a device enrol one predetermined subject."""
+
+    token: str = Field(primary_key=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    external_id: str
+    name: str = ""
+    ttl_seconds: int | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime = Field(index=True)
     used: bool = False
 
 

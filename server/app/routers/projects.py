@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from ..db import get_db
 from ..deps import admin_key
-from ..models import Project, Subject, Verification
+from ..models import EnrolToken, Project, Subject, Verification, VerifySession
 from ..policy import PRESETS
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"], dependencies=[Depends(admin_key)])
@@ -70,9 +70,9 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     p = db.get(Project, project_id)
     if not p:
         raise HTTPException(404, {"reason_code": "PROJECT_NOT_FOUND"})
-    for row in db.exec(select(Verification).where(Verification.project_id == p.id)).all():
-        db.delete(row)
-    for row in db.exec(select(Subject).where(Subject.project_id == p.id)).all():
-        db.delete(row)
+    # Sessions and enrol tokens go too: SQLite reuses ids, so a live token must not outlive its tenant.
+    for model in (Verification, VerifySession, EnrolToken, Subject):
+        for row in db.exec(select(model).where(model.project_id == p.id)).all():
+            db.delete(row)
     db.delete(p)
     db.commit()

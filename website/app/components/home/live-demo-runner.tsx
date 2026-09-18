@@ -15,7 +15,7 @@ function pick<T>(items: T[], n: number): T[] {
 /** Plays the server's part in the browser: random challenges and colours, then an OK. */
 class StandInClient extends LumifaceClient {
   constructor() {
-    super({ baseUrl: "stand-in", apiKey: "none" });
+    super({ baseUrl: "stand-in" });
   }
 
   override async createSession(): Promise<FaceSession> {
@@ -23,6 +23,7 @@ class StandInClient extends LumifaceClient {
     const flashColors = pick(PALETTE, 3);
     return {
       id: Math.random().toString(16).slice(2, 6),
+      token: "",
       mode: "liveness",
       purpose: "demo",
       challenges,

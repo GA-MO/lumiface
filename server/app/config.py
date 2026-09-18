@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     weights_dir: str = "weights"
     det_size: int = 640
+    max_upload_bytes: int = 32 * 1024 * 1024  # whole request body
+    max_frame_bytes: int = 4 * 1024 * 1024  # one JPEG
+    max_image_pixels: int = 20_000_000
     store_frames: bool = False
     frames_dir: str = "data/frames"
 
@@ -39,6 +42,7 @@ class Settings(BaseSettings):
     smile_min_lift: float = 0.04
 
     session_ttl_seconds: int = 60
+    enrol_token_ttl_seconds: int = 300
     subject_ttl_seconds: int = 0
     retention_interval_seconds: int = 300
     session_purge_grace_seconds: int = 3600

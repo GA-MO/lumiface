@@ -35,6 +35,11 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 
 ## API (header `X-API-Key`; admin endpoints `X-Admin-Key`)
 
+The project key belongs on your backend. A device gets the `session_token` returned by `POST /v1/sessions` (verify
+only, that session only) or an enrol token from `POST /v1/subjects/tokens` (one enrolment of a fixed subject) and sends
+it as `Authorization: Bearer …`. Session tokens die with the session; enrol tokens after `ENROL_TOKEN_TTL_SECONDS`.
+The backend then reads the outcome with `GET /v1/sessions/{id}` rather than trusting the device's report.
+
 | Method | Path | Body | Notes |
 |---|---|---|---|
 | POST | `/v1/projects` | json `{name, preset?}` | admin; returns the api key once |
@@ -42,12 +47,14 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 | POST | `/v1/projects/{id}/rotate-key` | | admin |
 | DELETE | `/v1/projects/{id}` | | admin |
 | GET/PUT/DELETE | `/v1/policy` | `{preset?, overrides?, merge?}` | project policy; `/presets`, `/schema` |
-| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` | enrol; 422 with `reason_code` if rejected; `ttl_seconds` omitted = policy `subject_ttl_seconds`, 0 = keep |
+| POST | `/v1/subjects/tokens` | json `{external_id, name?, ttl_seconds?, token_ttl_seconds?}` | single-use enrol token for a device; cannot replace an existing face |
+| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` — or `photo` only with `Authorization: Bearer <enrol token>` | enrol; 422 with `reason_code` if rejected; `ttl_seconds` omitted = policy `subject_ttl_seconds`, 0 = keep |
 | GET | `/v1/subjects`, `/v1/subjects/{id}` | | |
 | DELETE | `/v1/subjects/{external_id}` | | |
 | POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns challenges, `flash_colors`, `frame_kinds`, `client_config` |
-| POST | `/v1/sessions/{id}/verify` | multipart `subject_id?`, `meta` (json), `frames[]` in `frame_kinds` order | single use |
-| GET | `/v1/verifications?from&to&subject_id&purpose&ok` | | history |
+| POST | `/v1/sessions/{id}/verify` | multipart `subject_id?`, `meta` (json), `frames[]` in `frame_kinds` order; auth `Authorization: Bearer <session_token>` (device) or `X-API-Key` (backend) | single use, spent on the first request; a device cannot change the subject |
+| GET | `/v1/sessions/{id}` | | backend reads `{used, result}` after the device is done |
+| GET | `/v1/verifications?from&to&subject_id&session_id&purpose&ok` | | history |
 | POST | `/v1/debug/score` | multipart `photo` | only with `DEBUG=1` |
 
 `meta` for verify:
@@ -62,7 +69,9 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 Verify response: `{ok, mode, reason_code, scores:{match, spoof, consistency}, verification_id}`.
 Reason codes: `OK, FRAME_COUNT, FRAME_KINDS, TIMING_ORDER, TIMING_TOO_FAST, TIMING_TOO_SLOW, TIMING_DURATIONS,
 NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL, SPOOF, POSE_MISMATCH, EXPRESSION_MISMATCH, FLASH_FAIL, NO_MATCH, INCONSISTENT`
-plus HTTP-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_MISMATCH, SUBJECT_NOT_FOUND, META_INVALID`.
+plus HTTP-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_MISMATCH, SUBJECT_NOT_FOUND, META_INVALID,
+ENROL_TOKEN_INVALID, ENROL_TOKEN_MISMATCH, EXTERNAL_ID_REQUIRED, PAYLOAD_TOO_LARGE`; `BAD_IMAGE` is the verdict for a frame that
+does not decode. Uploads are capped by `MAX_UPLOAD_BYTES` (32 MB body), `MAX_FRAME_BYTES` (4 MB) and `MAX_IMAGE_PIXELS` (20 Mpx).
 
 ## Policy
 

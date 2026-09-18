@@ -26,13 +26,19 @@ Lumiface is not certified liveness (no ISO 30107-3 evaluation). It is a layered 
 
 ## Not covered
 
-- Real-time deepfakes injected as a virtual camera: the flash and the timing help, but a fast enough renderer that also renders the flash tint would pass. Pair with device attestation where it matters.
+- **A compromised device.** Every server gate scores the pixels the device uploads, and the session response tells the device the challenges and the flash colours so it can run the flow. A patched app or a browser with DevTools can therefore skip every client-side check (blink timing, parallax, hold times — none has a server counterpart), self-report `meta` timings, and upload prepared photos of the victim in the commanded poses with the flash tint painted on. What is left against that is the passive anti-spoof on the uploaded images and the ArcFace match. The device tokens do not change this: they bound *what* a leaked credential can do, not *whether* the device is honest. Where the device is the adversary, pair Lumiface with platform attestation (Play Integrity, App Attest) and treat the `relaxed` and `emulator` presets, which switch the flash and smile gates to score-only, as development settings.
+- Real-time deepfakes injected as a virtual camera: the same point in a different costume.
 - 3D masks that can articulate a mouth.
 - Twins.
 
 ## Deploying safely
 
-- Keep the server private (VPN, allow-list) and terminate TLS in front of it; API keys are bearer secrets.
+- Keep the server private (VPN, allow-list) and terminate TLS in front of it.
+- The project API key stays on your backend. Devices only ever hold a **session token** (issued with the session, good for that one verify of the subject the backend chose) or a single-use **enrol token** (`POST /v1/subjects/tokens`); see [API authentication](/docs/api#authentication). A key embedded in an app or web bundle lets anyone list and delete subjects, read every verification and lower the policy's thresholds.
+- Read the outcome yourself: after the device reports "done", call `GET /v1/sessions/{id}` with the key. The device's copy of the answer is just bytes it can edit.
+- An enrol token binds the *identity*, not the *face*: whoever holds it enrols their own face as that subject. Issue one only after your own authentication of that user, and never for a subject that already has a face (the server refuses; re-enrol with the key after a `DELETE`).
+- Uploads are capped (`MAX_UPLOAD_BYTES`, `MAX_FRAME_BYTES`, `MAX_IMAGE_PIXELS`); keep a reverse proxy limit in front as well, since a body without `Content-Length` is only bounded per frame.
+- `STORE_FRAMES=1` writes the raw frames of failed attempts to `FRAMES_DIR/<project>/<session>/`; nothing deletes them, so keep it off in production or purge the directory yourself.
 - One project per app and per environment, so `relaxed` on a developer laptop never applies to production.
 - Set `ADMIN_API_KEY` only where project management runs; rotate keys with `POST /v1/projects/{id}/rotate-key`.
 - Leave `DEBUG=0` and `STORE_FRAMES=0` in production; both keep or return more than the verdict.

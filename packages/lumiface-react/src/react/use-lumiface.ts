@@ -4,7 +4,7 @@ import type { LumifaceClient } from "../client.ts";
 import type { LivenessConfig } from "../config.ts";
 import { FaceEnrollController, FaceVerifyController, IDLE_STATE, type FaceFlowController, type LivenessState } from "../controller.ts";
 import { MediaPipeSource, type MediaPipeSourceOptions } from "../mediapipe-source.ts";
-import type { FaceFlow, FaceSignal, VerifyResult } from "../types.ts";
+import type { FaceFlow, FaceSession, FaceSignal, VerifyResult } from "../types.ts";
 
 export interface UseLumifaceOptions {
   client: LumifaceClient;
@@ -14,6 +14,10 @@ export interface UseLumifaceOptions {
   purpose?: string;
   subjectName?: string;
   replaceEnrollment?: boolean;
+  /** Production auth: your backend creates the session and the browser only holds its token. */
+  sessionProvider?: () => Promise<FaceSession>;
+  /** Production auth for the enroll flow: token from `POST /v1/subjects/tokens` on your backend. */
+  enrolToken?: string | null;
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
   camera?: MediaPipeSourceOptions;
@@ -84,6 +88,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
                 externalId: o.subjectId ?? "",
                 name: o.subjectName,
                 replace: o.replaceEnrollment,
+                enrolToken: o.enrolToken,
                 config: o.config,
               })
             : new FaceVerifyController({
@@ -92,6 +97,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
                 client: o.client,
                 subjectId: flow === "verify" ? o.subjectId : null,
                 purpose: o.purpose,
+                sessionProvider: o.sessionProvider,
                 config: o.config,
                 clientInfo: { platform: "web", ...o.clientInfo },
               });

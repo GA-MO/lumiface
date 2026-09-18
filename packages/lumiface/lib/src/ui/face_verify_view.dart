@@ -69,6 +69,8 @@ class FaceVerifyView extends StatefulWidget {
     this.purpose = '',
     this.subjectName = '',
     this.replaceEnrollment = false,
+    this.sessionProvider,
+    this.enrolToken,
     this.config,
     this.strings = LivenessStrings.en,
     this.theme = const FaceVerifyTheme(),
@@ -100,6 +102,13 @@ class FaceVerifyView extends StatefulWidget {
   final String purpose;
   final String subjectName;
   final bool replaceEnrollment;
+
+  /// Production auth: your backend creates the session with the project key and
+  /// the app only holds its token. See [FaceVerifyController.sessionProvider].
+  final Future<FaceSession> Function()? sessionProvider;
+
+  /// Production auth for [FaceFlow.enroll]. See [FaceEnrollController.enrolToken].
+  final String? enrolToken;
 
   /// Overrides the project's `client_config`; null uses what the server sends.
   final LivenessConfig? config;
@@ -163,6 +172,7 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
           externalId: widget.subjectId ?? '',
           name: widget.subjectName,
           replace: widget.replaceEnrollment,
+          enrolToken: widget.enrolToken,
           config: widget.config ?? const LivenessConfig(),
         ),
       FaceFlow.verify || FaceFlow.liveness => FaceVerifyController(
@@ -173,6 +183,7 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
           purpose: widget.purpose,
           config: widget.config,
           clientInfo: {'platform': platform, ...widget.clientInfo},
+          sessionProvider: widget.sessionProvider,
         ),
     };
   }

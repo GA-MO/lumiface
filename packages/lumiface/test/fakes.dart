@@ -61,6 +61,7 @@ class FakeApi extends LumifaceClient {
     required List<int> challengeDurationsMs,
     String? subjectId,
     Map<String, dynamic> client = const {},
+    String? sessionToken,
   }) async {
     sentFrames = frames;
     sentDurations = challengeDurationsMs;
@@ -69,11 +70,12 @@ class FakeApi extends LumifaceClient {
 
   @override
   Future<Subject> enroll({
-    required String externalId,
     required List<int> photoJpeg,
+    String externalId = '',
     String name = '',
     bool replace = false,
     int? ttlSeconds,
+    String? enrolToken,
   }) async {
     enrollCalls++;
     if (externalId == 'REJECT') throw LumifaceException('POSE_NOT_FRONTAL');

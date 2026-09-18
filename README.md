@@ -73,7 +73,7 @@ curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
 
 ```dart
 // Flutter: pubspec.yaml → dependencies: lumiface: { path: packages/lumiface }
-final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');
+final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');   // dev only: production uses sessionProvider, see docs
 
 FaceVerifyView(
   client: client,
@@ -88,7 +88,7 @@ FaceVerifyView(
 // React: "@lumiface/react": "github:GA-MO/lumiface#path:packages/lumiface-react"
 import { LumifaceClient, LumifaceView, TH } from "@lumiface/react";
 
-const client = new LumifaceClient({ baseUrl: "http://<lan-ip>:8000", apiKey: "change-me" });
+const client = new LumifaceClient({ baseUrl: "http://<lan-ip>:8000", apiKey: "change-me" }); // dev only: production uses sessionProvider, see docs
 
 <LumifaceView client={client} subjectId="E001" purpose="login" strings={TH}
   onResult={(r) => (r.ok ? signIn(r.verificationId) : toast(r.reasonCode))} />

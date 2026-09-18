@@ -4,19 +4,29 @@ import 'package:dio/dio.dart';
 
 import '../models.dart';
 
-/// Thin client for the Lumiface server. One instance per project API key.
+/// Thin client for the Lumiface server.
+///
+/// In production the device holds **no project key**: your backend creates the
+/// session (`POST /v1/sessions`) or an enrol token (`POST /v1/subjects/tokens`)
+/// with the key and hands the result to the app, which then calls [verify] with
+/// the session's token or [enroll] with the enrol token. Pass [apiKey] only in
+/// development or from trusted code; anyone holding it can manage every
+/// subject and the project policy.
 class LumifaceClient {
-  LumifaceClient({required String baseUrl, required String apiKey, Dio? dio})
+  LumifaceClient({required String baseUrl, String? apiKey, Dio? dio})
       : _dio = dio ??
             Dio(BaseOptions(
               baseUrl: baseUrl,
-              headers: {'X-API-Key': apiKey},
+              headers: {'X-API-Key': ?apiKey},
               connectTimeout: const Duration(seconds: 10),
               receiveTimeout: const Duration(seconds: 30),
               validateStatus: (_) => true,
             ));
 
   final Dio _dio;
+
+  static Options _bearer(String? token) =>
+      Options(headers: {if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token'});
 
   Future<FaceSession> createSession({String? subjectId, String purpose = ''}) async {
     final r = await _dio.post<Map<String, dynamic>>('/v1/sessions',
@@ -31,6 +41,8 @@ class LumifaceClient {
     required List<int> challengeDurationsMs,
     String? subjectId,
     Map<String, dynamic> client = const {},
+    /// The `session_token` from the session; replaces the project key for this call.
+    String? sessionToken,
   }) async {
     final meta = {
       'frames': [for (final f in frames) {'kind': f.kind, 'ts_ms': f.tsMs}],
@@ -44,27 +56,32 @@ class LumifaceClient {
         for (final f in frames) MultipartFile.fromBytes(f.jpeg, filename: '${f.kind}.jpg'),
       ],
     });
-    final r = await _dio.post<Map<String, dynamic>>('/v1/sessions/$sessionId/verify', data: form);
+    final r = await _dio.post<Map<String, dynamic>>('/v1/sessions/$sessionId/verify',
+        data: form, options: _bearer(sessionToken));
     if (r.statusCode == 200) return VerifyResult.fromJson(r.data!);
     return VerifyResult.clientError(_reasonCode(r), _detailMessage(r));
   }
 
+  /// Enrols one photo. With [enrolToken] the subject, name, replace and ttl were
+  /// fixed by the backend that issued the token and the other fields may be left empty.
   Future<Subject> enroll({
-    required String externalId,
     required List<int> photoJpeg,
+    String externalId = '',
     String name = '',
     bool replace = false,
     /// Retention in seconds; null uses the policy's `subject_ttl_seconds`, 0 keeps until deleted.
     int? ttlSeconds,
+    String? enrolToken,
   }) async {
+    final viaToken = enrolToken != null && enrolToken.isNotEmpty;
     final form = FormData.fromMap({
-      'external_id': externalId,
-      'name': name,
-      'replace': replace.toString(),
-      if (ttlSeconds != null) 'ttl_seconds': ttlSeconds.toString(),
+      if (externalId.isNotEmpty) 'external_id': externalId,
+      if (!viaToken) 'name': name,
+      if (!viaToken) 'replace': replace.toString(),
+      if (!viaToken && ttlSeconds != null) 'ttl_seconds': ttlSeconds.toString(),
       'photo': MultipartFile.fromBytes(photoJpeg, filename: 'photo.jpg'),
     });
-    final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form);
+    final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form, options: _bearer(enrolToken));
     if (r.statusCode == 201) return Subject.fromJson(r.data!);
     final detail = r.data?['detail'];
     if (detail is Map<String, dynamic>) {

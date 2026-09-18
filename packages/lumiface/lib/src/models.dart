@@ -103,6 +103,7 @@ class FaceSession {
     required this.challenges,
     required this.frameKinds,
     required this.ttlSeconds,
+    this.token = '',
     this.mode = 'verify',
     this.purpose = '',
     this.flashColors = const [],
@@ -111,6 +112,9 @@ class FaceSession {
   });
 
   final String id;
+
+  /// Bearer secret good for this session's verify only; empty on servers that predate it.
+  final String token;
   final String mode;
   final String purpose;
   final List<Challenge> challenges;
@@ -127,6 +131,7 @@ class FaceSession {
 
   factory FaceSession.fromJson(Map<String, dynamic> j) => FaceSession(
         id: j['session_id'] as String,
+        token: (j['session_token'] as String?) ?? '',
         mode: (j['mode'] as String?) ?? 'verify',
         purpose: (j['purpose'] as String?) ?? '',
         challenges: (j['challenges'] as List).map((e) => Challenge.fromWire(e as String)).toList(),

@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from .config import get_settings
@@ -29,7 +30,13 @@ def bootstrap_project() -> None:
         preset = s.bootstrap_preset if s.bootstrap_preset in PRESETS else "balanced"
         db.add(Project(name=s.bootstrap_project_name, api_key=key, preset=preset))
         db.commit()
-        log.warning("created project '%s' (preset %s) with api key: %s", s.bootstrap_project_name, preset, key)
+        if s.bootstrap_api_key:
+            log.warning("created project '%s' (preset %s) with the api key from BOOTSTRAP_API_KEY",
+                        s.bootstrap_project_name, preset)
+        else:
+            # Shown once; an operator-supplied key is never echoed into the logs.
+            log.warning("created project '%s' (preset %s) with generated api key: %s", s.bootstrap_project_name,
+                        preset, key)
 
 
 @asynccontextmanager
@@ -46,10 +53,28 @@ async def lifespan(app: FastAPI):
             await purger
 
 
+class BodyLimitMiddleware:
+    """Rejects oversized uploads before the multipart parser sees them (FastAPI parses forms before auth)."""
+
+    def __init__(self, app, limit: int) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            length = next((v for k, v in scope["headers"] if k == b"content-length"), None)
+            if length and length.isdigit() and int(length) > self.limit:
+                response = JSONResponse({"detail": {"reason_code": "PAYLOAD_TOO_LARGE"}}, status_code=413)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     s = get_settings()
     app = FastAPI(title="Lumiface Server", version="0.2.0", lifespan=lifespan)
     app.add_middleware(PolicyScopeMiddleware)
+    app.add_middleware(BodyLimitMiddleware, limit=s.max_upload_bytes)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                        allow_headers=["*"], expose_headers=["*"])
     app.include_router(projects.router)

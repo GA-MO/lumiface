@@ -5,11 +5,31 @@ description: Every endpoint of the Lumiface server with its headers, bodies and 
 
 Base path `/v1`. Project endpoints authenticate with `X-API-Key`; admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
 
+## Authentication
+
+Two credentials, two audiences:
+
+| Credential | Header | Who holds it | Can call |
+|---|---|---|---|
+| Project API key | `X-API-Key: <key>` | your backend | everything under `/v1` for the project |
+| Session token | `Authorization: Bearer <session_token>` | the device, for one session | `POST /sessions/{id}/verify` of that session only |
+| Enrol token | `Authorization: Bearer <token>` | the device, once | `POST /subjects` for the subject fixed when the token was issued |
+
+Never ship the project key in an app or web bundle. The loop is:
+
+1. Backend: `POST /sessions` with the key, **with the `subject_id` it wants checked** (or none for liveness), and forwards the JSON to the device.
+2. Device: runs the flow and uploads with `Authorization: Bearer <session_token>`. The subject is fixed; a device that names another one gets 400 `SUBJECT_MISMATCH` and the session is spent.
+3. Device tells the backend it is done. **Do not trust that message.**
+4. Backend: `GET /sessions/{session_id}` with the key and acts on `result.ok` / `verification_id`.
+
+A leaked session token is worth one attempt against the subject the backend chose, and it dies with the session (`ttl_seconds`). A leaked enrol token is worth one enrolment of the named subject *with whatever face the holder uploads*: only issue one to a user you have already authenticated by other means, and never for a subject that already has a face (re-enrolment needs the key; see `/subjects/tokens`).
+
 ## Subjects
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` or `TTL_INVALID` |
+| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` — or just `photo` with `Authorization: Bearer <enrol token>` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` or `TTL_INVALID`; 401 `ENROL_TOKEN_INVALID`; 403 `ENROL_TOKEN_MISMATCH` |
+| `POST` | `/subjects/tokens` | json `{external_id, name?, ttl_seconds?, token_ttl_seconds?}` | 201 `{token, external_id, expires_at}` — single-use enrol token for a device (default life `ENROL_TOKEN_TTL_SECONDS` = 300, max one day). No `replace`: a token cannot overwrite an existing face, it gets 409; a rejected photo (422) hands the token back for a retry |
 | `GET` | `/subjects` | | list |
 | `GET` | `/subjects/{external_id}` | | subject or 404 `SUBJECT_NOT_FOUND` |
 | `DELETE` | `/subjects/{external_id}` | | 204 |
@@ -27,7 +47,7 @@ See [security](/docs/security#retention).
 
 ```json
 {
-  "session_id": "…", "mode": "verify", "purpose": "checkin",
+  "session_id": "…", "session_token": "…", "mode": "verify", "purpose": "checkin",
   "challenges": ["smile", "blink"], "flash_colors": ["ff0000", "00ff00", "0000ff"],
   "frame_kinds": ["neutral_start", "challenge_0", "challenge_1", "flash_0", "flash_1", "flash_2", "neutral_end"],
   "expires_at": "…Z", "ttl_seconds": 60, "flash_hold_ms": 450,
@@ -35,18 +55,20 @@ See [security](/docs/security#retention).
 }
 ```
 
-`POST /sessions/{id}/verify`, multipart: `subject_id` (optional when the session was created with one, forbidden to differ), `meta` (JSON), `frames[]` in `frame_kinds` order. Single use.
+`POST /sessions/{id}/verify`, multipart: `meta` (JSON), `frames[]` in `frame_kinds` order, `subject_id` (must equal the session's; only the key may narrow a liveness session). Single use: the session is spent on the first request whatever its outcome, so a rejected upload cannot be retried on the same token. Limits: body `MAX_UPLOAD_BYTES` (32 MB), each frame `MAX_FRAME_BYTES` (4 MB), `MAX_IMAGE_PIXELS` (20 Mpx).
 
 ```json
 {"frames": [{"kind": "neutral_start", "ts_ms": 0}, {"kind": "challenge_0", "ts_ms": 900}, "..."],
  "challenge_durations_ms": [420, 380], "client": {"platform": "ios"}}
 ```
 
-Answer: `{ok, mode, reason_code, scores: {match, spoof, consistency}, verification_id, details}` (`details` only with `DEBUG=1`). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID`.
+Answer: `{ok, mode, reason_code, scores: {match, spoof, consistency}, verification_id, details}` (`details` only with `DEBUG=1` and the project key, never to a device). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID` / `FRAME_COUNT`, 413 `PAYLOAD_TOO_LARGE`. An undecodable frame answers 200 with `reason_code: BAD_IMAGE`.
+
+`GET /sessions/{id}` (project key) → `{session_id, mode, subject_id, purpose, used, expires_at, result}` where `result` is the verify answer above or `null` while nothing was uploaded. This is how the backend learns the outcome.
 
 ## Verifications
 
-`GET /verifications?from&to&subject_id&purpose&ok&limit` → `[{id, subject_id, purpose, ok, reason_code, match_score, spoof_score, consistency_score, created_at}]`, newest first.
+`GET /verifications?from&to&subject_id&session_id&purpose&ok&limit` → `[{id, session_id, subject_id, purpose, ok, reason_code, match_score, spoof_score, consistency_score, created_at}]`, newest first.
 
 ## Policy
 

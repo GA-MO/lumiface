@@ -3,12 +3,11 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import update
 from sqlmodel import Session, col, delete, select
 
 from ..config import get_settings
 from ..db import get_engine
-from ..models import Subject, Verification, VerifySession, utcnow
+from ..models import EnrolToken, Subject, VerifySession, utcnow
 
 log = logging.getLogger("lumiface.retention")
 
@@ -23,14 +22,17 @@ def purge(db: Session, now: datetime | None = None) -> dict[str, int]:
     grace = timedelta(seconds=get_settings().session_purge_grace_seconds)
     expired_ids = db.exec(select(Subject.id).where(col(Subject.expires_at) < now)).all()
     if expired_ids:
-        # Keep the audit log; only the link to the deleted embedding goes.
-        db.exec(update(Verification).where(col(Verification.subject_id).in_(expired_ids)).values(subject_id=None))
+        from ..routers.subjects import unlink_verifications
+
+        unlink_verifications(db, list(expired_ids))
         db.exec(delete(Subject).where(col(Subject.id).in_(expired_ids)))
     sessions = db.exec(delete(VerifySession).where(col(VerifySession.expires_at) < now - grace))
+    tokens = db.exec(delete(EnrolToken).where(col(EnrolToken.expires_at) < now - grace))
     db.commit()
-    counts = {"subjects": len(expired_ids), "sessions": sessions.rowcount}
-    if counts["subjects"] or counts["sessions"]:
-        log.info("purged %d expired subject(s), %d spent session(s)", counts["subjects"], counts["sessions"])
+    counts = {"subjects": len(expired_ids), "sessions": sessions.rowcount, "enrol_tokens": tokens.rowcount}
+    if any(counts.values()):
+        log.info("purged %d expired subject(s), %d spent session(s), %d enrol token(s)",
+                 counts["subjects"], counts["sessions"], counts["enrol_tokens"])
     return counts
 
 

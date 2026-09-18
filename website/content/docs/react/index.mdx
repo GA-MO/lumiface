@@ -19,7 +19,7 @@ The package ships TypeScript source (`src/`), so Next.js needs `transpilePackage
 ## The view
 
 ```tsx
-import { LumifaceClient, LumifaceView, TH } from "@lumiface/react";
+import { LumifaceClient, LumifaceView, TH, sessionFromJson } from "@lumiface/react";
 
 const client = new LumifaceClient({ baseUrl: "https://faces.example.com", apiKey: key });
 
@@ -40,11 +40,43 @@ export function LoginWithFace({ userId }: { userId: string }) {
 }
 ```
 
-It fills its parent, so size the parent. Props mirror the Flutter view:
+It fills its parent, so size the parent. Props mirror the Flutter view.
+
+## Production auth
+
+Do not put the project API key in the bundle. Your backend creates the session with the key and returns the server's
+JSON; the view takes it through `sessionProvider` and uploads with the session's token:
+
+```tsx
+const client = new LumifaceClient({ baseUrl: "https://faces.example.com" }); // no apiKey
+
+<LumifaceView
+  client={client}
+  subjectId={userId}
+  sessionProvider={async () => sessionFromJson(await fetch("/api/face/session", { method: "POST" }).then((r) => r.json()))}
+  onResult={...}
+/>
+```
+
+Enrolment takes a single-use token that your backend gets from `POST /v1/subjects/tokens`
+(`client.createEnrolToken(...)` server-side):
+
+```tsx
+<LumifaceView client={client} flow="enroll" enrolToken={token} onResult={...} />
+```
+
+When `onResult` fires, tell your backend the session is done and let it read the outcome with
+`GET /v1/sessions/{id}` — the result object in the browser is not proof of anything.
+
+`apiKey` on `LumifaceClient` remains for development and for server-side code that manages subjects and policy.
+
+Props:
 
 <TypeTable
   type={{
-    client: { type: "LumifaceClient", required: true, description: "Server URL plus project API key." },
+    client: { type: "LumifaceClient", required: true, description: "Server URL; apiKey only in development." },
+    sessionProvider: { type: "() => Promise<FaceSession>", description: "Production: your backend creates the session, the browser only holds its token." },
+    enrolToken: { type: "string | null", description: "Production enrol: single-use token from POST /v1/subjects/tokens." },
     flow: { type: '"verify" | "liveness" | "enroll"', description: "Defaults to verify with a subjectId, liveness without." },
     subjectId: { type: "string | null", description: "Who to match against, or the id to enrol." },
     purpose: { type: "string", description: "Label stored with the verification." },

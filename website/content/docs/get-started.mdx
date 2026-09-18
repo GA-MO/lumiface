@@ -46,7 +46,7 @@ curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
 <Tabs items={["Flutter", "React", "curl"]}>
 <Tab value="Flutter">
 ```dart
-final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');
+final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');   // dev only: production uses sessionProvider, see docs
 
 FaceVerifyView(
   client: client,
@@ -63,7 +63,7 @@ The example app (`packages/lumiface/example`) has every use case on its first ta
 ```tsx
 import { LumifaceClient, LumifaceView } from "@lumiface/react";
 
-const client = new LumifaceClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" });
+const client = new LumifaceClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" }); // dev only: production uses sessionProvider, see docs
 
 <div style={{ height: "70vh" }}>
   <LumifaceView client={client} subjectId="E001" purpose="login" onResult={(r) => console.log(r)} />

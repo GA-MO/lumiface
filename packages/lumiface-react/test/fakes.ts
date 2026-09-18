@@ -44,6 +44,7 @@ export class FakeClient extends LumifaceClient {
     this.lastPurpose = options.purpose ?? "";
     return {
       id: "s1",
+      token: "tok",
       mode: options.subjectId ? "verify" : "liveness",
       purpose: this.lastPurpose,
       challenges: this.challenges,
@@ -66,13 +67,13 @@ export class FakeClient extends LumifaceClient {
     return this.response ?? { ok: true, mode: "verify", reasonCode: "OK", scores: { match: 0.9, spoof: 0.9, consistency: 0.9 }, verificationId: 1 };
   }
 
-  override async enroll(options: { externalId: string; name?: string }): Promise<Subject> {
+  override async enroll(options: { externalId?: string; name?: string }): Promise<Subject> {
     this.enrollCalls++;
     if (options.externalId === "REJECT") {
       const { LumifaceError } = await import("../src/types.ts");
       throw new LumifaceError("POSE_NOT_FRONTAL");
     }
-    return { externalId: options.externalId, name: options.name ?? "", enrollSpoofScore: 0.9, expiresAt: null };
+    return { externalId: options.externalId ?? "", name: options.name ?? "", enrollSpoofScore: 0.9, expiresAt: null };
   }
 }
 

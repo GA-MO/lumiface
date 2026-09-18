@@ -130,6 +130,12 @@ export interface FaceVerifyOptions {
   client: LumifaceClient;
   subjectId?: string | null;
   purpose?: string;
+  /**
+   * Fetches the session from your own backend (which holds the project key) instead of
+   * `client.createSession` with an API key in the browser. Return `sessionFromJson` of the
+   * server's `POST /v1/sessions` response.
+   */
+  sessionProvider?: () => Promise<FaceSession>;
   /** Overrides the project's client_config; omit to use what the server sends. */
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
@@ -147,6 +153,7 @@ export class FaceVerifyController extends FaceFlowController {
   readonly client: LumifaceClient;
   readonly subjectId: string | null;
   readonly purpose: string;
+  readonly sessionProvider: (() => Promise<FaceSession>) | undefined;
   readonly clientInfo: Record<string, unknown>;
   private readonly explicitConfig: LivenessConfig | undefined;
   private readonly random: () => number;
@@ -172,6 +179,7 @@ export class FaceVerifyController extends FaceFlowController {
     this.client = options.client;
     this.subjectId = options.subjectId ?? null;
     this.purpose = options.purpose ?? "";
+    this.sessionProvider = options.sessionProvider;
     this.clientInfo = options.clientInfo ?? {};
     this.explicitConfig = options.config;
     this.random = options.random ?? Math.random;
@@ -189,7 +197,8 @@ export class FaceVerifyController extends FaceFlowController {
     if (this.state.phase !== "idle") return;
     this.set({ phase: "starting" });
     try {
-      this.session = await this.client.createSession({ subjectId: this.subjectId, purpose: this.purpose });
+      this.session = await (this.sessionProvider?.() ??
+        this.client.createSession({ subjectId: this.subjectId, purpose: this.purpose }));
     } catch (e) {
       this.finish(clientError("NETWORK_ERROR", String(e)));
       return;
@@ -359,6 +368,7 @@ export class FaceVerifyController extends FaceFlowController {
         frames: this.frames,
         challengeDurationsMs: this.durations,
         client: this.clientInfo,
+        sessionToken: this.session!.token,
       });
       this.finish(r);
     } catch (e) {
@@ -380,9 +390,11 @@ export interface FaceEnrollOptions {
   source: FaceSignalSource;
   capturer: FrameCapturer;
   client: LumifaceClient;
-  externalId: string;
+  externalId?: string;
   name?: string;
   replace?: boolean;
+  /** Backend-issued token from `POST /v1/subjects/tokens`; fixes the subject and needs no API key. */
+  enrolToken?: string | null;
   config?: LivenessConfig;
   timeoutMs?: number;
 }
@@ -444,6 +456,7 @@ export class FaceEnrollController extends FaceFlowController {
         externalId: this.options.externalId,
         name: this.options.name,
         replace: this.options.replace,
+        enrolToken: this.options.enrolToken,
         photo,
       });
       this.finish({ ...clientError("OK"), ok: true, mode: "enroll", subject });

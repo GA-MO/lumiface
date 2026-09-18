@@ -34,10 +34,21 @@ class FaceResult:
         return self.width * self.height
 
 
+class BadImage(ValueError):
+    """Undecodable or oversized upload; callers answer BAD_IMAGE instead of 500."""
+
+
 def decode_image(data: bytes) -> np.ndarray:
     """JPEG/PNG bytes -> BGR uint8 array, honouring EXIF orientation (phone photos)."""
-    img = Image.open(io.BytesIO(data))
-    img = ImageOps.exif_transpose(img).convert("RGB")
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.width * img.height > get_settings().max_image_pixels:
+            raise BadImage("image too large")
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    except BadImage:
+        raise
+    except Exception as e:  # PIL raises a zoo of types for corrupt data
+        raise BadImage(str(e)) from e
     return np.ascontiguousarray(np.asarray(img)[:, :, ::-1])
 
 

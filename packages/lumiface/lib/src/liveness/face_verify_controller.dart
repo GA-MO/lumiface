@@ -136,11 +136,17 @@ class FaceVerifyController extends FaceFlowController {
     this.purpose = '',
     LivenessConfig? config,
     this.clientInfo = const {},
+    this.sessionProvider,
   }) : _explicitConfig = config;
 
   final LumifaceClient client;
   final String? subjectId;
   final String purpose;
+
+  /// Fetches the session from your own backend (which holds the project key)
+  /// instead of [client] creating it with an API key on the device. Return
+  /// `FaceSession.fromJson` of the server's `POST /v1/sessions` response.
+  final Future<FaceSession> Function()? sessionProvider;
   final Map<String, dynamic> clientInfo;
   final LivenessConfig? _explicitConfig;
   LivenessConfig _config = const LivenessConfig();
@@ -175,7 +181,7 @@ class FaceVerifyController extends FaceFlowController {
     if (state.value.phase != LivenessPhase.idle) return;
     _set(state.value.copyWith(phase: LivenessPhase.starting));
     try {
-      _session = await client.createSession(subjectId: subjectId, purpose: purpose);
+      _session = await (sessionProvider?.call() ?? client.createSession(subjectId: subjectId, purpose: purpose));
     } catch (e) {
       _finish(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
       return;
@@ -369,6 +375,7 @@ class FaceVerifyController extends FaceFlowController {
         frames: _frames,
         challengeDurationsMs: _durations,
         client: clientInfo,
+        sessionToken: _session!.token,
       );
       _finish(r);
     } catch (e) {
@@ -392,9 +399,10 @@ class FaceEnrollController extends FaceFlowController {
     required super.source,
     required super.capturer,
     required this.client,
-    required this.externalId,
+    this.externalId = '',
     this.name = '',
     this.replace = false,
+    this.enrolToken,
     this.config = const LivenessConfig(),
     this.timeout = const Duration(seconds: 60),
   });
@@ -403,6 +411,10 @@ class FaceEnrollController extends FaceFlowController {
   final String externalId;
   final String name;
   final bool replace;
+
+  /// Backend-issued token from `POST /v1/subjects/tokens`; the subject it names
+  /// gets enrolled and [client] needs no API key.
+  final String? enrolToken;
   @override
   final LivenessConfig config;
   final Duration timeout;
@@ -455,7 +467,8 @@ class FaceEnrollController extends FaceFlowController {
   Future<void> _submit() async {
     try {
       final jpeg = await capturer.captureJpeg();
-      final subject = await client.enroll(externalId: externalId, name: name, photoJpeg: jpeg, replace: replace);
+      final subject = await client.enroll(
+          externalId: externalId, name: name, photoJpeg: jpeg, replace: replace, enrolToken: enrolToken);
       _finish(VerifyResult.enrolled(subject));
     } on LumifaceException catch (e) {
       _finish(VerifyResult(ok: false, mode: 'enroll', reasonCode: e.reasonCode, message: e.details?.toString()));

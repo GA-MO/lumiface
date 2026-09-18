@@ -273,3 +273,192 @@ def test_subject_ttl_from_policy(client, person_crops):
         client.put("/v1/policy", headers=HEADERS, json={"overrides": {"subject_ttl_seconds": 0}, "merge": True})
         client.delete("/v1/subjects/POL", headers=HEADERS)
         client.delete("/v1/subjects/POL2", headers=HEADERS)
+
+
+def test_session_token_verifies_without_api_key(client, person_crops, enrolled):
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    assert s["session_token"]
+    meta = make_meta(s["challenges"], flash_colors=s["flash_colors"])
+    files = [("frames", (f"{k}.jpg", person_crops[0], "image/jpeg")) for k in s["frame_kinds"]]
+    bearer = {"Authorization": f"Bearer {s['session_token']}"}
+    # Wrong token: the session does not exist for this caller.
+    r = client.post(f"/v1/sessions/{s['session_id']}/verify", headers={"Authorization": "Bearer nope"},
+                    data={"meta": json.dumps(meta)}, files=files)
+    assert r.status_code == 404
+    r = client.post(f"/v1/sessions/{s['session_id']}/verify", headers={"Authorization": "Token x"},
+                    data={"meta": json.dumps(meta)}, files=files)
+    assert r.status_code == 401
+    r = client.post(f"/v1/sessions/{s['session_id']}/verify", headers=bearer,
+                    data={"meta": json.dumps(meta)}, files=files)
+    assert r.status_code == 200 and r.json()["ok"], r.text
+    # The token is only good for that one session.
+    s2 = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    r = client.post(f"/v1/sessions/{s2['session_id']}/verify", headers=bearer,
+                    data={"meta": json.dumps(meta)}, files=files)
+    assert r.status_code == 404
+    # No credentials at all.
+    r = client.post(f"/v1/sessions/{s2['session_id']}/verify", data={"meta": json.dumps(meta)}, files=files)
+    assert r.status_code == 401
+
+
+def test_enrol_token_flow(client, person_crops):
+    r = client.post("/v1/subjects/tokens", headers=HEADERS,
+                    json={"external_id": "TOK", "name": "Via token", "ttl_seconds": 0})
+    assert r.status_code == 201, r.text
+    tok = r.json()["token"]
+    bearer = {"Authorization": f"Bearer {tok}"}
+    photo = {"photo": ("a.jpg", person_crops[0], "image/jpeg")}
+    # The device cannot pick another subject than the one the backend fixed.
+    r = client.post("/v1/subjects", headers=bearer, data={"external_id": "OTHER"}, files=photo)
+    assert r.status_code == 403 and r.json()["detail"]["reason_code"] == "ENROL_TOKEN_MISMATCH"
+    r = client.post("/v1/subjects", headers=bearer, files=photo)
+    assert r.status_code == 201, r.text
+    assert r.json() == {**r.json(), "external_id": "TOK", "name": "Via token", "expires_at": None}
+    # Single use.
+    r = client.post("/v1/subjects", headers=bearer, files=photo)
+    assert r.status_code == 401 and r.json()["detail"]["reason_code"] == "ENROL_TOKEN_INVALID"
+    assert client.post("/v1/subjects", headers={"Authorization": "Bearer nope"}, files=photo).status_code == 401
+    # The project key still needs external_id, and the token cannot manage subjects.
+    r = client.post("/v1/subjects", headers=HEADERS, files=photo)
+    assert r.status_code == 422 and r.json()["detail"]["reason_code"] == "EXTERNAL_ID_REQUIRED"
+    assert client.get("/v1/subjects", headers=bearer).status_code == 401
+    assert client.delete("/v1/subjects/TOK", headers=bearer).status_code == 401
+    assert client.delete("/v1/subjects/TOK", headers=HEADERS).status_code == 204
+
+
+def _bearer_verify(client, s, frame_bytes, meta=None, **form):
+    meta = meta or make_meta(s["challenges"], flash_colors=s["flash_colors"])
+    files = [("frames", (f"{k}.jpg", frame_bytes, "image/jpeg")) for k in s["frame_kinds"]]
+    return client.post(f"/v1/sessions/{s['session_id']}/verify", headers={"Authorization": f"Bearer {s['session_token']}"},
+                       data={"meta": json.dumps(meta), **form}, files=files)
+
+
+def test_device_cannot_pick_the_subject(client, person_crops, enrolled):
+    # A liveness session stays liveness: naming a subject is refused and the attempt is spent.
+    s = client.post("/v1/sessions", headers=HEADERS, json={}).json()
+    r = _bearer_verify(client, s, person_crops[0], subject_id="E001")
+    assert r.status_code == 400 and r.json()["detail"]["reason_code"] == "SUBJECT_MISMATCH"
+    r = _bearer_verify(client, s, person_crops[0], subject_id="NOPE")
+    assert r.status_code == 409, "a refused attempt must consume the session, or it becomes a probe loop"
+    # A bound session ignores nothing either.
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    r = _bearer_verify(client, s, person_crops[0], subject_id="E002")
+    assert r.status_code == 400
+    assert _bearer_verify(client, s, person_crops[0]).status_code == 409
+    # The backend, holding the key, may still narrow a liveness session to a subject.
+    _, r = _run_session(client, person_crops[0], subject_id="E001")
+    assert r.status_code == 200
+
+
+def test_backend_reads_session_outcome(client, person_crops, enrolled):
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001", "purpose": "login"}).json()
+    bearer = {"Authorization": f"Bearer {s['session_token']}"}
+    assert client.get(f"/v1/sessions/{s['session_id']}", headers=bearer).status_code == 401
+    before = client.get(f"/v1/sessions/{s['session_id']}", headers=HEADERS).json()
+    assert before["used"] is False and before["result"] is None and before["subject_id"] == "E001"
+    r = _bearer_verify(client, s, person_crops[0])
+    assert r.status_code == 200 and r.json()["ok"]
+    after = client.get(f"/v1/sessions/{s['session_id']}", headers=HEADERS).json()
+    assert after["used"] is True and after["result"]["ok"] is True
+    assert after["result"]["verification_id"] == r.json()["verification_id"]
+    rows = client.get("/v1/verifications", headers=HEADERS, params={"session_id": s["session_id"]}).json()
+    assert [v["id"] for v in rows] == [r.json()["verification_id"]]
+    # Another project cannot read it.
+    other = client.post("/v1/projects", headers=ADMIN, json={"name": "other-tenant"}).json()
+    try:
+        assert client.get(f"/v1/sessions/{s['session_id']}", headers={"X-API-Key": other["api_key"]}).status_code == 404
+    finally:
+        client.delete(f"/v1/projects/{other['id']}", headers=ADMIN)
+
+
+def test_bad_uploads_are_answered_not_crashed(client, person_crops, enrolled):
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    r = _bearer_verify(client, s, b"not a jpeg at all")
+    assert r.status_code == 200 and r.json()["reason_code"] == "BAD_IMAGE"
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    r = client.post(f"/v1/sessions/{s['session_id']}/verify", headers={"Authorization": f"Bearer {s['session_token']}",
+                    "Content-Length": str(64 * 1024 * 1024)}, content=b"")
+    assert r.status_code == 413
+    s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    r = client.post(f"/v1/sessions/{s['session_id']}/verify", headers={"Authorization": f"Bearer {s['session_token']}"},
+                    data={"meta": "{not json"}, files=[("frames", ("a.jpg", person_crops[0], "image/jpeg"))])
+    assert r.status_code == 422 and "VerifyMeta" not in r.text and "pydantic" not in r.text
+    # httpx refuses to send non-ASCII headers; the parser and the compare must not 500 on them either way.
+    from fastapi import HTTPException
+
+    from app.deps import bearer_token, token_matches
+
+    with pytest.raises(HTTPException) as e:
+        bearer_token("Bearer é")
+    assert e.value.status_code == 401
+    assert token_matches("é", "abc") is False and bearer_token("Basic dXNlcjpwYXNz") is None
+
+
+def test_stored_frames_use_server_names(client, person_crops, enrolled, tmp_path):
+    from app.config import get_settings
+
+    settings = get_settings()
+    settings.store_frames, settings.frames_dir = True, str(tmp_path)
+    try:
+        s = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+        meta = make_meta(s["challenges"], flash_colors=s["flash_colors"])
+        meta["frames"][0]["kind"] = "/tmp/pwned"
+        meta["frames"][1]["kind"] = "../../escape"
+        r = _bearer_verify(client, s, person_crops[1], meta=meta)  # wrong person and wrong kinds: a failure gets stored
+        assert r.status_code == 200 and not r.json()["ok"]
+        written = sorted(p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*.jpg"))
+        assert written and all(w.startswith(f"1/{s['session_id']}/") for w in written), written
+        assert not any("pwned" in w or "escape" in w for w in written)
+    finally:
+        settings.store_frames, settings.frames_dir = False, "data/frames"
+
+
+def test_enrol_token_cannot_replace_and_is_returned_on_failure(client, person_crops, enrolled):
+    assert client.post("/v1/subjects/tokens", headers=HEADERS,
+                       json={"external_id": "E001", "replace": True}).status_code == 201  # ignored, not honoured
+    tok = client.post("/v1/subjects/tokens", headers=HEADERS, json={"external_id": "E001"}).json()["token"]
+    bearer = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/v1/subjects", headers=bearer, data={"replace": "true"},
+                    files={"photo": ("a.jpg", person_crops[0], "image/jpeg")})
+    assert r.status_code == 403
+    r = client.post("/v1/subjects", headers=bearer, files={"photo": ("a.jpg", person_crops[0], "image/jpeg")})
+    assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "SUBJECT_EXISTS"
+    assert client.get("/v1/subjects/E001", headers=HEADERS).json()["name"] == "Person A"
+    # A rejected photo hands the token back; the next good upload with it still works once E001 is gone.
+    tok = client.post("/v1/subjects/tokens", headers=HEADERS, json={"external_id": "NEW"}).json()["token"]
+    bearer = {"Authorization": f"Bearer {tok}"}
+    r = client.post("/v1/subjects", headers=bearer, files={"photo": ("a.jpg", b"garbage", "image/jpeg")})
+    assert r.status_code == 422 and r.json()["detail"]["reason_code"] == "BAD_IMAGE"
+    r = client.post("/v1/subjects", headers=bearer, files={"photo": ("a.jpg", person_crops[0], "image/jpeg")})
+    assert r.status_code == 201, r.text
+    assert client.post("/v1/subjects", headers=bearer,
+                       files={"photo": ("a.jpg", person_crops[0], "image/jpeg")}).status_code == 401
+    client.delete("/v1/subjects/NEW", headers=HEADERS)
+    assert client.post("/v1/subjects/tokens", headers=HEADERS,
+                       json={"external_id": "X", "token_ttl_seconds": 10**9}).status_code == 422
+
+
+def test_deleting_a_project_kills_its_tokens(client, person_crops):
+    p = client.post("/v1/projects", headers=ADMIN, json={"name": "doomed"}).json()
+    tenant = {"X-API-Key": p["api_key"]}
+    s = client.post("/v1/sessions", headers=tenant, json={}).json()
+    tok = client.post("/v1/subjects/tokens", headers=tenant, json={"external_id": "D"}).json()["token"]
+    assert client.delete(f"/v1/projects/{p['id']}", headers=ADMIN).status_code == 204
+    assert _bearer_verify(client, s, person_crops[0]).status_code == 404
+    assert client.post("/v1/subjects", headers={"Authorization": f"Bearer {tok}"},
+                       files={"photo": ("a.jpg", person_crops[0], "image/jpeg")}).status_code == 401
+
+
+def test_delete_subject_unlinks_audit_rows(client, person_crops):
+    from sqlmodel import Session, select
+
+    from app.db import get_engine
+    from app.models import Verification
+
+    assert _enrol(client, person_crops[0], "GONE").status_code == 201
+    _, r = _run_session(client, person_crops[0], subject_id="GONE")
+    assert r.status_code == 200
+    assert client.delete("/v1/subjects/GONE", headers=HEADERS).status_code == 204
+    with Session(get_engine()) as db:
+        rows = db.exec(select(Verification).where(Verification.subject_external_id == "GONE")).all()
+        assert rows and all(v.subject_id is None for v in rows)

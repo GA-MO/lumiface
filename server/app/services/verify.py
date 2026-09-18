@@ -9,7 +9,7 @@ from ..policy import get_policy
 from .antispoof import get_antispoof
 from .challenge import VerifyMeta, validate_timing
 from .expression import mouth_metrics, smile_ok
-from .face import FaceResult, cosine, decode_image, get_face_engine
+from .face import BadImage, FaceResult, cosine, decode_image, get_face_engine
 from .flash import face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
 
 
@@ -50,7 +50,10 @@ def _single_face(img) -> tuple[FaceResult | None, str | None]:
 
 def enroll(photo: bytes) -> EnrollResult:
     s = get_policy()
-    img = decode_image(photo)
+    try:
+        img = decode_image(photo)
+    except BadImage:
+        return EnrollResult(False, "BAD_IMAGE")
     face, err = _single_face(img)
     if err:
         return EnrollResult(False, err)
@@ -114,7 +117,10 @@ def verify(frames: list[bytes], meta: VerifyMeta, challenges: list[str], enrolle
     flash_rgb: list[np.ndarray] = []
     flash_bg_rgb: list[np.ndarray] = []
     for i, (data, fm) in enumerate(zip(frames, meta.frames)):
-        img = decode_image(data)
+        try:
+            img = decode_image(data)
+        except BadImage:
+            return VerifyResult(False, "BAD_IMAGE", details={"frame": fm.kind})
         if fm.kind.startswith("flash_"):
             # Tinted frames only feed the reflection check. Detection may fail
             # under a strong tint, so fall back to the last frontal box.

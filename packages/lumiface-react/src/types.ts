@@ -71,6 +71,8 @@ export function noseParallax(s: FaceSignal): number | null {
 
 export interface FaceSession {
   id: string;
+  /** Bearer secret good for this session's verify only; empty on servers that predate it. */
+  token: string;
   mode: "verify" | "liveness";
   purpose: string;
   challenges: Challenge[];
