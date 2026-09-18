@@ -50,7 +50,7 @@ Results on 2026-09-18:
 | 0.45 `balanced` | 0.00% | 3.20% |
 | 0.55 `strict` | 0.00% | 10.67% |
 
-How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over seven frames**, so the per-session FRR is higher than the single-frame column (turned and nodding frames score lower). Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
+How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over the key frames** (neutral, the peak of each challenge, neutral again), so the per-session FRR is higher than the single-frame column (turned and nodding frames score lower). Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
 
 ## STORE_FRAMES and DEBUG
 
@@ -60,10 +60,11 @@ How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well 
 
 | Signal | Genuine | Attack |
 |---|---|---|
-| Flash correlation (S25+) | 0.95–0.99 | replay on a phone screen 0.77–0.83 |
-| Flash response (S25+) | 11–19 | replay 6–11, emulator 0.3 |
-| Flash background ratio | 0.47–0.52 (phone), 0.04 (MacBook) | replay 1.15–2.31 |
-| Flash response (MacBook, Chrome) | 2.05 | |
+| Flash correlation (S25+, streamed) | 0.83–0.99 | replay on a phone screen 0.77–0.96 (correlation alone does not separate) |
+| Flash response (S25+, streamed) | 26–53 | replay 13–26, emulator 0.3 |
+| Flash background ratio | 0.38–0.45 (S25+), 0.28 (MacBook, Chrome) | replay 1.15–2.31 (phone camera), 1.27–1.39 (streamed, phone and webcam) |
+| Flash response (MacBook, Chrome, 640×480 stage) | 13.2 | replay 2.5 |
+| Flash response / locality (iPhone 12, Safari, both SDKs) | 6.9–15.9 / 0.39–0.52 | replay 0.95 / 3.04 |
 | Smile width gain | 1.14–1.24 | neutral 0.93–1.05 |
 | CVPR live prob, crop margin 0.3 | ≥ 0.30 | replay ≤ 0.015 |
 | Nose parallax shift at 25° | ≈ 0.11–0.15 | rotated flat photo 0.026 |

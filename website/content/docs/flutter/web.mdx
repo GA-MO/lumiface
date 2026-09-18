@@ -35,4 +35,4 @@ Serve the wasm folder with the right MIME types. No COOP/COEP headers are needed
 - **Yaw sign.** If a turn to the user's left reads as negative yaw on some camera, construct `MediaPipeCameraSource(yawSign: -1)`.
 - The camera needs `https` or `localhost`.
 
-Verified on Chrome desktop with the Mac webcam: alignment, blink, smile, three flash colours and upload all pass with the relaxed preset (liveness only, no subject).
+Verified on Chrome desktop with the Mac webcam and on iPhone 12 Safari (2026-09-18, `balanced`, verify against a subject): alignment, blink, smile, turns, nods and the flash all pass; on the iPhone screen the flash response was 7–16 with locality 0.39–0.52, and a video replayed on another phone was refused (`FLASH_FAIL` at response 0.95 / locality 3.0, or `TIMING_TOO_SLOW`).

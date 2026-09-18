@@ -164,6 +164,9 @@ async def stream_session(ws: WebSocket, session_id: str):
         except HTTPException:
             token = None
         client_info = hello.get("client") if isinstance(hello.get("client"), dict) else {}
+        # The browser's own description of itself, so the audit log tells iOS Safari from desktop Chrome.
+        if ws.headers.get("user-agent"):
+            client_info = {**client_info, "user_agent": ws.headers["user-agent"][:200]}
 
         with Session(get_engine()) as db:
             sess = db.get(VerifySession, session_id)

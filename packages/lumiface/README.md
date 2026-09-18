@@ -22,4 +22,4 @@ FaceVerifyView(
 
 Docs: `website/content/docs/flutter`. Example app: `examples/flutter` in the repository.
 
-iOS: `NSCameraUsageDescription`, platform ≥ 15.5. Android: minSdk ≥ 23. Web: MediaPipe tasks-vision is loaded from jsDelivr by the package asset `assets/lumiface_mediapipe.js`; pass `MediaPipeCameraSource(tasksVisionUrl:, modelUrl:)` through `sourceFactory` to self-host.
+iOS: `NSCameraUsageDescription`, platform ≥ 15.5. Android: minSdk ≥ 23; release builds work as they are, the package's `android/` module ships the ProGuard keep rules ML Kit needs under R8 (test on a phone with `--release`, debug builds hide the problem). Web: MediaPipe tasks-vision is loaded from jsDelivr by the package asset `assets/lumiface_mediapipe.js`; pass `MediaPipeCameraSource(tasksVisionUrl:, modelUrl:)` through `sourceFactory` to self-host.

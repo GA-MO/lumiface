@@ -138,7 +138,7 @@ def test_flash_shadow_mode_reports_scores(client, person_crops, enrolled):
     d = _details(client, s["session_id"])
     assert d["flash"]["enforced"] is False and d["flash"]["response"] < 0.5
     assert [e["name"] for e in d["events"]] == ["aligned", "challenge_done", "flash", "flash", "flash", "flash_end", "end"]
-    assert d["client"] == {"platform": "test"} and d["frames"] >= 8
+    assert d["client"] == {"platform": "test", "user_agent": "testclient"} and d["frames"] >= 8
 
 
 def test_smile_enforced_rejects_static_face(client, person_crops, enrolled):

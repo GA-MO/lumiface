@@ -4,6 +4,7 @@ import { detectorFor, type ChallengeDetector } from "./detectors.ts";
 import {
   type Box,
   clientError,
+  eyeOpen,
   isPresent,
   type Challenge,
   type FaceFlow,
@@ -290,18 +291,23 @@ export class FaceVerifyController extends FaceFlowController {
   }
 
   /** One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow. */
-  private streamFrame(s: FaceSignal) {
+  /** One frame per 1/fps of signal time, whatever the phase. `now` skips the limit: a blink is closed
+   *  for ~100 ms, shorter than the gap between frames, so the shut-eyes frame goes the moment it is seen. */
+  private streamFrame(s: FaceSignal, now = false) {
     if (!this.stream) return;
-    if (this.lastFrameAt !== null && s.tsMs - this.lastFrameAt < 1000 / this.streamFps) return;
+    if (!now && this.lastFrameAt !== null && s.tsMs - this.lastFrameAt < 1000 / this.streamFps) return;
     this.lastFrameAt = s.tsMs;
     void this.capturer.captureJpeg().then((jpeg) => this.stream?.sendFrame(jpeg, s.tsMs)).catch(() => {});
   }
 
+  private eyesShut(s: FaceSignal): boolean {
+    return this.state.phase === "challenge" && this.state.challenge === "blink" && (eyeOpen(s) ?? 1) <= this.config.eyeClosedThreshold;
+  }
 
   private onSignal(s: FaceSignal) {
     if (this.busy || this.disposed || isDone(this.state)) return;
     if (isPresent(s)) this.lastFaceSeenAt = s.tsMs;
-    this.streamFrame(s);
+    this.streamFrame(s, this.eyesShut(s));
     switch (this.state.phase) {
       case "aligning":
         this.align(s);

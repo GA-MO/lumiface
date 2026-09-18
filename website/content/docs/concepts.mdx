@@ -37,7 +37,7 @@ Every threshold and every client tunable, resolved per request as environment de
 |---|---|---|
 | Blink timing, smile hold, turn and nod angles | device (guidance) and **server** (from its own landmarks on the streamed frames) | scripted photos, slow videos, a patched client that skips its checks |
 | Nose parallax during a turn | device | a flat print or screen rotated in front of the camera |
-| Timing order and durations | server, on its own clock | replayed recordings responding at random times, forged timestamps |
+| Timing order and durations | server, on its own clock (device stamps only place frames into windows) | replayed recordings responding at random times, forged timestamps |
 | A frozen or repeated feed | server | a still image streamed as video |
 | MiniFASNet ensemble | server | prints, screens with visible bezels |
 | CVPR-2024 ResNet50 on a face crop | server | bezel-free screen replay |

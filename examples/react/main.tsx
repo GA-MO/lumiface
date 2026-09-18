@@ -39,6 +39,7 @@ function App() {
   const [serverUrl, setServerUrl] = useState(localStorage.getItem("fg.url") ?? "http://localhost:8000");
   const [subjectId, setSubjectId] = useState(localStorage.getItem("fg.subject") ?? "");
   const [thai, setThai] = useState(false);
+  const [debug, setDebug] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
   const [device, setDevice] = useState<VerifyResult | null>(null);
   const [verdict, setVerdict] = useState<string | null>(null);
@@ -65,7 +66,7 @@ function App() {
   };
 
   const flow: FaceFlow = mode === "enroll" ? "enroll" : mode === "liveness" ? "liveness" : "verify";
-  const common = { client, strings: thai ? TH : undefined, showDebug: true, onResult, onDone: () => setMode(null) };
+  const common = { client, strings: thai ? TH : undefined, showDebug: debug, onResult, onDone: () => setMode(null) };
   const session = (purpose: string, subject: string | null = subjectId || null) => () => backend.session(subject, purpose);
 
   return (
@@ -78,6 +79,7 @@ function App() {
           <label>Subject id</label>
           <input value={subjectId} onChange={(e) => setSubjectId(e.target.value)} />
           <label><input type="checkbox" checked={thai} onChange={(e) => setThai(e.target.checked)} style={{ width: "auto" }} /> Thai strings</label>
+          <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} style={{ width: "auto" }} /> Debug overlay (face box + signals)</label>
           <div>
             <button onClick={() => open("checkin")}>Check-in</button>
             <button onClick={() => open("login")}>Login (themed)</button>

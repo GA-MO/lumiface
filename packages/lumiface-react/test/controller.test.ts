@@ -97,6 +97,16 @@ describe("alignment follows what the preview shows", () => {
 });
 
 describe("FaceVerifyController", () => {
+  it("the shut-eyes frame of a blink is sent at once, ahead of the frame rate", async () => {
+    await boot(["blink", "smile"]);
+    const t = await align(0);
+    await emit(neutral(t + 10)); // a frame just went out; the next one is not due for 125 ms
+    const before = api.sentFrames.length;
+    await emit(neutral(t + 40, { eye: 0.1 }));
+    expect(api.sentFrames.length).toBe(before + 1);
+    expect(api.sentFrames[api.sentFrames.length - 1]).toBe(t + 40);
+  });
+
   it("happy path: blink + smile -> frames streamed throughout, events at each boundary, success", async () => {
     await boot(["blink", "smile"], { config: { parallaxWhenNoTurn: false } });
     expect(c.state.phase).toBe("aligning");

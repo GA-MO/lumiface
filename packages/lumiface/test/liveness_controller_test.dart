@@ -107,6 +107,16 @@ void main() {
     expect(c.state.value.result!.reasonCode, 'FACE_LOST');
   });
 
+  test('the shut-eyes frame of a blink is sent at once, ahead of the frame rate', () async {
+    await boot([Challenge.blink, Challenge.smile]);
+    final t = await align(0);
+    await emit(neutral(t + 10));
+    final before = api.sentFrames.length;
+    await emit(neutral(t + 40, eye: 0.1));
+    expect(api.sentFrames.length, before + 1);
+    expect(api.sentFrames.last, t + 40);
+  });
+
   test('happy path: blink + smile -> 4 frames uploaded, success', () async {
     await boot([Challenge.blink, Challenge.smile], config: const LivenessConfig(parallaxWhenNoTurn: false));
     expect(c.state.value.phase, LivenessPhase.aligning);

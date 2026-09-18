@@ -83,7 +83,8 @@ Props:
     config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
     strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
     theme: { type: "Partial<LumifaceTheme>", description: "Colours, guide shape and geometry, message style, progress." },
-    camera: { type: "MediaPipeSourceOptions", description: "facing, wasmUrl, modelUrl, delegate, yawSign, detectIntervalMs." },
+    camera: { type: "MediaPipeSourceOptions", description: "facing, wasmUrl, modelUrl, delegate, yawSign, detectIntervalMs, jpegQuality, width, height." },
+    clientInfo: { type: "Record<string, unknown>", description: "Sent in the stream hello and stored with the verification." },
     showDebug: { type: "boolean", description: "Face box and a line of raw signals." },
     autoStart: { type: "boolean", description: "false: call start() from useLumiface yourself." },
     renderOverlay: { type: "(scope) => ReactNode", description: "Replaces the whole overlay." },
@@ -94,6 +95,10 @@ Props:
     onResult: { type: "(result) => void", required: true, description: "Once, when the flow ends." },
     onFlashChanged: { type: "(flashing) => void", description: "Raise and restore brightness on kiosks that allow it." },
     onDone: { type: "() => void", description: "The default button." },
+    onStateChanged: { type: "(state) => void", description: "Every state change." },
+    renderLoading: { type: "() => ReactNode", description: "While the camera and MediaPipe load." },
+    renderError: { type: "(error) => ReactNode", description: "When the camera cannot start." },
+    style: { type: "CSSProperties", description: "On the outer box, with className." },
   }}
 />
 
@@ -111,7 +116,7 @@ return (
 );
 ```
 
-It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. The effect re-runs when `client`, `flow`, `subjectId` or `purpose` change.
+It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. Options: `client`, `flow`, `sessionProvider`, `enrolTokenProvider`, `config`, `clientInfo`, `camera`, `autoStart`, `onResult`, `onStateChanged`, `onFlashChanged`. The effect re-runs when `client` or `flow` change.
 
 ## Headless
 
@@ -123,4 +128,4 @@ It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, 
 bun install && bun run dev:react     # http://localhost:3010
 ```
 
-Check-in, login (themed), liveness only, enrol from camera, custom overlay; server URL, key and subject id are remembered in `localStorage`.
+Check-in, login (themed), liveness only, enrol from camera, custom overlay; the server URL and subject id are remembered in `localStorage`. The key lives in `examples/backend`, which the page reaches through the `/api` proxy.

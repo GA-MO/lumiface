@@ -93,7 +93,7 @@ got and checks that the blink (eye aspect ratio dip and recovery), the smile (mo
 the neutral frames), the turn or the nod (yaw / pitch) actually happened; the colour on the face during each
 flash window is read from those frames; passive anti-spoof, identity and consistency run on the key frames it
 chose. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
-repeats the same bytes is refused (`FRAMES_STATIC`); the device's `ts` values are recorded but decide nothing.
+repeats the same bytes is refused (`FRAMES_STATIC`). The device's `ts` values (frame header and event `ts`) decide only which window a frame falls into — a phone uploads each frame a few hundred ms after the camera took it while its events arrive at once, so placing frames by arrival would put a colour's reflection in the next colour's window — and never a duration; a client that sends no `ts` is placed by arrival.
 
 Limits: `MAX_FRAME_BYTES` per frame (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_FRAMES` (900),
 `MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). Frames beyond what the link can carry are dropped by the SDKs
@@ -112,7 +112,7 @@ Answer:
 }
 ```
 
-`details` is empty for the device; the backend sees the server's windows, per-challenge readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID` / `FRAME_COUNT`, 413 `PAYLOAD_TOO_LARGE`. An undecodable frame answers 200 with `reason_code: BAD_IMAGE`.
+`details` is empty for the device; the backend sees the server's windows, per-challenge readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
 
 `GET /sessions/{id}` (project key) is how the backend learns the outcome; `result` is the verify answer above, or `null` while nothing was uploaded:
 

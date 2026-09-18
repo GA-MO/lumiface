@@ -63,4 +63,4 @@ The flash step **must** fill the whole screen with `flashColor` for at least `se
 
 ## Your own camera or detector
 
-Implement `CameraFaceSource` (signals, `captureJpeg`, `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`) and pass it through `sourceFactory`. The widget tests do this with a fake camera to run the whole overlay without a device.
+Implement `CameraFaceSource` (`initialize`, `startStream` / `stopStream`, `dispose`, `signals`, `captureJpeg`, `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`, `isInitialized`) and pass it through `sourceFactory`. The widget tests do this with a fake camera to run the whole overlay without a device.

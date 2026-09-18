@@ -55,7 +55,7 @@ Every session response carries `client_config`, the `client.*` fields. `FaceVeri
 
 ## Which knobs matter
 
-- **False rejects of real people**: lower `match_threshold` (0.40), `spoof_hard_floor` (0.20), raise `client.challenge_timeout_ms`, `max_challenge_ms`. Check `details.smile` and `details.flash` with `DEBUG=1` before loosening `smile_*` and `flash_*`.
+- **False rejects of real people**: lower `match_threshold` (0.40), `spoof_hard_floor` (0.20), raise `client.challenge_timeout_ms`, `max_challenge_ms`. Check `challenge_<i>` and `flash` in the verification row's `details` before loosening `smile_*` and `flash_*`.
 - **Screen replay getting through**: keep `cvpr_enabled`, keep `flash_enforce`, raise `flash_min_correlation`.
 - **Masks**: `required_challenge=smile` with `smile_enforce` is the only gate; there is no passive detector for silicone.
 - **Emulators and webcams**: `flash_enforce=false` (the "screen" is a small window), `min_face_size=60`.

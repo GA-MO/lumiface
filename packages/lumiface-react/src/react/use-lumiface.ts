@@ -95,7 +95,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
                   return p();
                 },
                 config: o.config,
-                clientInfo: { platform: "web", ...o.clientInfo },
+                clientInfo: { platform: "web", sdk: "lumiface-react", ...o.clientInfo },
               });
         controllerRef.current = controller;
         controller.subscribe((s) => {

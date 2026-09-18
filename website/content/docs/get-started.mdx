@@ -76,7 +76,12 @@ what the device reported and what the backend read for itself.
 bun run dev:react      # examples/react on http://localhost:3010, /api proxied to :8010
 ```
 
-The browser needs `https` or `localhost` for the camera.
+The browser needs `https` or `localhost` for the camera. To try it on a phone over Wi‑Fi, serve the page with a
+certificate and let it front the server too: `DEMO_TLS_CERT=… DEMO_TLS_KEY=… bun run dev:react` serves `https://<mac-ip>:3010`
+and proxies `/v1` (with its WebSocket) to the server and `/api` to the backend, so the page's server URL is its own origin.
+A self-signed CA (`openssl`, SAN = the Mac's IP) installed and trusted on the phone (Settings → General → About →
+Certificate Trust Settings) is enough; the Flutter web build (`flutter run -d web-server --web-tls-cert-path …`) can use
+the same `https://<mac-ip>:3010` for both URLs.
 </Tab>
 </Tabs>
 </Step>
@@ -110,6 +115,6 @@ them in Python. Details in
 
 ## What a verification looks like
 
-The app asks for a session, aligns the face, performs two random challenges (a smile is always one of them), flashes three server-chosen colours, and uploads seven JPEG frames with their timestamps. The server re-checks timing, runs both anti-spoof gates on every frame, verifies head pose and the smile, checks the flash reflection, matches every frame against the enrolled embedding, and requires the same identity across frames. The answer is `ok`, a `reason_code` and three scores.
+The app asks for a session, opens the stream, aligns the face, performs two random challenges (a smile is always one of them) and flashes three server-chosen colours, streaming JPEG frames the whole time (~8 fps) with an event at each boundary. The server clocks the session itself, confirms each challenge from its own landmarks inside its window, reads the flash reflection from the frames of each colour window, runs both anti-spoof gates on the key frames it picked, matches them against the enrolled embedding and requires the same identity across them. The answer is `ok`, a `reason_code` and three scores.
 
 Measured on a MacBook webcam in Chrome (relaxed preset, liveness only): flash correlation 0.99, flash response 2.05, background ratio 0.04, smile width gain 1.24, spoof 0.99, CVPR 0.998.

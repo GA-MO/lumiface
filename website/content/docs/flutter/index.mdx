@@ -12,7 +12,7 @@ dependencies:
 ```
 
 - iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer.
-- Android: `minSdk` 23 or newer.
+- Android: `minSdk` 23 or newer. Release builds need no ProGuard work of yours: the package ships the keep rules ML Kit requires under R8 (without them face detection fails on every frame in release).
 - Web: nothing to add; the MediaPipe glue is loaded from the package assets. See [Web](/docs/flutter/web).
 
 ## The view
@@ -79,6 +79,10 @@ The `VerifyResult` the app receives is for the UI; the decision is the `GET /v1/
     facing: { type: "CameraFacing", description: "front (default) or back." },
     showDebug: { type: "bool", description: "Draws the face box and a line of raw signals." },
     autoStart: { type: "bool", description: "false hands you the controller through onController to start later." },
+    onController: { type: "void Function(FaceFlowController)?", description: "Receives the controller once the camera is up." },
+    clientInfo: { type: "Map<String, dynamic>", description: "Sent in the stream hello and stored with the verification (platform, app version)." },
+    loadingBuilder: { type: "WidgetBuilder?", description: "Shown while the camera opens." },
+    errorBuilder: { type: "Widget Function(BuildContext, Object)?", description: "Shown when the camera cannot start." },
     overlayBuilder: { type: "FaceScopeBuilder?", description: "Replaces the whole overlay; the camera stays underneath." },
     promptBuilder: { type: "FaceScopeBuilder?", description: "Replaces the message line." },
     progressBuilder: { type: "FaceScopeBuilder?", description: "Replaces the progress bar." },
@@ -99,7 +103,9 @@ class VerifyResult {
   String reasonCode;      // OK or a code from the reason-codes page
   VerifyScores scores;    // match, spoof, consistency (null when not applicable)
   int? verificationId;    // set on success for verify and liveness
+  String? sessionId;      // hand it to your backend for GET /v1/sessions/{id}
   Subject? subject;       // set on success for enroll
+  String? message;        // detail for client-side codes (NETWORK_ERROR, CAPTURE_ERROR)
 }
 ```
 

@@ -172,7 +172,7 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
             widget.sessionProvider ?? (throw ArgumentError('FaceFlow.verify and liveness need sessionProvider')),
         flow: widget.flow,
         config: widget.config,
-        clientInfo: {'platform': platform, ...widget.clientInfo},
+        clientInfo: {'platform': platform, 'sdk': 'lumiface-flutter', ...widget.clientInfo},
       ),
     };
   }

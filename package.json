@@ -14,6 +14,7 @@
     "dev:backend": "cd examples/backend && uv run uvicorn main:app --host 0.0.0.0 --port 8010",
     "dev:react": "bun run --cwd examples/react dev",
     "test:react": "bun run --cwd packages/lumiface-react test",
+    "check:docs": "bun website/scripts/check-docs.ts",
     "typecheck": "bun run --cwd packages/lumiface-react typecheck && bun run --cwd examples/react typecheck && bun run --cwd website typecheck"
   }
 }

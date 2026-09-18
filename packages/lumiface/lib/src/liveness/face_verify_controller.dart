@@ -290,10 +290,15 @@ class FaceVerifyController extends FaceFlowController {
 
   /// One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow.
   /// One encode at a time: a slow device sends fewer frames rather than piling up isolates.
-  void _streamFrame(FaceSignal s) {
+  /// [now] skips both limits: a blink is closed for ~100 ms, shorter than the gap between two
+  /// frames at 7 fps, so the frame that shows the eyes shut is sent the moment the device sees it.
+  void _streamFrame(FaceSignal s, {bool now = false}) {
     final stream = _stream;
-    if (stream == null || _capturing) return;
-    if (_lastFrameAt != null && s.tsMs - _lastFrameAt! < 1000 ~/ streamFps) return;
+    if (stream == null) return;
+    if (!now) {
+      if (_capturing) return;
+      if (_lastFrameAt != null && s.tsMs - _lastFrameAt! < 1000 ~/ streamFps) return;
+    }
     _lastFrameAt = s.tsMs;
     _capturing = true;
     capturer
@@ -303,11 +308,14 @@ class FaceVerifyController extends FaceFlowController {
         .whenComplete(() => _capturing = false);
   }
 
+  bool _eyesShut(LivenessState st, FaceSignal s) =>
+      st.phase == LivenessPhase.challenge && st.challenge == Challenge.blink && (s.eyeOpen ?? 1) <= config.eyeClosedThreshold;
+
   Future<void> _onSignal(FaceSignal s) async {
     if (_busy || _disposed || state.value.isDone) return;
     final st = state.value;
     if (s.present) _lastFaceSeenAt = s.tsMs;
-    _streamFrame(s);
+    _streamFrame(s, now: _eyesShut(st, s));
 
     switch (st.phase) {
       case LivenessPhase.aligning:

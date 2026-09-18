@@ -36,16 +36,16 @@
 
 ## What it is
 
-A selfie login usually ends at "a face was detected". Lumiface answers two questions instead: **is a real person in front of the camera**, and **is it the person you enrolled**. The device runs a short session (two random challenges, a smile always among them, then three screen-flash colours the server picked) and uploads seven JPEGs. The server re-checks the timing, runs MiniFASNet and a CVPR-2024 anti-spoof gate on every frame, verifies the head pose and the smile, checks that the cheeks reflected the flash colours in order, and matches **every frame** against the enrolled ArcFace embedding. One `POST /v1/sessions/{id}/verify`, one `{ok, reason_code, scores}`.
+A selfie login usually ends at "a face was detected". Lumiface answers two questions instead: **is a real person in front of the camera**, and **is it the person you enrolled**. The device runs a short session (two random challenges, a smile always among them, then three screen-flash colours the server picked) while streaming JPEG frames over a WebSocket the whole time. The server clocks the session itself, confirms each blink, smile, turn and nod from its own landmarks inside its window, checks that the cheeks reflected the flash colours in order, runs MiniFASNet and a CVPR-2024 anti-spoof gate on the key frames, and matches **every key frame** against the enrolled ArcFace embedding. One stream, one `{ok, reason_code, scores}`.
 
 Faces never leave your network. The server is a FastAPI app with SQLite or Postgres; the models run on CPU. Every project has an API key and a **policy**, a preset plus overrides for every threshold, changed through the API without a redeploy or an app update.
 
 ## Features
 
 - **Identity, not only liveness.** With a `subjectId` the server computes the cosine similarity of every frame against the enrolled face (ArcFace, InsightFace buffalo_l: 99.52% on LFW, EER 0.83%) and fails with `NO_MATCH` when any frame is under `match_threshold`; frames must also match each other (`INCONSISTENT`). Without a `subjectId` the same session is a liveness check.
-- **Active liveness on the device.** ML Kit (iOS, Android) or MediaPipe (web) drives blink, turn, nod and smile with timing checks and nose parallax, so a flat photo turning in front of the camera fails before upload.
+- **Active liveness, guided on the device, judged on the server.** ML Kit (iOS, Android) or MediaPipe (web) guides blink, turn, nod and smile and checks nose parallax, so a flat photo turning in front of the camera fails before upload; the server re-reads every gesture from its own landmarks, so a patched client gains nothing.
 - **Screen flash.** Three server-chosen colours; the server correlates the chroma deltas on the face with the sequence and rejects when the background reflected as much as the face.
-- **Two anti-spoof models.** MiniFASNet for prints and screens, the CVPR-2024 ResNet50 gate for bezel-free replay, on every frame.
+- **Two anti-spoof models.** MiniFASNet for prints and screens, the CVPR-2024 ResNet50 gate for bezel-free replay, on every key frame.
 - **One policy per project.** `balanced`, `strict`, `relaxed`, `emulator` presets plus per-threshold overrides through `PUT /v1/policy`; the session carries the client tunables, so apps follow the policy without a rebuild.
 - **Three flows, two SDKs.** `verify`, `liveness`, `enroll` from Flutter (`FaceVerifyView`) or React (`LumifaceView`), both with a headless controller, themes, and strings in English and Thai.
 - **Every code documented.** `TIMING_TOO_FAST`, `SPOOF`, `FLASH_FAIL`, `NO_MATCH`, ... each with who raises it and what the user should do. See [reason codes](https://ga-mo.github.io/lumiface/docs/reason-codes).
@@ -126,7 +126,7 @@ The answer is the same from every client:
 |---|---|---|
 | **Enrol** | `POST /v1/subjects` with a photo, or `FaceFlow.enroll` from the camera | One frontal face, anti-spoof checked, stored as a 512-d ArcFace embedding under `external_id`. A second photo with `replace` updates it; `ttl_seconds` (or the policy's `subject_ttl_seconds`) drops it again after a while, a purge loop deletes the row. |
 | **Session** | `POST /v1/sessions` from your backend with the API key | The server picks the challenges and flash colours, stamps a TTL, returns the client tunables and a `session_token` for the device. |
-| **Challenge** | on the device | Blink / turn / nod / smile with timing and parallax checks, then the flash; a frame is captured per step. |
+| **Challenge** | on the device | Blink / turn / nod / smile guided by ML Kit or MediaPipe, with the parallax check, then the flash; frames stream up the whole time (~8 fps) with an event at each boundary. |
 | **Verify** | `WS /v1/sessions/{id}/stream` with the session token: frames flow up the whole time | The server clocks the flow itself, confirms each blink / smile / turn / nod from its own landmarks in the frames, reads the flash reflection, then anti-spoof → **match against `E001`** → consistency. The first failing check names the `reason_code`. |
 | **Confirm** | `GET /v1/sessions/{id}` from your backend | Reads `result.ok`; the device's own report is not trusted. |
 
@@ -174,9 +174,10 @@ Thresholds live in the policy (`match_threshold` 0.45 for `balanced`, 0.55 for `
 | | |
 |---|---|
 | `server/` | FastAPI: `app/routers` (subjects, sessions, verifications, policy, projects), `app/services` (face, antispoof, flash, expression, verify), `app/policy.py` (presets and schema) |
-| `packages/lumiface/` | Flutter: `FaceVerifyView`, `FaceVerifyController`, `LumifaceClient`, `LivenessStrings`, `FaceVerifyTheme`; `example/` app |
+| `packages/lumiface/` | Flutter: `FaceVerifyView`, `FaceVerifyController`, `LumifaceClient`, `LivenessStrings`, `FaceVerifyTheme`; `android/` only carries the ProGuard keep rules ML Kit needs |
 | `packages/lumiface-react/` | React: `LumifaceView`, `useLumiface`, headless controller, MediaPipe source; `@lumiface/react/core` is browser-free |
 | `website/` | Docs (fumadocs + React Router), builds to `pages-site/` for GitHub Pages |
+| `examples/` | `flutter` (use cases, subjects, history), `react` (Vite demo), `backend` (the key holder, ~100 lines) |
 | `docs/plans/face-check-in.md` | Plan, status and the Android emulator setup |
 
 ## Working on it
@@ -186,7 +187,8 @@ cd server && uv run pytest -q                              # server
 cd packages/lumiface && flutter analyze && flutter test    # Flutter package
 bun install && bun run typecheck && bun run test:react     # React SDK + website
 bun run dev:backend                                   # examples/backend on :8010
-cd examples/flutter && flutter run -d <device>        # or -d chrome
+cd examples/flutter && flutter run -d <device>        # or -d chrome; use --release on a phone, debug hides R8 issues
+bun run check:docs                                    # every reason code, event and client code has a docs line
 bun run build:pages                                        # static docs into pages-site/
 ```
 
