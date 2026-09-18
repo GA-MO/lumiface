@@ -58,9 +58,9 @@ function Wire({ vertical }: { vertical: boolean }) {
   return (
     <svg viewBox={vertical ? "0 0 60 120" : "0 0 240 60"} className={vertical ? "mx-auto h-28 w-16" : "h-16 w-full"} aria-hidden>
       <path d={d} fill="none" stroke="var(--color-fd-border)" strokeWidth="2" />
-      <path d={d} fill="none" stroke="var(--color-fd-primary)" strokeWidth="2" strokeDasharray="8 8" style={{ animationName: "fa-dash, fa-wire-on", animationDuration: "1s, " + T }} />
+      <path d={d} fill="none" stroke="var(--color-brand)" strokeWidth="2" strokeDasharray="8 8" style={{ animationName: "fa-dash, fa-wire-on", animationDuration: "1s, " + T }} />
       {[0, 1, 2, 3, 4].map((i) => (
-        <circle key={i} r="4" fill="var(--color-fd-primary)" style={{ offsetPath: `path('${d}')`, animationName: `fa-packet-${i}` }} />
+        <circle key={i} r="4" fill="var(--color-brand)" style={{ offsetPath: `path('${d}')`, animationName: `fa-packet-${i}` }} />
       ))}
     </svg>
   );
@@ -69,15 +69,15 @@ function Wire({ vertical }: { vertical: boolean }) {
 /** The whole flow on a loop: device challenges, flash, upload, four server gates, verdict. */
 export function FlowAnimation() {
   return (
-    <div className="fa mt-12 grid items-center gap-4 rounded-3xl border border-fd-border bg-fd-card p-6 shadow-sm sm:grid-cols-[auto_1fr_auto] sm:gap-6 sm:p-8">
+    <div className="fa mt-12 grid items-center gap-4 rounded-3xl border border-fd-border bg-fd-card p-6 sm:grid-cols-[auto_1fr_auto] sm:gap-6 sm:p-8">
       <style>{css}</style>
 
       <div className="flex flex-col items-center gap-3">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Smartphone className="h-4 w-4 text-fd-primary" />
+          <Smartphone className="h-4 w-4 text-brand" />
           On the device
         </div>
-        <div className="relative aspect-[9/17] w-[150px] overflow-hidden rounded-[1.4rem] border-[5px] border-[#1a222d] bg-[#232c38]">
+        <div className="relative aspect-[9/17] w-[150px] overflow-hidden rounded-[1.4rem] border-[5px] border-[#1d1f2c] bg-[#232c38]">
           <svg viewBox="0 0 90 170" className="absolute inset-0 h-full w-full" aria-hidden>
             <rect width="90" height="170" fill="#2b3542" />
             <path d="M-10 170 V138 C10 118 30 112 45 112 C60 112 80 118 100 138 V170 Z" fill="#3a4554" />
@@ -135,7 +135,7 @@ export function FlowAnimation() {
 
       <div className="w-full sm:w-[260px]">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Server className="h-4 w-4 text-fd-primary" />
+          <Server className="h-4 w-4 text-brand" />
           On your server
         </div>
         <ul className="mt-3 space-y-2">

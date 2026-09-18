@@ -82,7 +82,7 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
       )}
       renderResult={(s) => (
         <div className="flex justify-center pb-5">
-          <button type="button" onClick={onClose} className="rounded-lg bg-white px-5 py-2 text-sm font-medium text-black shadow-sm hover:bg-white/90">
+          <button type="button" onClick={onClose} className="rounded-full bg-white px-5 py-2 text-sm font-medium text-[#0d0d18] hover:bg-white/90">
             {s.state.phase === "success" ? s.strings.done : s.strings.retry}
           </button>
         </div>

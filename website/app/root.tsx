@@ -8,7 +8,7 @@ export function links(): Route.LinkDescriptors {
     { rel: "icon", type: "image/svg+xml", href: `${import.meta.env.BASE_URL}icon.svg` },
     { rel: "preconnect", href: "https://fonts.googleapis.com" },
     { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-    { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&display=swap" },
+    { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter+Tight:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" },
   ];
 }
 
@@ -22,7 +22,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body className="flex min-h-screen flex-col bg-background text-foreground antialiased">
-        <RootProvider theme={{ attribute: ["class", "data-theme"], defaultTheme: "system" }} search={{ options: { type: "static" } }}>{children}</RootProvider>
+        <RootProvider theme={{ attribute: ["class", "data-theme"], defaultTheme: "dark" }} search={{ options: { type: "static" } }}>{children}</RootProvider>
         <ScrollRestoration />
         <Scripts />
       </body>

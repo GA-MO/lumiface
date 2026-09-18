@@ -29,9 +29,9 @@ export function PresetSwitch({ code }: { code: Record<string, HastNode> }) {
   const [preset, setPreset] = useState("strict");
   const current = PRESETS[preset];
   return (
-    <div className="overflow-hidden rounded-2xl border border-fd-border bg-fd-card shadow-sm">
+    <div className="overflow-hidden rounded-3xl border border-fd-border bg-fd-card">
       <div className="flex flex-col gap-3 border-b border-fd-border p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex rounded-lg bg-fd-muted p-1" role="tablist" aria-label="Preset">
+        <div className="inline-flex rounded-full bg-fd-muted p-1" role="tablist" aria-label="Preset">
           {Object.keys(PRESETS).map((name) => (
             <button
               key={name}
@@ -39,7 +39,7 @@ export function PresetSwitch({ code }: { code: Record<string, HastNode> }) {
               role="tab"
               aria-selected={preset === name}
               onClick={() => setPreset(name)}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground aria-selected:bg-fd-background aria-selected:text-fd-foreground aria-selected:shadow-sm focus-visible:outline-2 focus-visible:outline-fd-primary"
+              className="rounded-full px-3 py-1.5 text-sm font-medium text-fd-muted-foreground transition-colors hover:text-fd-foreground aria-selected:bg-fd-background aria-selected:text-fd-foreground aria-selected:shadow-sm focus-visible:outline-2 focus-visible:outline-fd-ring"
             >
               {name}
             </button>

@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="docs/images/logo.svg" width="260" alt="Lumiface">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/logo-dark.svg">
+    <img src="docs/images/logo-light.svg" width="220" alt="Lumiface">
+  </picture>
 </p>
 
 <p align="center">

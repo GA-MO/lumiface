@@ -48,11 +48,11 @@ function StepDots({ done, total, color, track }: { done: number; total: number; 
 
 function Phone({ photo, position, children }: { photo: string; position: string; children: React.ReactNode }) {
   return (
-    <div className="relative mx-auto aspect-[9/19] w-full max-w-[220px] rounded-[2.4rem] border-[6px] border-[#1a222d] bg-[#1a222d] shadow-[0_40px_70px_-30px_rgba(15,23,42,0.6)] ring-1 ring-black/10">
+    <div className="relative mx-auto aspect-[9/19] w-full max-w-[220px] rounded-[2.4rem] border-[6px] border-[#1d1f2c] bg-[#1d1f2c] shadow-[0_40px_70px_-30px_rgba(0,0,0,0.7)] ring-1 ring-white/10">
       <div className="absolute -left-[7px] top-24 h-9 w-[3px] rounded-l bg-[#2a3440]" />
       <div className="absolute -left-[7px] top-36 h-9 w-[3px] rounded-l bg-[#2a3440]" />
       <div className="absolute -right-[7px] top-28 h-14 w-[3px] rounded-r bg-[#2a3440]" />
-      <div className="relative h-full w-full overflow-hidden rounded-[1.9rem] bg-[#0f141c]">
+      <div className="relative h-full w-full overflow-hidden rounded-[1.9rem] bg-[#0d0d18]">
         <CameraFrame src={photo} position={position} />
         <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/45 to-transparent" />
         {children}
@@ -174,11 +174,11 @@ export function OverlayVariants({ snippets }: { snippets: HastNode[] }) {
           <figcaption className="mt-6">
             <div className="flex items-center gap-2">
               <h3 className="font-display text-base font-semibold">{title}</h3>
-              <code className="rounded-md bg-fd-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-fd-primary">{tag}</code>
+              <code className="rounded-md bg-brand-soft px-1.5 py-0.5 font-mono text-[11px] text-brand">{tag}</code>
             </div>
             <p className="mt-1.5 text-sm text-fd-muted-foreground">{body}</p>
           </figcaption>
-          <Code hast={snippets[i]} className="home-code mt-3 overflow-x-auto rounded-lg border border-fd-border bg-fd-card p-3 font-mono text-[11.5px] leading-5" />
+          <Code hast={snippets[i]} className="home-code mt-3 overflow-x-auto rounded-[10px] border border-fd-border bg-fd-card p-3 font-mono text-[11.5px] leading-5" />
         </figure>
       ))}
     </div>
