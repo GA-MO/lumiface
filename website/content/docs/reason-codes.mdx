@@ -18,7 +18,7 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 | `FACE_TOO_SMALL` | face box under `min_face_size` | move closer |
 | `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
 | `POSE_MISMATCH` | no frame in the turn or nod window shows the pose | perform the challenge |
-| `EXPRESSION_MISMATCH` | the server saw no blink (eyes never closed and reopened) or no smile in the window | blink fully, smile wider |
+| `EXPRESSION_MISMATCH` | the server saw no blink (eye aspect ratio never fell to 0.75 of the open baseline and rose back) or no smile in the window | close the eyes slowly, smile wider |
 | `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
 | `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
 | `INCONSISTENT` | frames not the same person | one person for the whole session |

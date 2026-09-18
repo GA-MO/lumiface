@@ -11,7 +11,7 @@ dependencies:
     path: ../lumiface/packages/lumiface   # or a git url with a tag
 ```
 
-- iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer.
+- iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer. Xcode 26 refuses pods that declare a deployment target under 15, so the example's `Podfile` pins every pod to 15.5 in `post_install`; copy that block.
 - Android: `minSdk` 23 or newer. Release builds need no ProGuard work of yours: the package ships the keep rules ML Kit requires under R8 (without them face detection fails on every frame in release).
 - Web: nothing to add; the MediaPipe glue is loaded from the package assets. See [Web](/docs/flutter/web).
 

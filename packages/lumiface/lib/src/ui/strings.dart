@@ -96,7 +96,7 @@ class LivenessStrings {
       AlignHint.holdStill: 'Hold still…',
     },
     challenges: {
-      Challenge.blink: 'Blink',
+      Challenge.blink: 'Close your eyes, then open',
       Challenge.smile: 'Smile',
       Challenge.turnLeft: 'Turn your head left',
       Challenge.turnRight: 'Turn your head right',
@@ -145,7 +145,7 @@ class LivenessStrings {
       AlignHint.holdStill: 'อยู่นิ่งๆ สักครู่…',
     },
     challenges: {
-      Challenge.blink: 'กะพริบตา',
+      Challenge.blink: 'หลับตาแล้วลืมตา',
       Challenge.smile: 'ยิ้ม',
       Challenge.turnLeft: 'หันหน้าไปทางซ้าย',
       Challenge.turnRight: 'หันหน้าไปทางขวา',

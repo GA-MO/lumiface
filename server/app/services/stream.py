@@ -79,8 +79,10 @@ def eye_aspect_ratio(landmarks: np.ndarray | None) -> float | None:
     return float(np.mean(ratios))
 
 
-def blink_observed(ears: list[float], baseline: float, closed_ratio: float = 0.7, open_ratio: float = 0.85) -> bool:
-    """The eyes closed (EAR fell to `closed_ratio` of the open baseline) and opened again afterwards."""
+def blink_observed(ears: list[float], baseline: float, closed_ratio: float = 0.75, open_ratio: float = 0.85) -> bool:
+    """The eyes closed (EAR fell to `closed_ratio` of the open baseline) and opened again afterwards.
+    0.75: a blink shut for ~100 ms is often caught half-closed at 7 fps (real blinks measured 0.65-0.73
+    across three devices; a replayed video reached 0.85), so the prompt also asks for a slow close."""
     if baseline <= 0 or len(ears) < 2:
         return False
     closed_at = next((i for i, e in enumerate(ears) if e <= baseline * closed_ratio), None)

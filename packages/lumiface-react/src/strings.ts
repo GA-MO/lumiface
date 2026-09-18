@@ -34,7 +34,7 @@ export const EN: LivenessStrings = {
     holdStill: "Hold still…",
   },
   challenges: {
-    blink: "Blink",
+    blink: "Close your eyes, then open",
     smile: "Smile",
     turn_left: "Turn your head left",
     turn_right: "Turn your head right",
@@ -85,7 +85,7 @@ export const TH: LivenessStrings = {
     holdStill: "อยู่นิ่งๆ สักครู่…",
   },
   challenges: {
-    blink: "กะพริบตา",
+    blink: "หลับตาแล้วลืมตา",
     smile: "ยิ้ม",
     turn_left: "หันหน้าไปทางซ้าย",
     turn_right: "หันหน้าไปทางขวา",

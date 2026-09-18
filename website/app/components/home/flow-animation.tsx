@@ -5,7 +5,7 @@ const T = "12s";
 // Percent of the loop. 0-6: backend mints the session. 6-72: the device streams. 72-97: the server finishes. 97: verdict.
 const PROMPTS = [
   { text: "Center your face", from: 6, to: 14, color: "#fff" },
-  { text: "Blink", from: 14, to: 26, color: "#ffc107" },
+  { text: "Close eyes", from: 14, to: 26, color: "#ffc107" },
   { text: "Smile", from: 26, to: 40, color: "#ffc107" },
   { text: "Turn your head left", from: 40, to: 54, color: "#ffc107" },
   { text: "Hold still", from: 54, to: 72, color: "#fff" },

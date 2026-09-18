@@ -19,6 +19,6 @@ description: What is done, what was measured, what remains open.
 - MiniFASNet gives real faces as low as 0.31 on the S25+ in some frames (hard floor 0.30); lower `spoof_hard_floor` to 0.2 for a project if false rejects appear, CVPR and flash are the main gates.
 - Smile thresholds come from two image pairs; watch `challenge_<i>` in the verification details on more people.
 - A phone streams about 6–7 fps, not 8: the pure-Dart JPEG encode costs ~150 ms a frame. Native encoding would close the gap.
-- iOS on a real iPhone has not been run since the rename; the yaw sign of the ML Kit source on iOS is unproven.
+- iOS native (ML Kit) ran on an iPhone 12 on 2026-09-18: real person 3/3 after two iOS-only fixes (the front camera's frames arrive mirrored, so the yaw sign flips; they arrive upright, so the JPEG must not be rotated again), replayed video 0/4. CPU on iOS is not measured yet.
 - MediaPipe yaw sign was checked on a Mac webcam and an iPhone 12 front camera (Safari); `yawSign: -1` is available if a camera disagrees.
 - iPhone 12 Safari, both SDKs (2026-09-18): real person 8/9 (one blink missed before the shut-eyes frame was sent at once), replayed video 0/5.

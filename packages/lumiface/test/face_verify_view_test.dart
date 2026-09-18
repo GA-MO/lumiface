@@ -71,7 +71,7 @@ void main() {
     await emit(tester, neutral(0));
     expect(find.text('Hold still…'), findsOneWidget);
     await emit(tester, neutral(700));
-    expect(find.text('Blink'), findsOneWidget);
+    expect(find.text('Close your eyes, then open'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
     await emit(tester, neutral(900));

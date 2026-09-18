@@ -43,6 +43,7 @@ class MlKitCameraSource implements CameraFaceSource {
 
   final _signals = StreamController<FaceSignal>.broadcast();
   CameraImage? _latest;
+  CameraImage? _signalImage;
   bool _detecting = false;
   bool _streaming = false;
   final Stopwatch _clock = Stopwatch()..start();
@@ -56,8 +57,10 @@ class MlKitCameraSource implements CameraFaceSource {
   @override
   double get previewAspectRatio => isInitialized ? 1 / controller!.value.aspectRatio : 1;
 
+  /// Whether frame coordinates need flipping to match the preview. camera_avfoundation already
+  /// mirrors the front camera's frames, so on iOS they line up with the preview as they are.
   @override
-  bool get isMirrored => lensDirection == CameraLensDirection.front;
+  bool get isMirrored => lensDirection == CameraLensDirection.front && !Platform.isIOS;
 
   @override
   Future<void> setExposureLocked(bool locked) async {
@@ -129,6 +132,7 @@ class MlKitCameraSource implements CameraFaceSource {
 
   Future<void> _detect(CameraImage image) async {
     final ts = _clock.elapsedMilliseconds;
+    _signalImage = image;
     final rotation = InputImageRotationValue.fromRawValue(_rotationDegrees());
     final format = InputImageFormatValue.fromRawValue(image.format.raw);
     if (rotation == null || format == null || image.planes.length != 1) {
@@ -172,9 +176,12 @@ class MlKitCameraSource implements CameraFaceSource {
     }
     final b = f.boundingBox;
     // ML Kit yaw (Euler Y) is positive when the face turns toward the image's
-    // right. Front-camera frames are un-mirrored, so that equals the user's
-    // own left; back camera is the opposite. FaceSignal wants +yaw == user's left.
-    final yawSign = _camera!.lensDirection == CameraLensDirection.front ? 1.0 : -1.0;
+    // right. Android delivers front-camera frames un-mirrored, so that equals the
+    // user's own left; the back camera is the opposite. iOS mirrors the front
+    // camera's frames (camera_avfoundation), which flips both. FaceSignal wants
+    // +yaw == user's left.
+    final front = _camera!.lensDirection == CameraLensDirection.front;
+    final yawSign = (front != Platform.isIOS) ? 1.0 : -1.0;
     Offset? mark(FaceLandmarkType t) {
       final p = f.landmarks[t]?.position;
       return p == null ? null : Offset(p.x / normW, p.y / normH);
@@ -196,9 +203,11 @@ class MlKitCameraSource implements CameraFaceSource {
 
   static double _area(Rect r) => r.width * r.height;
 
+  /// Encodes the frame the latest signal was read from, so a frame sent because the
+  /// device saw something (eyes shut) shows that thing rather than a newer frame.
   @override
   Future<List<int>> captureJpeg() async {
-    final image = _latest;
+    final image = _signalImage ?? _latest;
     if (image == null) throw StateError('no camera frame yet');
     final format = switch (image.format.group) {
       ImageFormatGroup.bgra8888 => 'bgra8888',
@@ -213,7 +222,11 @@ class MlKitCameraSource implements CameraFaceSource {
       planes: [for (final p in image.planes) p.bytes],
       bytesPerRow: [for (final p in image.planes) p.bytesPerRow],
       bytesPerPixel: [for (final p in image.planes) p.bytesPerPixel ?? 1],
-      rotationDegrees: _rotationDegrees(),
+      // camera_avfoundation delivers iOS frames already upright (and mirrored for the front camera);
+      // Android delivers them in sensor orientation. Either way the server gets an upright,
+      // un-mirrored frame, the same as a photo of the person.
+      rotationDegrees: Platform.isIOS ? 0 : _rotationDegrees(),
+      mirror: Platform.isIOS && _camera!.lensDirection == CameraLensDirection.front,
     );
     return compute(_encode, (raw, jpegQuality));
   }

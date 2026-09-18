@@ -22,3 +22,8 @@ Settings tab: Lumiface URL, backend URL, subject id, debug bar, Thai strings.
 | Chrome | `http://localhost:8000` | `http://localhost:8010` |
 
 The server's `.env` sets the key (`BOOTSTRAP_API_KEY`); start the backend with the same `LUMIFACE_KEY`.
+
+iPhone: put your Apple team in `ios/Flutter/Local.xcconfig` (git-ignored, `DEVELOPMENT_TEAM = XXXXXXXXXX`; a free
+personal team works), enable Developer Mode on the phone, then `flutter run --release -d <udid>`. If Flutter's
+launcher stalls after the build, `xcrun devicectl device install app --device <udid> build/ios/iphoneos/Runner.app`
+followed by `xcrun devicectl device process launch --device <udid> com.example.faceCheckinExample` does the same.
