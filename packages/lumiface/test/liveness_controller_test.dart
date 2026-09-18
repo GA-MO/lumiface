@@ -20,7 +20,7 @@ void main() {
   }) async {
     src = FakeSource();
     api = FakeApi(ch, response: response, flashColors: flashColors);
-    c = FaceVerifyController(source: src, capturer: src, client: api, subjectId: 'E001', config: config);
+    c = FaceVerifyController(source: src, capturer: src, client: api, sessionProvider: api.createSession, config: config);
     await c.start();
     await pump();
   }
@@ -64,7 +64,7 @@ void main() {
     return t + 400;
   }
 
-  test('screen flash: one frame per colour after the challenges, before neutral_end', () async {
+  test('screen flash: a flash event per colour after the challenges, then flash_end', () async {
     const colors = [Color(0xFFFF0000), Color(0xFF00FF00), Color(0xFF0000FF)];
     await boot([Challenge.turnLeft], flashColors: colors);
     var t = await align(0);
@@ -74,26 +74,25 @@ void main() {
     expect(c.state.value.phase, LivenessPhase.flash);
     expect(c.state.value.flashColor, colors[0]);
     expect(c.state.value.flashIndex, 0);
-    // too early: nothing captured yet
+    // too early: the colour stays up until flash_hold_ms
     await emit(neutral(t + 700));
-    expect(src.captures, 2);
+    expect(c.state.value.flashColor, colors[0]);
     await emit(neutral(t + 1000));
-    expect(src.captures, 3);
     expect(c.state.value.flashColor, colors[1]);
     await emit(neutral(t + 1500));
     expect(c.state.value.flashColor, colors[2]);
     await emit(neutral(t + 2000));
     expect(c.state.value.phase, LivenessPhase.challenge);
     expect(c.state.value.flashColor, isNull);
-    // tint must clear before neutral_end: nothing uploaded during the settle window
+    // tint must clear before the end: the settle window keeps streaming, nothing ends early
     await emit(neutral(t + 2300));
     expect(c.state.value.phase, LivenessPhase.challenge);
     await emit(neutral(t + 2900));
     await pump();
     expect(c.state.value.phase, LivenessPhase.success);
-    expect(api.sentFrames!.map((f) => f.kind),
-        ['neutral_start', 'challenge_0', 'flash_0', 'flash_1', 'flash_2', 'neutral_end']);
-    expect(api.sentDurations!.length, 1);
+    expect(api.sentEvents.map((e) => '${e.$1.name}${e.$3 ?? ''}'),
+        ['aligned', 'challengeDone0', 'flash0', 'flash1', 'flash2', 'flashEnd']);
+    expect(api.ended, true);
   });
 
   test('screen flash: face lost during flash fails', () async {
@@ -125,10 +124,16 @@ void main() {
     await pump();
 
     expect(c.state.value.phase, LivenessPhase.success);
-    expect(api.sentFrames!.map((f) => f.kind), ['neutral_start', 'challenge_0', 'challenge_1', 'neutral_end']);
-    expect(api.sentDurations!.length, 2);
-    expect(api.sentDurations!.every((d) => d >= 300), true);
-    expect(src.captures, 4);
+    expect(api.sentEvents.map((e) => e.$1), [StreamEventName.aligned, StreamEventName.challengeDone, StreamEventName.challengeDone]);
+    expect(api.sentEvents.map((e) => e.$3), [null, 0, 1]);
+    final ts = api.sentEvents.map((e) => e.$2).toList();
+    expect(ts[1] - ts[0], greaterThanOrEqualTo(300));
+    expect(api.ended, true);
+    // Frames went up the whole time, throttled to the stream rate, not just at the boundaries.
+    expect(src.captures, api.sentFrames.length);
+    expect(api.sentFrames.length, greaterThan(4));
+    expect(api.sentFrames.first, lessThan(ts[0]));
+    expect(api.sentFrames.last, greaterThan(ts[2]));
   });
 
   test('no turn from server -> client-only turn appended, nothing extra uploaded', () async {
@@ -153,9 +158,8 @@ void main() {
     await emit(neutral(t + 500));
     await pump();
     expect(c.state.value.phase, LivenessPhase.success);
-    expect(api.sentFrames!.map((f) => f.kind), ['neutral_start', 'challenge_0', 'challenge_1', 'neutral_end']);
-    expect(api.sentDurations!.length, 2);
-    expect(src.captures, 4);
+    // The client-only turn is not reported to the server.
+    expect(api.sentEvents.where((e) => e.$1 == StreamEventName.challengeDone).length, 2);
   });
 
   test('server turn: no extra challenge is appended', () async {
@@ -169,7 +173,7 @@ void main() {
     await emit(neutral(t + 500));
     await pump();
     expect(c.state.value.phase, LivenessPhase.success);
-    expect(api.sentDurations!.length, 2);
+    expect(api.sentEvents.where((e) => e.$1 == StreamEventName.challengeDone).length, 2);
   });
 
   test('alignment hints', () async {
@@ -235,7 +239,7 @@ void main() {
     await emit(neutral(t + 1000));
     await pump();
     expect(c.state.value.phase, LivenessPhase.success);
-    expect(api.sentFrames!.length, 3);
+    expect(api.ended, true);
   });
 
   test('cancel', () async {

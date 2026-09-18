@@ -23,59 +23,88 @@ The CVPR-2024 ResNet50 ONNX (94 MB) is not in git. Convert it once with
 <Step>
 ## Enrol a subject
 
+From your backend, where the API key lives:
+
 ```bash
-curl -X POST localhost:8000/v1/subjects -H "X-API-Key: change-me" \
+curl -X POST localhost:8000/v1/subjects -H "X-API-Key: lf_sk_change-me" \
   -F external_id=E001 -F name="Person A" -F photo=@me.jpg
 ```
 
-A frontal photo with one face. The server rejects it with a `reason_code` (`NO_FACE`, `POSE_NOT_FRONTAL`, `SPOOF`, ...) instead of enrolling a bad reference. Both SDKs also enrol from the camera (`FaceFlow.enroll`).
+A frontal photo with one face. The server rejects it with a `reason_code` (`NO_FACE`, `POSE_NOT_FRONTAL`, `SPOOF`, ...) instead of enrolling a bad reference.
+
+To enrol from the device's camera instead (`FaceFlow.enroll` / `flow="enroll"`), the backend mints a single-use token and the app presents it; the device still never holds the key:
+
+```bash
+curl -X POST localhost:8000/v1/subjects/tokens -H "X-API-Key: lf_sk_change-me" \
+  -H "Content-Type: application/json" -d '{"external_id": "E001", "name": "Person A"}'
+# → {"token": "…", "external_id": "E001", "expires_at": "…"}   pass it as enrolToken
+```
 </Step>
 <Step>
 ## Pick a preset
 
 ```bash
-curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
+curl -X PUT localhost:8000/v1/policy -H "X-API-Key: lf_sk_change-me" \
   -H "Content-Type: application/json" -d '{"preset": "balanced"}'
 ```
 
 `balanced` is the phone-calibrated default. Use `emulator` on the Android emulator, `relaxed` while developing on a laptop (the flash check records scores without enforcing), `strict` for access control. See [Policy](/docs/server/policy).
 </Step>
 <Step>
-## Verify from an app
+## Run the example app
 
-<Tabs items={["Flutter", "React", "curl"]}>
-<Tab value="Flutter">
-```dart
-final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');   // dev only: production uses sessionProvider, see docs
+The examples run the real three-party flow. `examples/backend` is a ~100-line FastAPI app that stands in for
+*your* backend: it holds the key, creates sessions, mints enrol tokens and reads the verdict. The apps only talk
+to it and to Lumiface with tokens.
 
-FaceVerifyView(
-  client: client,
-  subjectId: 'E001',
-  purpose: 'checkin',
-  strings: LivenessStrings.th,
-  onResult: (r) => print('${r.ok} ${r.reasonCode} ${r.scores.match}'),
-);
+```bash
+bun run dev:backend    # examples/backend on http://localhost:8010, key from LUMIFACE_KEY (default lf_sk_change-me)
 ```
 
-The example app (`packages/lumiface/example`) has every use case on its first tab and a preset picker on the Settings tab. On a phone, use the Mac's LAN IP; on the Android emulator, `http://10.0.2.2:8000`.
+<Tabs items={["Flutter", "React"]}>
+<Tab value="Flutter">
+```bash
+cd examples/flutter && flutter run
+```
+
+Settings tab: the Lumiface URL (the Mac's LAN IP on a phone, `http://10.0.2.2:8000` on the Android emulator),
+your backend URL (`…:8010` likewise), your subject id. The first tab has every use case; the card under it shows
+what the device reported and what the backend read for itself.
 </Tab>
 <Tab value="React">
-```tsx
-import { LumifaceClient, LumifaceView } from "@lumiface/react";
-
-const client = new LumifaceClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" }); // dev only: production uses sessionProvider, see docs
-
-<div style={{ height: "70vh" }}>
-  <LumifaceView client={client} subjectId="E001" purpose="login" onResult={(r) => console.log(r)} />
-</div>
+```bash
+bun run dev:react      # examples/react on http://localhost:3010, /api proxied to :8010
 ```
 
-`bun run dev:react` serves the demo at http://localhost:3010. The browser needs `https` or `localhost` for the camera.
-</Tab>
-<Tab value="curl">
-Sessions are single-use and carry the challenges the client must perform, so a raw HTTP client has to run the camera side itself. The [API](/docs/api) page lists the session and verify contract; both SDKs are the reference implementation.
+The browser needs `https` or `localhost` for the camera.
 </Tab>
 </Tabs>
+</Step>
+<Step>
+## Wire it into your app
+
+```dart
+// Flutter
+FaceVerifyView(
+  client: LumifaceClient(baseUrl: 'https://faces.example.com'),
+  sessionProvider: () async => FaceSession.fromJson(await myApi.createFaceSession()),
+  onResult: (r) => myApi.faceDone(r.sessionId),
+)
+```
+
+```tsx
+// React
+<LumifaceView
+  client={new LumifaceClient({ baseUrl: "https://faces.example.com" })}
+  sessionProvider={async () => sessionFromJson(await fetch("/api/face/session", { method: "POST" }).then((r) => r.json()))}
+  onResult={(r) => fetch("/api/face/done", { method: "POST", body: JSON.stringify({ sessionId: r.sessionId }) })}
+/>
+```
+
+Your backend: `POST /v1/sessions` with `X-API-Key` and the `subject_id` to check, hand the JSON to the app; when
+the app reports done, `GET /v1/sessions/{id}` and act on `result.ok`. Two REST calls; `examples/backend` has
+them in Python. Details in
+[API › Authentication](/docs/api#authentication) and the [Flutter](/docs/flutter) / [React](/docs/react) pages.
 </Step>
 </Steps>
 

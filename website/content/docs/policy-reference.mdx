@@ -39,6 +39,7 @@ The same names, upper-cased, are the environment variables that set the defaults
 | `smile_min_lift` | float | `0.04` | Mouth corner lift vs the neutral frame (inter-ocular units). |
 | `session_ttl_seconds` | int | `60` | A session must be verified within this time. |
 | `subject_ttl_seconds` | int | `0` | Default retention of an enrolled face in seconds; 0 keeps it until deleted. |
+| `allow_browser_api_key` | bool | `false` | Accept the project key from a browser origin other than localhost. Development only. |
 | `challenge_count` | int | `2` | Challenges per session. |
 | `challenge_pool` | str | `"blink,turn_left,turn_right,smile,nod"` | Comma separated pool: blink, turn_left, turn_right, smile, nod. |
 | `required_challenge` | str | `"smile"` | Always included when in the pool; empty for none. |
@@ -120,6 +121,7 @@ Lower bars, flash and smile checks record scores only. Low-risk flows, poor ligh
 | `max_challenge_ms` | `8000` |
 | `client.challenge_timeout_ms` | `15000` |
 | `client.face_lost_grace_ms` | `2500` |
+| `client.min_face_width_fraction` | `0.2` |
 
 ### emulator
 

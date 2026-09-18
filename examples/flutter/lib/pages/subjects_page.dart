@@ -18,7 +18,7 @@ class _SubjectsPageState extends State<SubjectsPage> {
 
   Future<void> _load() async {
     try {
-      final rows = await widget.settings.client.listSubjects();
+      final rows = await widget.settings.backend.listSubjects();
       setState(() {
         _rows = rows;
         _error = null;
@@ -52,8 +52,7 @@ class _SubjectsPageState extends State<SubjectsPage> {
     if (!mounted) return;
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final e = await widget.settings.client
-          .enroll(externalId: idCtrl.text, name: nameCtrl.text, photoJpeg: bytes, replace: true);
+      final e = await widget.settings.backend.enrolPhoto(externalId: idCtrl.text, name: nameCtrl.text, photoJpeg: bytes);
       messenger.showSnackBar(SnackBar(content: Text('Enrolled ${e.externalId} (spoof ${fmt(e.enrollSpoofScore)})')));
       await _load();
     } on LumifaceException catch (e) {
@@ -86,7 +85,7 @@ class _SubjectsPageState extends State<SubjectsPage> {
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_outline),
                             onPressed: () async {
-                              await widget.settings.client.deleteSubject(e.externalId);
+                              await widget.settings.backend.deleteSubject(e.externalId);
                               await _load();
                             },
                           ),

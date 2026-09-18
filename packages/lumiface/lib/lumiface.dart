@@ -2,13 +2,19 @@
 ///
 /// Quick start:
 /// ```dart
-/// final client = LumifaceClient(baseUrl: 'https://host:8000', apiKey: 'key');
-/// FaceVerifyView(client: client, subjectId: 'E001', purpose: 'checkin',
-///   strings: LivenessStrings.th, onResult: (r) => print(r.reasonCode));
+/// final client = LumifaceClient(baseUrl: 'https://host:8000');   // no secret on the device
+/// FaceVerifyView(
+///   client: client,
+///   sessionProvider: () async => FaceSession.fromJson(await myApi.createFaceSession('E001')),
+///   strings: LivenessStrings.th,
+///   onResult: (r) => print(r.reasonCode),
+/// );
 /// ```
-/// Leave `subjectId` out for a liveness-only check, pass `flow: FaceFlow.enroll`
-/// to enrol from the camera, or drive [FaceVerifyController] yourself for a
-/// fully custom UI.
+/// Your backend creates the session with the project key over plain REST
+/// (`POST /v1/sessions`) and reads the outcome (`GET /v1/sessions/{id}`); see
+/// `examples/backend` in the repository.
+/// Pass `flow: FaceFlow.enroll` with an `enrolTokenProvider` to enrol from the
+/// camera, or drive [FaceVerifyController] yourself for a fully custom UI.
 library;
 
 export 'src/api/lumiface_client.dart';

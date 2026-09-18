@@ -83,6 +83,7 @@ async def enroll_subject(
     ttl_seconds: int | None = Form(None, description="Retention in seconds; 0 keeps it, omitted uses the policy."),
     token: str | None = Depends(bearer_token),
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    origin: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
     ticket: EnrolToken | None = None
@@ -107,7 +108,7 @@ async def enroll_subject(
             raise
         external_id, name, replace, ttl_seconds = ticket.external_id, ticket.name, False, ticket.ttl_seconds
     else:
-        project = project_from_api_key(db, x_api_key)
+        project = project_from_api_key(db, x_api_key, origin)
         if not external_id:
             raise HTTPException(422, {"reason_code": "EXTERNAL_ID_REQUIRED"})
     name = name or ""

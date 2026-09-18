@@ -10,7 +10,7 @@ Self-hosted face verification (1:1) + passive liveness for the `lumiface` Flutte
   the same identity across every uploaded frame. Every session includes a smile (`REQUIRED_CHALLENGE`):
   latex/silicone masks pass both passive gates on the AxonData samples, and a rigid mask cannot smile. The server
   re-checks the smile itself (`services/expression.py`): on the `challenge_<i>` frame the mouth must be ≥ 8% wider
-  or its corners ≥ 0.04 inter-ocular higher than on `neutral_start` (68-point landmarks), else `EXPRESSION_MISMATCH`.
+  or its corners ≥ 0.04 inter-ocular higher than on the neutral frames (68-point landmarks), else `EXPRESSION_MISMATCH`.
 - **Screen-flash** (`services/flash.py`): the session carries 3 random saturated colours; the app fills the
   screen with each one and uploads a `flash_<i>` frame. The server compares the hue shift on the cheeks with
   the commanded sequence (order must beat every other permutation). A phone screen replaying a video emits
@@ -35,9 +35,11 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 
 ## API (header `X-API-Key`; admin endpoints `X-Admin-Key`)
 
-The project key belongs on your backend. A device gets the `session_token` returned by `POST /v1/sessions` (verify
-only, that session only) or an enrol token from `POST /v1/subjects/tokens` (one enrolment of a fixed subject) and sends
-it as `Authorization: Bearer …`. Session tokens die with the session; enrol tokens after `ENROL_TOKEN_TTL_SECONDS`.
+The project key (`lf_sk_…`) belongs on your backend. A device gets the `session_token` returned by `POST /v1/sessions`
+(verify only, that session only) or an enrol token from `POST /v1/subjects/tokens` (one enrolment of a fixed subject)
+and sends it as `Authorization: Bearer …`. Session tokens die with the session; enrol tokens after
+`ENROL_TOKEN_TTL_SECONDS`. A key sent from a browser page other than localhost is refused (401 `API_KEY_FROM_BROWSER`)
+unless the project's policy sets `allow_browser_api_key`.
 The backend then reads the outcome with `GET /v1/sessions/{id}` rather than trusting the device's report.
 
 | Method | Path | Body | Notes |
@@ -51,25 +53,32 @@ The backend then reads the outcome with `GET /v1/sessions/{id}` rather than trus
 | POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` — or `photo` only with `Authorization: Bearer <enrol token>` | enrol; 422 with `reason_code` if rejected; `ttl_seconds` omitted = policy `subject_ttl_seconds`, 0 = keep |
 | GET | `/v1/subjects`, `/v1/subjects/{id}` | | |
 | DELETE | `/v1/subjects/{external_id}` | | |
-| POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns challenges, `flash_colors`, `frame_kinds`, `client_config` |
-| POST | `/v1/sessions/{id}/verify` | multipart `subject_id?`, `meta` (json), `frames[]` in `frame_kinds` order; auth `Authorization: Bearer <session_token>` (device) or `X-API-Key` (backend) | single use, spent on the first request; a device cannot change the subject |
+| POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns `session_token`, `client_config` — not the plan |
+| WS | `/v1/sessions/{id}/stream` | `{"type":"hello","token"}` → plan; binary frames (8-byte client ms + JPEG) + events → `{"type":"end"}` → result | single use, spent on hello; the server clocks and judges everything itself |
 | GET | `/v1/sessions/{id}` | | backend reads `{used, result}` after the device is done |
 | GET | `/v1/verifications?from&to&subject_id&session_id&purpose&ok` | | history |
 | POST | `/v1/debug/score` | multipart `photo` | only with `DEBUG=1` |
 
-`meta` for verify:
+The stream, from the device's side (`app/routers/sessions.py` has the exact messages):
 
-```json
-{"frames":[{"kind":"neutral_start","ts_ms":0},{"kind":"challenge_0","ts_ms":900},
-           {"kind":"challenge_1","ts_ms":2100},{"kind":"flash_0","ts_ms":2600},{"kind":"flash_1","ts_ms":3050},
-           {"kind":"flash_2","ts_ms":3500},{"kind":"neutral_end","ts_ms":3700}],
- "challenge_durations_ms":[420,380],"client":{"platform":"ios"}}
+```
+hello {token}  ▶
+              ◀ plan {challenges, flash_colors, flash_hold_ms, client_config}
+frames         ▶  continuously, ~8 fps: 8-byte big-endian client ms + JPEG
+event aligned / challenge_done i / flash i / flash_end  ▶  as the device reaches each boundary
+end            ▶
+              ◀ result {ok, mode, reason_code, scores, verification_id}
 ```
 
+The server stamps frames and events with its own clock and, inside each window, runs its own detector and 68-point
+landmarks: blink = eye-aspect-ratio dip and recovery, smile = mouth width / corner lift vs the neutral frames, turn /
+nod = yaw / pitch; the flash reflection is read from the frames of each colour window; anti-spoof, identity and
+consistency run on the key frames it picked (`app/services/stream.py`). Client timestamps are recorded, not trusted.
+
 Verify response: `{ok, mode, reason_code, scores:{match, spoof, consistency}, verification_id}`.
-Reason codes: `OK, FRAME_COUNT, FRAME_KINDS, TIMING_ORDER, TIMING_TOO_FAST, TIMING_TOO_SLOW, TIMING_DURATIONS,
+Reason codes: `OK, FRAME_COUNT, FRAMES_STATIC, TIMING_ORDER, TIMING_TOO_FAST, TIMING_TOO_SLOW,
 NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL, SPOOF, POSE_MISMATCH, EXPRESSION_MISMATCH, FLASH_FAIL, NO_MATCH, INCONSISTENT`
-plus HTTP-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_MISMATCH, SUBJECT_NOT_FOUND, META_INVALID,
+plus stream-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_NOT_FOUND, HELLO_INVALID, EVENT_INVALID,
 ENROL_TOKEN_INVALID, ENROL_TOKEN_MISMATCH, EXTERNAL_ID_REQUIRED, PAYLOAD_TOO_LARGE`; `BAD_IMAGE` is the verdict for a frame that
 does not decode. Uploads are capped by `MAX_UPLOAD_BYTES` (32 MB body), `MAX_FRAME_BYTES` (4 MB) and `MAX_IMAGE_PIXELS` (20 Mpx).
 

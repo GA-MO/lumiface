@@ -4,14 +4,16 @@
   "type": "module",
   "workspaces": [
     "packages/lumiface-react",
+    "examples/react",
     "website"
   ],
   "scripts": {
     "dev:site": "bun run --cwd website dev",
     "build:site": "bun run --cwd website build",
     "build:pages": "bun run --cwd website build:static",
-    "dev:react": "bun run --cwd packages/lumiface-react dev",
+    "dev:backend": "cd examples/backend && uv run uvicorn main:app --host 0.0.0.0 --port 8010",
+    "dev:react": "bun run --cwd examples/react dev",
     "test:react": "bun run --cwd packages/lumiface-react test",
-    "typecheck": "bun run --cwd packages/lumiface-react typecheck && bun run --cwd website typecheck"
+    "typecheck": "bun run --cwd packages/lumiface-react typecheck && bun run --cwd examples/react typecheck && bun run --cwd website typecheck"
   }
 }

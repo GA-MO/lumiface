@@ -3,7 +3,7 @@ title: HTTP API
 description: Every endpoint of the Lumiface server with its headers, bodies and answers.
 ---
 
-Base path `/v1`. Project endpoints authenticate with `X-API-Key`; admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
+Base path `/v1`. Project endpoints authenticate with `X-API-Key` from a backend, or a device token as `Authorization: Bearer` on the two device-facing calls (see below); admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
 
 ## Authentication
 
@@ -11,16 +11,18 @@ Two credentials, two audiences:
 
 | Credential | Header | Who holds it | Can call |
 |---|---|---|---|
-| Project API key | `X-API-Key: <key>` | your backend | everything under `/v1` for the project |
-| Session token | `Authorization: Bearer <session_token>` | the device, for one session | `POST /sessions/{id}/verify` of that session only |
+| Project API key (`lf_sk_…`) | `X-API-Key: <key>` | your backend | everything under `/v1` for the project |
+| Session token | `hello` message on the stream | the device, for one session | `WS /sessions/{id}/stream` of that session only |
 | Enrol token | `Authorization: Bearer <token>` | the device, once | `POST /subjects` for the subject fixed when the token was issued |
 
 Never ship the project key in an app or web bundle. The loop is:
 
 1. Backend: `POST /sessions` with the key, **with the `subject_id` it wants checked** (or none for liveness), and forwards the JSON to the device.
-2. Device: runs the flow and uploads with `Authorization: Bearer <session_token>`. The subject is fixed; a device that names another one gets 400 `SUBJECT_MISMATCH` and the session is spent.
+2. Device: opens the stream with the session token, gets the plan, streams frames while it runs it. The subject is fixed; the stream has no field to name one.
 3. Device tells the backend it is done. **Do not trust that message.**
 4. Backend: `GET /sessions/{session_id}` with the key and acts on `result.ok` / `verification_id`.
+
+The server refuses `X-API-Key` on any request whose `Origin` is a browser page other than localhost (401 `API_KEY_FROM_BROWSER`; policy `allow_browser_api_key` lifts it for a development project), and the SDKs have no place to put a key at all: `LumifaceClient` takes a URL. The key's side of the API is REST from your backend; `examples/backend` in the repository is a complete one.
 
 A leaked session token is worth one attempt against the subject the backend chose, and it dies with the session (`ttl_seconds`). A leaked enrol token is worth one enrolment of the named subject *with whatever face the holder uploads*: only issue one to a user you have already authenticated by other means, and never for a subject that already has a face (re-enrolment needs the key; see `/subjects/tokens`).
 
@@ -43,32 +45,109 @@ See [security](/docs/security#retention).
 
 ## Sessions
 
-`POST /sessions` with `{"subject_id": "E001" | null, "purpose": "checkin"}`:
+`POST /sessions` with `{"subject_id": "E001" | null, "purpose": "checkin"}` (project key):
 
 ```json
 {
-  "session_id": "…", "session_token": "…", "mode": "verify", "purpose": "checkin",
-  "challenges": ["smile", "blink"], "flash_colors": ["ff0000", "00ff00", "0000ff"],
-  "frame_kinds": ["neutral_start", "challenge_0", "challenge_1", "flash_0", "flash_1", "flash_2", "neutral_end"],
-  "expires_at": "…Z", "ttl_seconds": 60, "flash_hold_ms": 450,
-  "client_config": { "align_hold_ms": 600, "...": "..." }
+  "session_id": "3f9c…",
+  "session_token": "kQx7…",
+  "mode": "verify",
+  "purpose": "checkin",
+  "expires_at": "2026-09-18T09:01:00Z",
+  "ttl_seconds": 60,
+  "client_config": {
+    "align_hold_ms": 600,
+    "…": "…"
+  }
 }
 ```
 
-`POST /sessions/{id}/verify`, multipart: `meta` (JSON), `frames[]` in `frame_kinds` order, `subject_id` (must equal the session's; only the key may narrow a liveness session). Single use: the session is spent on the first request whatever its outcome, so a rejected upload cannot be retried on the same token. Limits: body `MAX_UPLOAD_BYTES` (32 MB), each frame `MAX_FRAME_BYTES` (4 MB), `MAX_IMAGE_PIXELS` (20 Mpx).
+The challenges and the flash colours are **not** in this answer. They only reach the device once it has opened the
+stream, and the server judges them from what it receives, not from what the device reports.
 
-```json
-{"frames": [{"kind": "neutral_start", "ts_ms": 0}, {"kind": "challenge_0", "ts_ms": 900}, "..."],
- "challenge_durations_ms": [420, 380], "client": {"platform": "ios"}}
+### The stream
+
+`WS /sessions/{id}/stream`. The device speaks first, the server answers with the plan, then frames flow up until
+the device says it is done and the server sends the verdict. The session is spent as soon as the hello is accepted.
+
+```
+device                                            server
+──────                                            ──────
+{"type":"hello","token":"kQx7…","client":{…}}  ▶
+                                                ◀ {"type":"plan","challenges":["smile","blink"],
+                                                   "flash_colors":["ff0000","00ff00","0000ff"],
+                                                   "flash_hold_ms":450,"client_config":{…}}
+<binary: 8-byte big-endian client ms + JPEG>   ▶  …continuously, ~8 fps, whatever the phase
+{"type":"event","name":"aligned","ts":…}        ▶
+{"type":"event","name":"challenge_done","index":0,"ts":…} ▶
+{"type":"event","name":"flash","index":0,"ts":…} ▶  …one per colour, as it is shown
+{"type":"event","name":"flash_end","ts":…}      ▶
+{"type":"end"}                                  ▶
+                                                ◀ {"type":"result", …verdict below…}   then close
+                                                ◀ {"type":"error","reason_code":"SESSION_USED"}  on refusal
 ```
 
-Answer: `{ok, mode, reason_code, scores: {match, spoof, consistency}, verification_id, details}` (`details` only with `DEBUG=1` and the project key, never to a device). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID` / `FRAME_COUNT`, 413 `PAYLOAD_TOO_LARGE`. An undecodable frame answers 200 with `reason_code: BAD_IMAGE`.
+What the server does with it: every frame and event is stamped with the **server's** clock on receipt; the events
+only say where to look. Inside each window it runs its own face detector and 68-point landmarks on the frames it
+got and checks that the blink (eye aspect ratio dip and recovery), the smile (mouth width and corner lift against
+the neutral frames), the turn or the nod (yaw / pitch) actually happened; the colour on the face during each
+flash window is read from those frames; passive anti-spoof, identity and consistency run on the key frames it
+chose. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
+repeats the same bytes is refused (`FRAMES_STATIC`); the device's `ts` values are recorded but decide nothing.
 
-`GET /sessions/{id}` (project key) → `{session_id, mode, subject_id, purpose, used, expires_at, result}` where `result` is the verify answer above or `null` while nothing was uploaded. This is how the backend learns the outcome.
+Limits: `MAX_FRAME_BYTES` per frame (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_FRAMES` (900),
+`MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). Frames beyond what the link can carry are dropped by the SDKs
+rather than queued.
+
+Answer:
+
+```json
+{
+  "ok": true,
+  "mode": "verify",
+  "reason_code": "OK",
+  "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+  "verification_id": 42,
+  "details": {}
+}
+```
+
+`details` is empty for the device; the backend sees the server's windows, per-challenge readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). HTTP errors: 404 `SESSION_NOT_FOUND` / `SUBJECT_NOT_FOUND`, 409 `SESSION_USED`, 410 `SESSION_EXPIRED`, 400 `SUBJECT_MISMATCH`, 422 `META_INVALID` / `FRAME_COUNT`, 413 `PAYLOAD_TOO_LARGE`. An undecodable frame answers 200 with `reason_code: BAD_IMAGE`.
+
+`GET /sessions/{id}` (project key) is how the backend learns the outcome; `result` is the verify answer above, or `null` while nothing was uploaded:
+
+```json
+{
+  "session_id": "3f9c…",
+  "mode": "verify",
+  "subject_id": "E001",
+  "purpose": "checkin",
+  "used": true,
+  "expires_at": "2026-09-18T09:01:00Z",
+  "result": { "ok": true, "mode": "verify", "reason_code": "OK", "scores": { "…": "…" }, "verification_id": 42 }
+}
+```
 
 ## Verifications
 
-`GET /verifications?from&to&subject_id&session_id&purpose&ok&limit` → `[{id, session_id, subject_id, purpose, ok, reason_code, match_score, spoof_score, consistency_score, created_at}]`, newest first.
+`GET /verifications?from&to&subject_id&session_id&purpose&ok&limit`, newest first:
+
+```json
+[
+  {
+    "id": 42,
+    "session_id": "3f9c…",
+    "subject_id": "E001",
+    "purpose": "checkin",
+    "ok": true,
+    "reason_code": "OK",
+    "match_score": 0.71,
+    "spoof_score": 0.93,
+    "consistency_score": 0.88,
+    "created_at": "2026-09-18T09:00:12Z"
+  }
+]
+```
 
 ## Policy
 

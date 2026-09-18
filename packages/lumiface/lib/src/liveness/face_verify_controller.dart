@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:ui' show Color;
+import 'dart:ui' show Color, Rect;
 
 import 'package:flutter/foundation.dart';
 
@@ -49,39 +49,65 @@ class LivenessState {
     bool clearFlash = false,
     int? flashIndex,
     VerifyResult? result,
-  }) =>
-      LivenessState(
-        phase: phase ?? this.phase,
-        hint: clearHint ? null : (hint ?? this.hint),
-        challenge: challenge ?? this.challenge,
-        challengeIndex: challengeIndex ?? this.challengeIndex,
-        challengeCount: challengeCount ?? this.challengeCount,
-        flashColor: clearFlash ? null : (flashColor ?? this.flashColor),
-        flashIndex: flashIndex ?? this.flashIndex,
-        result: result ?? this.result,
-      );
+  }) => LivenessState(
+    phase: phase ?? this.phase,
+    hint: clearHint ? null : (hint ?? this.hint),
+    challenge: challenge ?? this.challenge,
+    challengeIndex: challengeIndex ?? this.challengeIndex,
+    challengeCount: challengeCount ?? this.challengeCount,
+    flashColor: clearFlash ? null : (flashColor ?? this.flashColor),
+    flashIndex: flashIndex ?? this.flashIndex,
+    result: result ?? this.result,
+  );
 
   bool get isDone => phase == LivenessPhase.success || phase == LivenessPhase.failed;
   bool get isFlashing => phase == LivenessPhase.flash && flashColor != null;
 
   /// 0..1 progress for a progress bar, null while idle or failed.
   double? get progress => switch (phase) {
-        LivenessPhase.aligning => 0,
-        LivenessPhase.challenge => challengeCount == 0 ? 0 : (challengeIndex + 0.5) / (challengeCount + 1),
-        LivenessPhase.flash || LivenessPhase.uploading => challengeCount / (challengeCount + 1),
-        LivenessPhase.success => 1,
-        _ => null,
-      };
+    LivenessPhase.aligning => 0,
+    LivenessPhase.challenge => challengeCount == 0 ? 0 : (challengeIndex + 0.5) / (challengeCount + 1),
+    LivenessPhase.flash || LivenessPhase.uploading => challengeCount / (challengeCount + 1),
+    LivenessPhase.success => 1,
+    _ => null,
+  };
 }
 
 /// Headless driver of one camera flow. Owns no widget: feed it a
 /// [FaceSignalSource] and a [FrameCapturer] and observe [state].
+/// The whole camera frame, in frame-normalised coordinates.
+const Rect fullFrame = Rect.fromLTWH(0, 0, 1, 1);
+
+/// The part of a [videoAspect] frame that a `BoxFit.cover` preview shows in a
+/// [containerAspect] box. Alignment is judged inside this region so "move
+/// closer" means what the person sees, not the raw frame the camera delivers.
+Rect visibleRegionFor(double videoAspect, double containerAspect) {
+  if (videoAspect <= 0 || containerAspect <= 0 || videoAspect == containerAspect) return fullFrame;
+  if (videoAspect > containerAspect) {
+    final width = containerAspect / videoAspect;
+    return Rect.fromLTWH((1 - width) / 2, 0, width, 1);
+  }
+  final height = videoAspect / containerAspect;
+  return Rect.fromLTWH(0, (1 - height) / 2, 1, height);
+}
+
+/// Re-expresses a frame-normalised box relative to [region].
+Rect boxInRegion(Rect b, Rect region) => Rect.fromLTWH(
+  (b.left - region.left) / region.width,
+  (b.top - region.top) / region.height,
+  b.width / region.width,
+  b.height / region.height,
+);
+
 abstract class FaceFlowController {
   FaceFlowController({required this.source, required this.capturer});
 
   final FaceSignalSource source;
   final FrameCapturer capturer;
   final ValueNotifier<LivenessState> state = ValueNotifier(const LivenessState());
+
+  /// What the preview shows of the frame; the view keeps it in step with its layout. See [visibleRegionFor].
+  Rect visibleRegion = fullFrame;
 
   FaceFlow get flow;
 
@@ -96,10 +122,10 @@ abstract class FaceFlowController {
   void dispose() => state.dispose();
 }
 
-AlignHint? alignHint(FaceSignal s, LivenessConfig config) {
+AlignHint? alignHint(FaceSignal s, LivenessConfig config, [Rect region = fullFrame]) {
   if (s.faceCount == 0 || s.box == null) return AlignHint.noFace;
   if (s.faceCount > 1) return AlignHint.multipleFaces;
-  final b = s.box!;
+  final b = boxInRegion(s.box!, region);
   if (b.width < config.minFaceWidthFraction) return AlignHint.tooFar;
   if (b.width > config.maxFaceWidthFraction) return AlignHint.tooClose;
   final dx = (b.center.dx - 0.5).abs();
@@ -122,52 +148,62 @@ AlignHint? alignHint(FaceSignal s, LivenessConfig config) {
 ///
 /// When the server picked no turn challenge and [LivenessConfig.parallaxWhenNoTurn]
 /// is set, a client-only turn is appended so the nose-parallax check always
-/// runs; it captures no frame and reports no duration to the server.
+/// runs; it is not reported to the server.
 ///
-/// All timing is derived from [FaceSignal.tsMs] so the controller is fully
-/// deterministic under test; a wall-clock watchdog only guards against the
-/// signal stream stalling.
+/// Frames go to the server continuously while the flow runs; the events sent at
+/// each boundary only tell the server where to look, it decides from its own
+/// frames and clock. All timing here is derived from [FaceSignal.tsMs] so the
+/// controller is fully deterministic under test; a wall-clock watchdog only
+/// guards against the signal stream stalling.
 class FaceVerifyController extends FaceFlowController {
   FaceVerifyController({
     required super.source,
     required super.capturer,
     required this.client,
-    this.subjectId,
-    this.purpose = '',
+    required this.sessionProvider,
+    FaceFlow flow = FaceFlow.verify,
     LivenessConfig? config,
     this.clientInfo = const {},
-    this.sessionProvider,
-  }) : _explicitConfig = config;
+    this.streamFps = 8,
+  }) : assert(flow != FaceFlow.enroll, 'use FaceEnrollController'),
+       _flow = flow,
+       _explicitConfig = config;
 
   final LumifaceClient client;
-  final String? subjectId;
-  final String purpose;
 
-  /// Fetches the session from your own backend (which holds the project key)
-  /// instead of [client] creating it with an API key on the device. Return
-  /// `FaceSession.fromJson` of the server's `POST /v1/sessions` response.
-  final Future<FaceSession> Function()? sessionProvider;
+  /// Fetches the session from your backend, which created it with the project
+  /// key and fixed the subject: return `FaceSession.fromJson` of the server's
+  /// `POST /v1/sessions` response. The device only ever holds the session's token.
+  final Future<FaceSession> Function() sessionProvider;
   final Map<String, dynamic> clientInfo;
+
+  /// Frames streamed to the server per second of signal time.
+  final int streamFps;
   final LivenessConfig? _explicitConfig;
   LivenessConfig _config = const LivenessConfig();
+  FaceFlow _flow;
 
+  /// [FaceFlow.verify] or [FaceFlow.liveness]; the session decides once it arrives.
   @override
-  FaceFlow get flow => subjectId == null ? FaceFlow.liveness : FaceFlow.verify;
+  FaceFlow get flow => _flow;
 
   @override
   LivenessConfig get config => _config;
 
   FaceSession? get session => _session;
 
+  /// The server's plan once the stream is open.
+  StreamPlan? get serverPlan => _serverPlan;
+
   FaceSession? _session;
+  StreamPlan? _serverPlan;
+  VerifyStream? _stream;
   List<Challenge> _plan = const [];
   StreamSubscription<FaceSignal>? _sub;
   Timer? _watchdog;
   bool _disposed = false;
   bool _busy = false;
-
-  final List<CapturedFrame> _frames = [];
-  final List<int> _durations = [];
+  int? _lastFrameAt;
   int? _alignedSince;
   int? _challengeStartedAt;
   int? _lastFaceSeenAt;
@@ -181,19 +217,27 @@ class FaceVerifyController extends FaceFlowController {
     if (state.value.phase != LivenessPhase.idle) return;
     _set(state.value.copyWith(phase: LivenessPhase.starting));
     try {
-      _session = await (sessionProvider?.call() ?? client.createSession(subjectId: subjectId, purpose: purpose));
+      _session = await sessionProvider();
     } catch (e) {
       _finish(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
       return;
     }
     if (_disposed) return;
-    _config = _explicitConfig ?? _session!.clientConfig ?? const LivenessConfig();
-    _plan = _planChallenges(_session!.challenges);
-    _set(LivenessState(
-      phase: LivenessPhase.aligning,
-      hint: AlignHint.noFace,
-      challengeCount: _plan.length,
-    ));
+    _flow = _session!.mode == 'liveness' ? FaceFlow.liveness : FaceFlow.verify;
+    try {
+      _stream = client.openStream(_session!, clientInfo: clientInfo);
+      _serverPlan = await _stream!.plan;
+    } on LumifaceException catch (e) {
+      _finish(VerifyResult.clientError(e.reasonCode, e.details?.toString()));
+      return;
+    } catch (e) {
+      _finish(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
+      return;
+    }
+    if (_disposed) return;
+    _config = _explicitConfig ?? _serverPlan!.clientConfig ?? _session!.clientConfig ?? const LivenessConfig();
+    _plan = _planChallenges(_serverPlan!.challenges);
+    _set(LivenessState(phase: LivenessPhase.aligning, hint: AlignHint.noFace, challengeCount: _plan.length));
     _armWatchdog(Duration(seconds: _session!.ttlSeconds));
     _sub = source.signals.listen(_onSignal);
   }
@@ -207,13 +251,14 @@ class FaceVerifyController extends FaceFlowController {
     return [...server, Random().nextBool() ? Challenge.turnLeft : Challenge.turnRight];
   }
 
-  bool _isServerChallenge(int i) => i < _session!.challenges.length;
+  bool _isServerChallenge(int i) => i < _serverPlan!.challenges.length;
 
   @override
   void dispose() {
     _disposed = true;
     _sub?.cancel();
     _watchdog?.cancel();
+    _stream?.close();
     super.dispose();
   }
 
@@ -230,13 +275,31 @@ class FaceVerifyController extends FaceFlowController {
     if (_disposed || state.value.isDone) return;
     _sub?.cancel();
     _watchdog?.cancel();
-    _set(state.value.copyWith(phase: r.ok ? LivenessPhase.success : LivenessPhase.failed, result: r, clearHint: true));
+    if (state.value.phase != LivenessPhase.uploading) _stream?.close();
+    final result = _session != null && r.sessionId == null ? r.withSession(_session!.id) : r;
+    _set(
+      state.value.copyWith(
+        phase: result.ok ? LivenessPhase.success : LivenessPhase.failed,
+        result: result,
+        clearHint: true,
+      ),
+    );
+  }
+
+  /// One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow.
+  void _streamFrame(FaceSignal s) {
+    final stream = _stream;
+    if (stream == null) return;
+    if (_lastFrameAt != null && s.tsMs - _lastFrameAt! < 1000 ~/ streamFps) return;
+    _lastFrameAt = s.tsMs;
+    capturer.captureJpeg().then((jpeg) => stream.sendFrame(jpeg, s.tsMs)).catchError((_) {});
   }
 
   Future<void> _onSignal(FaceSignal s) async {
     if (_busy || _disposed || state.value.isDone) return;
     final st = state.value;
     if (s.present) _lastFaceSeenAt = s.tsMs;
+    _streamFrame(s);
 
     switch (st.phase) {
       case LivenessPhase.aligning:
@@ -251,7 +314,7 @@ class FaceVerifyController extends FaceFlowController {
   }
 
   void _align(FaceSignal s) {
-    final hint = alignHint(s, config);
+    final hint = alignHint(s, config, visibleRegion);
     if (hint != null) {
       _alignedSince = null;
       _set(state.value.copyWith(hint: hint));
@@ -260,10 +323,8 @@ class FaceVerifyController extends FaceFlowController {
     _alignedSince ??= s.tsMs;
     _set(state.value.copyWith(hint: AlignHint.holdStill));
     if (s.tsMs - _alignedSince! >= config.alignHoldMs) {
-      _guard(() async {
-        await _capture('neutral_start', s.tsMs);
-        _startChallenge(0, s);
-      });
+      _stream?.event(StreamEventName.aligned, s.tsMs);
+      _startChallenge(0, s);
     }
   }
 
@@ -272,12 +333,7 @@ class FaceVerifyController extends FaceFlowController {
     _detector = ChallengeDetector.forChallenge(c, config)..feed(s);
     _challengeStartedAt = s.tsMs;
     _settleUntil = null;
-    _set(state.value.copyWith(
-      phase: LivenessPhase.challenge,
-      challenge: c,
-      challengeIndex: i,
-      clearHint: true,
-    ));
+    _set(state.value.copyWith(phase: LivenessPhase.challenge, challenge: c, challengeIndex: i, clearHint: true));
   }
 
   Future<void> _challenge(FaceSignal s) async {
@@ -299,43 +355,36 @@ class FaceVerifyController extends FaceFlowController {
         _startChallenge(next, s);
         return;
       }
-      final hint = alignHint(s, config);
+      final hint = alignHint(s, config, visibleRegion);
       if (hint != null) {
         _set(state.value.copyWith(hint: hint));
         return;
       }
-      if (!_flashDone && _session!.flashColors.isNotEmpty) {
+      if (!_flashDone && _serverPlan!.flashColors.isNotEmpty) {
         _startFlash(0, s.tsMs);
         return;
       }
-      _guard(() async {
-        await _capture('neutral_end', s.tsMs);
-        await _upload();
-      });
+      _guard(_upload);
       return;
     }
     if (_detector!.feed(s)) {
       final i = state.value.challengeIndex;
-      if (!_isServerChallenge(i)) {
-        _settleUntil = s.tsMs + config.settleAfterChallengeMs;
-        return;
-      }
-      _durations.add(s.tsMs - _challengeStartedAt!);
-      _guard(() async {
-        await _capture('challenge_$i', s.tsMs);
-        _settleUntil = s.tsMs + config.settleAfterChallengeMs;
-      });
+      if (_isServerChallenge(i)) _stream?.event(StreamEventName.challengeDone, s.tsMs, index: i);
+      _settleUntil = s.tsMs + config.settleAfterChallengeMs;
     }
   }
 
   void _startFlash(int i, int tsMs) {
     _flashStartedAt = tsMs;
-    _set(state.value.copyWith(
-      phase: LivenessPhase.flash,
-      flashIndex: i,
-      flashColor: _session!.flashColors[i],
-      clearHint: true,
-    ));
+    _stream?.event(StreamEventName.flash, tsMs, index: i);
+    _set(
+      state.value.copyWith(
+        phase: LivenessPhase.flash,
+        flashIndex: i,
+        flashColor: _serverPlan!.flashColors[i],
+        clearHint: true,
+      ),
+    );
   }
 
   void _flash(FaceSignal s) {
@@ -345,39 +394,24 @@ class FaceVerifyController extends FaceFlowController {
       }
       return;
     }
-    if (s.tsMs - _flashStartedAt! < _session!.flashHoldMs) return;
+    if (s.tsMs - _flashStartedAt! < _serverPlan!.flashHoldMs) return;
     final i = state.value.flashIndex;
-    _guard(() async {
-      await _capture('flash_$i', s.tsMs);
-      if (i + 1 < _session!.flashColors.length) {
-        _startFlash(i + 1, s.tsMs);
-        return;
-      }
-      _flashDone = true;
-      _challengeStartedAt = s.tsMs;
-      _settleUntil = s.tsMs + config.settleAfterFlashMs;
-      _set(state.value.copyWith(phase: LivenessPhase.challenge, clearFlash: true));
-    });
-  }
-
-  Future<void> _capture(String kind, int tsMs) async {
-    final jpeg = await capturer.captureJpeg();
-    _frames.add(CapturedFrame(kind: kind, tsMs: tsMs, jpeg: jpeg));
+    if (i + 1 < _serverPlan!.flashColors.length) {
+      _startFlash(i + 1, s.tsMs);
+      return;
+    }
+    _stream?.event(StreamEventName.flashEnd, s.tsMs);
+    _flashDone = true;
+    _challengeStartedAt = s.tsMs;
+    _settleUntil = s.tsMs + config.settleAfterFlashMs;
+    _set(state.value.copyWith(phase: LivenessPhase.challenge, clearFlash: true));
   }
 
   Future<void> _upload() async {
     _sub?.cancel();
     _set(state.value.copyWith(phase: LivenessPhase.uploading, clearHint: true));
     try {
-      final r = await client.verify(
-        sessionId: _session!.id,
-        subjectId: subjectId,
-        frames: _frames,
-        challengeDurationsMs: _durations,
-        client: clientInfo,
-        sessionToken: _session!.token,
-      );
-      _finish(r);
+      _finish(await _stream!.end());
     } catch (e) {
       _finish(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
     }
@@ -385,9 +419,11 @@ class FaceVerifyController extends FaceFlowController {
 
   void _guard(Future<void> Function() body) {
     _busy = true;
-    body().catchError((Object e) {
-      _finish(VerifyResult.clientError('CAPTURE_ERROR', e.toString()));
-    }).whenComplete(() => _busy = false);
+    body()
+        .catchError((Object e) {
+          _finish(VerifyResult.clientError('CAPTURE_ERROR', e.toString()));
+        })
+        .whenComplete(() => _busy = false);
   }
 }
 
@@ -399,22 +435,16 @@ class FaceEnrollController extends FaceFlowController {
     required super.source,
     required super.capturer,
     required this.client,
-    this.externalId = '',
-    this.name = '',
-    this.replace = false,
-    this.enrolToken,
+    required this.enrolTokenProvider,
     this.config = const LivenessConfig(),
     this.timeout = const Duration(seconds: 60),
   });
 
   final LumifaceClient client;
-  final String externalId;
-  final String name;
-  final bool replace;
 
-  /// Backend-issued token from `POST /v1/subjects/tokens`; the subject it names
-  /// gets enrolled and [client] needs no API key.
-  final String? enrolToken;
+  /// Fetches a single-use enrol token from your backend (`POST /v1/subjects/tokens`
+  /// there); the token names the subject, so the device sends only the photo.
+  final Future<String> Function() enrolTokenProvider;
   @override
   final LivenessConfig config;
   final Duration timeout;
@@ -449,7 +479,7 @@ class FaceEnrollController extends FaceFlowController {
 
   void _onSignal(FaceSignal s) {
     if (_busy || _disposed || state.value.phase != LivenessPhase.aligning) return;
-    final hint = alignHint(s, config);
+    final hint = alignHint(s, config, visibleRegion);
     if (hint != null) {
       _alignedSince = null;
       state.value = state.value.copyWith(hint: hint);
@@ -467,8 +497,7 @@ class FaceEnrollController extends FaceFlowController {
   Future<void> _submit() async {
     try {
       final jpeg = await capturer.captureJpeg();
-      final subject = await client.enroll(
-          externalId: externalId, name: name, photoJpeg: jpeg, replace: replace, enrolToken: enrolToken);
+      final subject = await client.enroll(photoJpeg: jpeg, enrolToken: await enrolTokenProvider());
       _finish(VerifyResult.enrolled(subject));
     } on LumifaceException catch (e) {
       _finish(VerifyResult(ok: false, mode: 'enroll', reasonCode: e.reasonCode, message: e.details?.toString()));
@@ -481,6 +510,10 @@ class FaceEnrollController extends FaceFlowController {
     if (_disposed || state.value.isDone) return;
     _sub?.cancel();
     _watchdog?.cancel();
-    state.value = state.value.copyWith(phase: r.ok ? LivenessPhase.success : LivenessPhase.failed, result: r, clearHint: true);
+    state.value = state.value.copyWith(
+      phase: r.ok ? LivenessPhase.success : LivenessPhase.failed,
+      result: r,
+      clearHint: true,
+    );
   }
 }

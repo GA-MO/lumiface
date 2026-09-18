@@ -4,14 +4,14 @@
   "description": "Face verification with active liveness for React: MediaPipe on the client, the Lumiface server behind it.",
   "type": "module",
   "license": "MIT",
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./core": "./src/core.ts"
   },
   "scripts": {
-    "dev": "vite --config demo/vite.config.ts",
-    "build:demo": "vite build --config demo/vite.config.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
@@ -25,11 +25,8 @@
   "devDependencies": {
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^6.1.1",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
     "typescript": "^5.7.2",
-    "vite": "^7.1.0",
     "vitest": "^3.2.0"
   }
 }

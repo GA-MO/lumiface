@@ -1,4 +1,5 @@
 import secrets
+from urllib.parse import urlsplit
 
 from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
@@ -9,22 +10,41 @@ from .models import Project
 from .policy import Policy, resolve_policy, use_policy
 
 
-def project_from_api_key(db: Session, x_api_key: str | None) -> Project:
+KEY_PREFIX = "lf_sk_"  # marks the project secret for secret scanners and for humans reading a bundle
+
+
+def new_api_key() -> str:
+    return KEY_PREFIX + secrets.token_urlsafe(24)
+
+
+def _local_origin(origin: str) -> bool:
+    host = urlsplit(origin).hostname or ""
+    return host in ("localhost", "127.0.0.1", "::1") or host.endswith(".localhost")
+
+
+def project_from_api_key(db: Session, x_api_key: str | None, origin: str | None = None) -> Project:
     if not x_api_key:
         raise HTTPException(401, "missing X-API-Key")
     project = db.exec(select(Project).where(Project.api_key == x_api_key)).first()
     if not project:
         raise HTTPException(401, "invalid api key")
-    use_policy(project_policy(project))
+    policy = project_policy(project)
+    # Browsers always send Origin on cross-site requests and cannot forge it: a project key arriving
+    # from a page that is not localhost has been shipped in a bundle.
+    if origin and not _local_origin(origin) and not policy.allow_browser_api_key:
+        raise HTTPException(401, {"reason_code": "API_KEY_FROM_BROWSER",
+                                  "detail": "the project key must stay on your backend; devices use session tokens"})
+    use_policy(policy)
     return project
 
 
 def current_project(
     x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+    origin: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Project:
     """The project secret key. Backend only; devices get a session or enrol token instead."""
-    return project_from_api_key(db, x_api_key)
+    return project_from_api_key(db, x_api_key, origin)
 
 
 _TOKEN_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")

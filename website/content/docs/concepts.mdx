@@ -23,9 +23,9 @@ A session is one attempt. It holds the challenges, the flash colours, a TTL and 
 
 `purpose` is a free label (`checkin`, `login`, `kiosk`, ...) stored with the verification for filtering; it does not change the checks.
 
-## Frames
+## Stream
 
-The app uploads one JPEG per point in the flow: `neutral_start`, `challenge_<i>` at the moment each challenge was satisfied, `flash_<i>` while each colour fills the screen, `neutral_end` once the face is frontal again. Timestamps come with them and are checked for order, total duration and per-challenge duration.
+The app opens a WebSocket for the session, receives the plan (challenges, flash colours) and then streams JPEG frames continuously, about eight a second, while it runs the plan. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own landmarks inside each window to confirm the blink, smile, turn or nod, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof, identity and consistency on the key frames it picked. The device's detectors exist to guide the person; they decide nothing.
 
 ## Policy
 
@@ -35,9 +35,10 @@ Every threshold and every client tunable, resolved per request as environment de
 
 | Check | Where | Beats |
 |---|---|---|
-| Blink timing, smile hold, turn and nod angles | device | scripted photos, slow videos |
+| Blink timing, smile hold, turn and nod angles | device (guidance) and **server** (from its own landmarks on the streamed frames) | scripted photos, slow videos, a patched client that skips its checks |
 | Nose parallax during a turn | device | a flat print or screen rotated in front of the camera |
-| Timing order and durations | server | replayed recordings responding at random times |
+| Timing order and durations | server, on its own clock | replayed recordings responding at random times, forged timestamps |
+| A frozen or repeated feed | server | a still image streamed as video |
 | MiniFASNet ensemble | server | prints, screens with visible bezels |
 | CVPR-2024 ResNet50 on a face crop | server | bezel-free screen replay |
 | Screen-flash reflection and locality | server | any replay that cannot know the colours, phone screens that reflect the whole sheet |

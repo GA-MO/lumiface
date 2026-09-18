@@ -36,6 +36,7 @@ class FaceVerifyScope {
     if (b == null || !source.isMirrored) return b;
     return Rect.fromLTWH(1 - b.right, b.top, b.width, b.height);
   }
+
   final LivenessStrings strings;
   final FaceVerifyTheme theme;
   final FaceFlow flow;
@@ -53,7 +54,7 @@ typedef FaceScopeBuilder = Widget Function(BuildContext context, FaceVerifyScope
 /// Camera preview plus a flow ([FaceFlow.verify], [FaceFlow.liveness] or
 /// [FaceFlow.enroll]) with a default overlay that every part can be replaced.
 ///
-/// Minimal use: `FaceVerifyView(client: c, subjectId: 'E001', onResult: ...)`.
+/// Minimal use: `FaceVerifyView(client: c, sessionProvider: () => myApi.faceSession(), onResult: ...)`.
 /// Change colours and geometry with [theme], texts with [strings], single parts
 /// of the overlay with [promptBuilder], [progressBuilder], [resultBuilder] and
 /// [flashBuilder], or the whole overlay with [overlayBuilder]. Everything sits
@@ -64,13 +65,9 @@ class FaceVerifyView extends StatefulWidget {
     super.key,
     required this.client,
     required this.onResult,
-    this.flow,
-    this.subjectId,
-    this.purpose = '',
-    this.subjectName = '',
-    this.replaceEnrollment = false,
+    this.flow = FaceFlow.verify,
     this.sessionProvider,
-    this.enrolToken,
+    this.enrolTokenProvider,
     this.config,
     this.strings = LivenessStrings.en,
     this.theme = const FaceVerifyTheme(),
@@ -94,21 +91,17 @@ class FaceVerifyView extends StatefulWidget {
   final LumifaceClient client;
   final void Function(VerifyResult result) onResult;
 
-  /// Defaults to [FaceFlow.verify] with a [subjectId] and [FaceFlow.liveness] without.
-  final FaceFlow? flow;
-  final String? subjectId;
+  /// [FaceFlow.verify] (default) or [FaceFlow.liveness] need [sessionProvider];
+  /// [FaceFlow.enroll] needs [enrolTokenProvider]. The session the backend
+  /// created decides between verify and liveness.
+  final FaceFlow flow;
 
-  /// Free label stored with the verification (checkin, login, kiosk, ...).
-  final String purpose;
-  final String subjectName;
-  final bool replaceEnrollment;
-
-  /// Production auth: your backend creates the session with the project key and
-  /// the app only holds its token. See [FaceVerifyController.sessionProvider].
+  /// Your backend creates the session with the project key (fixing the subject)
+  /// and the app only holds its token. See [FaceVerifyController.sessionProvider].
   final Future<FaceSession> Function()? sessionProvider;
 
-  /// Production auth for [FaceFlow.enroll]. See [FaceEnrollController.enrolToken].
-  final String? enrolToken;
+  /// For [FaceFlow.enroll]. See [FaceEnrollController.enrolTokenProvider].
+  final Future<String> Function()? enrolTokenProvider;
 
   /// Overrides the project's `client_config`; null uses what the server sends.
   final LivenessConfig? config;
@@ -143,8 +136,6 @@ class FaceVerifyView extends StatefulWidget {
   /// [autoStart] is false, or `cancel()`).
   final void Function(FaceFlowController controller)? onController;
 
-  FaceFlow get effectiveFlow => flow ?? (subjectId == null ? FaceFlow.liveness : FaceFlow.verify);
-
   @override
   State<FaceVerifyView> createState() => _FaceVerifyViewState();
 }
@@ -164,27 +155,25 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
 
   FaceFlowController _createController(CameraFaceSource source) {
     final platform = kIsWeb ? 'web' : defaultTargetPlatform.name;
-    return switch (widget.effectiveFlow) {
+    return switch (widget.flow) {
       FaceFlow.enroll => FaceEnrollController(
-          source: source,
-          capturer: source,
-          client: widget.client,
-          externalId: widget.subjectId ?? '',
-          name: widget.subjectName,
-          replace: widget.replaceEnrollment,
-          enrolToken: widget.enrolToken,
-          config: widget.config ?? const LivenessConfig(),
-        ),
+        source: source,
+        capturer: source,
+        client: widget.client,
+        enrolTokenProvider:
+            widget.enrolTokenProvider ?? (throw ArgumentError('FaceFlow.enroll needs enrolTokenProvider')),
+        config: widget.config ?? const LivenessConfig(),
+      ),
       FaceFlow.verify || FaceFlow.liveness => FaceVerifyController(
-          source: source,
-          capturer: source,
-          client: widget.client,
-          subjectId: widget.effectiveFlow == FaceFlow.verify ? widget.subjectId : null,
-          purpose: widget.purpose,
-          config: widget.config,
-          clientInfo: {'platform': platform, ...widget.clientInfo},
-          sessionProvider: widget.sessionProvider,
-        ),
+        source: source,
+        capturer: source,
+        client: widget.client,
+        sessionProvider:
+            widget.sessionProvider ?? (throw ArgumentError('FaceFlow.verify and liveness need sessionProvider')),
+        flow: widget.flow,
+        config: widget.config,
+        clientInfo: {'platform': platform, ...widget.clientInfo},
+      ),
     };
   }
 
@@ -249,8 +238,11 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
             child: Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
-                child: Text('${widget.strings.cameraError}\n$_error',
-                    textAlign: TextAlign.center, style: theme.messageStyle.copyWith(fontSize: 16)),
+                child: Text(
+                  '${widget.strings.cameraError}\n$_error',
+                  textAlign: TextAlign.center,
+                  style: theme.messageStyle.copyWith(fontSize: 16),
+                ),
               ),
             ),
           );
@@ -270,28 +262,39 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
       signal: _lastSignal,
       strings: widget.strings,
       theme: theme,
-      flow: widget.effectiveFlow,
+      flow: controller.flow,
       source: source,
     );
     return ColoredBox(
       color: theme.backgroundColor,
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          FaceCameraPreview(source: source),
-          if (widget.overlayBuilder != null)
-            widget.overlayBuilder!(context, scope)
-          else
-            FaceVerifyOverlay(
-              scope: scope,
-              showDebug: widget.showDebug,
-              promptBuilder: widget.promptBuilder,
-              progressBuilder: widget.progressBuilder,
-              resultBuilder: widget.resultBuilder,
-            ),
-          if (scope.state.isFlashing)
-            widget.flashBuilder?.call(context, scope) ?? ColoredBox(color: scope.state.flashColor!),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // FaceCameraPreview fits the frame by width and crops top/bottom; a frame shorter than
+          // the box is letterboxed, so only the vertical crop can hide part of the face.
+          final aspect = source.previewAspectRatio;
+          final frameH = constraints.maxWidth / aspect;
+          controller.visibleRegion = frameH > constraints.maxHeight
+              ? visibleRegionFor(aspect, constraints.maxWidth / constraints.maxHeight)
+              : fullFrame;
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              FaceCameraPreview(source: source),
+              if (widget.overlayBuilder != null)
+                widget.overlayBuilder!(context, scope)
+              else
+                FaceVerifyOverlay(
+                  scope: scope,
+                  showDebug: widget.showDebug,
+                  promptBuilder: widget.promptBuilder,
+                  progressBuilder: widget.progressBuilder,
+                  resultBuilder: widget.resultBuilder,
+                ),
+              if (scope.state.isFlashing)
+                widget.flashBuilder?.call(context, scope) ?? ColoredBox(color: scope.state.flashColor!),
+            ],
+          );
+        },
       ),
     );
   }
@@ -304,25 +307,25 @@ class FaceCameraPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
-        builder: (context, constraints) {
-          final w = constraints.maxWidth;
-          final h = w / source.previewAspectRatio;
-          return ClipRect(
-            child: OverflowBox(
-              maxWidth: double.infinity,
-              maxHeight: double.infinity,
-              child: SizedBox(
-                width: w,
-                height: h,
-                child: FittedBox(
-                  fit: BoxFit.cover,
-                  child: SizedBox(width: w, height: h, child: source.buildPreview(context)),
-                ),
-              ),
+    builder: (context, constraints) {
+      final w = constraints.maxWidth;
+      final h = w / source.previewAspectRatio;
+      return ClipRect(
+        child: OverflowBox(
+          maxWidth: double.infinity,
+          maxHeight: double.infinity,
+          child: SizedBox(
+            width: w,
+            height: h,
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(width: w, height: h, child: source.buildPreview(context)),
             ),
-          );
-        },
+          ),
+        ),
       );
+    },
+  );
 }
 
 /// The default overlay: guide mask, progress bar, prompt, result buttons.
@@ -401,15 +404,34 @@ class FaceGuide extends StatelessWidget {
   final Rect? box;
 
   Color get color => switch (phase) {
-        LivenessPhase.success => theme.guideSuccessColor,
-        LivenessPhase.failed => theme.guideFailedColor,
-        LivenessPhase.challenge => theme.guideActiveColor,
-        _ => theme.guideColor,
-      };
+    LivenessPhase.success => theme.guideSuccessColor,
+    LivenessPhase.failed => theme.guideFailedColor,
+    LivenessPhase.challenge => theme.guideActiveColor,
+    _ => theme.guideColor,
+  };
 
   @override
-  Widget build(BuildContext context) =>
-      CustomPaint(painter: FaceGuidePainter(theme: theme, color: color, box: box));
+  Widget build(BuildContext context) => CustomPaint(
+    painter: FaceGuidePainter(theme: theme, color: color, box: box),
+  );
+}
+
+/// The guide at `guideWidthFraction`, shrunk to fit [size] and kept clear of a band at the
+/// bottom where the prompt and the buttons live, so neither ever sits on the guide's edge.
+Rect guideRect(FaceVerifyTheme theme, Size size) {
+  final margin = math.min(size.width, size.height) * 0.06;
+  final bottomBand = (size.height * 0.2).clamp(72.0, 140.0);
+  var w = size.width * theme.guideWidthFraction;
+  var h = w * theme.guideAspectRatio;
+  final maxH = math.max(0.0, size.height - margin - bottomBand);
+  if (h > maxH) {
+    h = maxH;
+    w = h / theme.guideAspectRatio;
+  }
+  final top = (size.height * theme.guideCenterY - h / 2)
+      .clamp(margin, math.max(margin, size.height - h - bottomBand))
+      .toDouble();
+  return Rect.fromLTWH((size.width - w) / 2, top, w, h);
 }
 
 class FaceGuidePainter extends CustomPainter {
@@ -421,24 +443,25 @@ class FaceGuidePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (theme.guideShape != FaceGuideShape.none) {
-      final w = size.width * theme.guideWidthFraction;
-      final h = w * theme.guideAspectRatio;
-      final rect = Rect.fromCenter(center: Offset(size.width / 2, size.height * theme.guideCenterY), width: w, height: h);
+      final rect = guideRect(theme, size);
       final cutout = Path();
       if (theme.guideShape == FaceGuideShape.oval) {
         cutout.addOval(rect);
       } else {
-        cutout.addRRect(RRect.fromRectAndRadius(rect, Radius.circular(w * 0.2)));
+        cutout.addRRect(RRect.fromRectAndRadius(rect, Radius.circular(rect.width * 0.2)));
       }
       final mask = Path()
         ..addRect(Offset.zero & size)
         ..addPath(cutout, Offset.zero)
         ..fillType = PathFillType.evenOdd;
       canvas.drawPath(mask, Paint()..color = theme.maskColor);
-      canvas.drawPath(cutout, Paint()
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = theme.guideStrokeWidth);
+      canvas.drawPath(
+        cutout,
+        Paint()
+          ..color = color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = theme.guideStrokeWidth,
+      );
     }
     if (box != null) {
       final b = box!;
@@ -461,18 +484,22 @@ class FaceDebugBar extends StatelessWidget {
   const FaceDebugBar({super.key, required this.signal});
   final FaceSignal signal;
 
-  String _f(double? v) => v == null ? '-' : (v * 100).round() / 100 == v ? v.toStringAsFixed(2) : v.toStringAsFixed(1);
+  String _f(double? v) => v == null
+      ? '-'
+      : (v * 100).round() / 100 == v
+      ? v.toStringAsFixed(2)
+      : v.toStringAsFixed(1);
 
   @override
   Widget build(BuildContext context) => Container(
-        color: Colors.black54,
-        padding: const EdgeInsets.all(8),
-        child: Text(
-          'faces=${signal.faceCount} w=${_f(signal.box?.width)} eye=${_f(signal.eyeOpen)} '
-          'smile=${_f(signal.smile)} yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} px=${_f(signal.noseParallax)} '
-          'cx=${_f(signal.box?.center.dx)} cy=${_f(signal.box?.center.dy)} '
-          'min(w,h)=${signal.box == null ? '-' : math.min(signal.box!.width, signal.box!.height).toStringAsFixed(2)}',
-          style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace'),
-        ),
-      );
+    color: Colors.black54,
+    padding: const EdgeInsets.all(8),
+    child: Text(
+      'faces=${signal.faceCount} w=${_f(signal.box?.width)} eye=${_f(signal.eyeOpen)} '
+      'smile=${_f(signal.smile)} yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} px=${_f(signal.noseParallax)} '
+      'cx=${_f(signal.box?.center.dx)} cy=${_f(signal.box?.center.dy)} '
+      'min(w,h)=${signal.box == null ? '-' : math.min(signal.box!.width, signal.box!.height).toStringAsFixed(2)}',
+      style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace'),
+    ),
+  );
 }

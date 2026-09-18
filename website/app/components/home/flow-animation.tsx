@@ -1,12 +1,13 @@
-import { Check, ScanFace, Server, Smartphone } from "lucide-react";
+import { Check, KeyRound, ScanFace, Server, Smartphone } from "lucide-react";
 
-const T = "10s";
+const T = "12s";
 
+// Percent of the loop. 0-6: backend mints the session. 6-72: the device streams. 72-97: the server finishes. 97: verdict.
 const PROMPTS = [
-  { text: "Center your face", from: 0, to: 8, color: "#fff" },
-  { text: "Blink", from: 8, to: 22, color: "#ffc107" },
-  { text: "Smile", from: 22, to: 38, color: "#ffc107" },
-  { text: "Turn your head left", from: 38, to: 54, color: "#ffc107" },
+  { text: "Center your face", from: 6, to: 14, color: "#fff" },
+  { text: "Blink", from: 14, to: 26, color: "#ffc107" },
+  { text: "Smile", from: 26, to: 40, color: "#ffc107" },
+  { text: "Turn your head left", from: 40, to: 54, color: "#ffc107" },
   { text: "Hold still", from: 54, to: 72, color: "#fff" },
   { text: "Checking", from: 72, to: 97, color: "#fff" },
   { text: "Verified", from: 97, to: 100, color: "#4caf50" },
@@ -18,14 +19,32 @@ const FLASHES = [
   { color: "#0000ff", from: 66, to: 72 },
 ];
 
-const GATES = [
-  { name: "MiniFASNet", detail: "print / screen, every frame", at: 84 },
-  { name: "CVPR-2024 ResNet50", detail: "bezel-free replay, face crop", at: 88 },
-  { name: "Flash reflection", detail: "cheeks follow the 3 colours", at: 91 },
-  { name: "ArcFace match", detail: "every frame vs the enrolled face", at: 94 },
+/** Events the device sends over the stream, at the boundary each one marks. */
+const EVENTS = [
+  { text: "aligned", at: 14 },
+  { text: "challenge_done 0", at: 26 },
+  { text: "challenge_done 1", at: 40 },
+  { text: "challenge_done 2", at: 54 },
+  { text: "flash 0 · 1 · 2", at: 60 },
+  { text: "flash_end", at: 72 },
+  { text: "end", at: 74 },
 ];
 
-const FRAMES = ["neutral_start", "challenge_0", "challenge_1", "challenge_2", "flash_0", "flash_1", "flash_2", "neutral_end"];
+/** What the server reads from its own frames, as it happens, then the gates it runs at the end. */
+const GATES = [
+  { name: "Blink seen", detail: "eye aspect ratio 0.26 → 0.17, then open", at: 24 },
+  { name: "Smile seen", detail: "mouth 13% wider than the neutral frames", at: 38 },
+  { name: "Turn seen", detail: "yaw −31° inside the turn window", at: 52 },
+  { name: "Flash reflection", detail: "cheeks follow the 3 colours, wall does not", at: 76 },
+  { name: "Server clock", detail: "1.9 s per challenge, no repeated frames", at: 80 },
+  { name: "MiniFASNet + CVPR-2024", detail: "print, screen and bezel-free replay", at: 86 },
+  { name: "ArcFace match", detail: "key frames vs the enrolled face", at: 92 },
+];
+
+const BACKEND = [
+  { text: "POST /v1/sessions  →  session_token", from: 0, to: 6 },
+  { text: "GET /v1/sessions/{id}  →  ok", from: 97, to: 100 },
+];
 
 function windowKeyframes(name: string, from: number, to: number, on: string, off: string) {
   const pre = from > 0 ? `0%,${from - 0.01}%{${off}}` : "";
@@ -39,17 +58,20 @@ const css = [
   ...FLASHES.map((f, i) => windowKeyframes(`fa-flash-${i}`, f.from, f.to, "opacity:1", "opacity:0")),
   ...GATES.map((g, i) => windowKeyframes(`fa-gate-${i}`, g.at, 100, "opacity:1;transform:scale(1)", "opacity:0;transform:scale(0.4)")),
   ...GATES.map((g, i) => windowKeyframes(`fa-gate-row-${i}`, g.at, 100, "border-color:color-mix(in oklab,#10b981 45%,transparent);background:color-mix(in oklab,#10b981 8%,transparent)", "border-color:var(--color-fd-border);background:transparent")),
-  `@keyframes fa-guide{0%,7.99%{stroke:#fff}8%,53.99%{stroke:#ffc107}54%,96.99%{stroke:#fff}97%,100%{stroke:#4caf50}}`,
+  ...EVENTS.map((e, i) => windowKeyframes(`fa-event-${i}`, e.at, Math.min(e.at + 5, 100), "opacity:1;transform:translateY(0)", "opacity:0;transform:translateY(4px)")),
+  ...BACKEND.map((b, i) => windowKeyframes(`fa-backend-${i}`, b.from, b.to, "opacity:1", "opacity:0.35")),
+  `@keyframes fa-guide{0%,13.99%{stroke:#fff}14%,53.99%{stroke:#ffc107}54%,96.99%{stroke:#fff}97%,100%{stroke:#4caf50}}`,
   windowKeyframes("fa-result", 97, 100, "opacity:1;transform:translateY(0)", "opacity:0;transform:translateY(6px)"),
-  windowKeyframes("fa-wire-on", 72, 84, "opacity:1", "opacity:0.25"),
+  windowKeyframes("fa-wire-on", 6, 74, "opacity:1", "opacity:0.25"),
   `@keyframes fa-dash{to{stroke-dashoffset:-48}}`,
-  ...[0, 1, 2, 3, 4].map((i) => `@keyframes fa-packet-${i}{0%,${72 + i * 1.6}%{offset-distance:0%;opacity:0}${72.5 + i * 1.6}%{opacity:1}${80 + i * 1.6}%{offset-distance:100%;opacity:1}${80.5 + i * 1.6}%,100%{offset-distance:100%;opacity:0}}`),
-  windowKeyframes("fa-progress-1", 22, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
-  windowKeyframes("fa-progress-2", 38, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  // Frames flow the whole time the device streams (6-74%), a packet every ~1.4% of the loop.
+  ...Array.from({ length: 12 }, (_, i) => `@keyframes fa-packet-${i}{0%,${6 + i * 1.4}%{offset-distance:0%;opacity:0}${6.5 + i * 1.4}%{opacity:1}${9 + i * 1.4}%{offset-distance:100%;opacity:1}${9.5 + i * 1.4}%,${9.5 + i * 1.4 + 0.01}%{offset-distance:0%;opacity:0}${9.5 + i * 1.4 + 0.02}%,100%{offset-distance:0%;opacity:0}}`),
+  windowKeyframes("fa-progress-1", 26, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  windowKeyframes("fa-progress-2", 40, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
   windowKeyframes("fa-progress-3", 54, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
-  windowKeyframes("fa-head", 38, 54, "transform:translateX(-7px) scaleX(0.9)", "transform:translateX(0) scaleX(1)"),
-  windowKeyframes("fa-mouth", 22, 38, "d:path('M36 76 Q45 85 54 76')", "d:path('M38 78 Q45 80 52 78')"),
-  windowKeyframes("fa-eyes", 12, 14, "transform:scaleY(0.1)", "transform:scaleY(1)"),
+  windowKeyframes("fa-head", 40, 54, "transform:translateX(-7px) scaleX(0.9)", "transform:translateX(0) scaleX(1)"),
+  windowKeyframes("fa-mouth", 26, 40, "d:path('M36 76 Q45 85 54 76')", "d:path('M38 78 Q45 80 52 78')"),
+  windowKeyframes("fa-eyes", 20, 22, "transform:scaleY(0.1)", "transform:scaleY(1)"),
   `@media (prefers-reduced-motion: reduce){.fa *{animation-play-state:paused}}`,
 ].join("\n");
 
@@ -59,18 +81,32 @@ function Wire({ vertical }: { vertical: boolean }) {
     <svg viewBox={vertical ? "0 0 60 120" : "0 0 240 60"} className={vertical ? "mx-auto h-28 w-16" : "h-16 w-full"} aria-hidden>
       <path d={d} fill="none" stroke="var(--color-fd-border)" strokeWidth="2" />
       <path d={d} fill="none" stroke="var(--color-brand)" strokeWidth="2" strokeDasharray="8 8" style={{ animationName: "fa-dash, fa-wire-on", animationDuration: "1s, " + T }} />
-      {[0, 1, 2, 3, 4].map((i) => (
-        <circle key={i} r="4" fill="var(--color-brand)" style={{ offsetPath: `path('${d}')`, animationName: `fa-packet-${i}` }} />
+      {Array.from({ length: 12 }, (_, i) => (
+        <circle key={i} r="3" fill="var(--color-brand)" style={{ offsetPath: `path('${d}')`, animationName: `fa-packet-${i}`, animationDuration: T, animationIterationCount: "infinite" }} />
       ))}
     </svg>
   );
 }
 
-/** The whole flow on a loop: device challenges, flash, upload, four server gates, verdict. */
+/** The whole flow on a loop: the backend mints a session, the device streams the challenges and the flash, the server reads each one from its own frames, the backend fetches the verdict. */
 export function FlowAnimation() {
   return (
-    <div className="fa mt-12 grid items-center gap-4 rounded-3xl border border-fd-border bg-fd-card p-6 sm:grid-cols-[auto_1fr_auto] sm:gap-6 sm:p-8">
+    <div className="fa mt-12 rounded-3xl border border-fd-border bg-fd-card p-6 sm:p-8">
       <style>{css}</style>
+
+      <div className="mb-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-xs">
+        <span className="flex items-center gap-2 font-medium">
+          <KeyRound className="h-4 w-4 text-brand" />
+          Your backend, with the project key
+        </span>
+        {BACKEND.map((b, i) => (
+          <span key={b.text} className="rounded-full border border-fd-border px-3 py-1 font-mono text-[11px] text-fd-muted-foreground" style={{ animationName: `fa-backend-${i}` }}>
+            {b.text}
+          </span>
+        ))}
+      </div>
+
+      <div className="grid items-center gap-4 sm:grid-cols-[auto_1fr_auto] sm:gap-6">
 
       <div className="flex flex-col items-center gap-3">
         <div className="flex items-center gap-2 text-sm font-medium">
@@ -113,7 +149,7 @@ export function FlowAnimation() {
             </div>
           ))}
         </div>
-        <p className="text-center text-xs text-fd-muted-foreground">Random challenges, then 3 server colours</p>
+        <p className="text-center text-xs text-fd-muted-foreground">Guides the person; decides nothing</p>
       </div>
 
       <div className="min-w-0">
@@ -123,20 +159,21 @@ export function FlowAnimation() {
         <div className="sm:hidden">
           <Wire vertical />
         </div>
-        <div className="flex flex-wrap justify-center gap-1 font-mono text-[10px] text-fd-muted-foreground">
-          {FRAMES.map((f) => (
-            <span key={f} className="rounded border border-fd-border px-1 py-px">
-              {f}
+        <div className="relative h-6 text-center font-mono text-[10px] text-fd-muted-foreground">
+          {EVENTS.map((e, i) => (
+            <span key={e.text} className="absolute inset-x-0 rounded border border-fd-border px-1 py-px" style={{ animationName: `fa-event-${i}`, width: "fit-content", margin: "0 auto" }}>
+              {e.text}
             </span>
           ))}
         </div>
-        <p className="mt-2 text-center font-mono text-[10px] text-fd-muted-foreground">POST /v1/verify · X-API-Key</p>
+        <p className="mt-2 text-center font-mono text-[10px] text-fd-muted-foreground">WS /v1/sessions/…/stream · JPEG ~8 fps + events · session token</p>
+        <p className="mt-1 text-center text-[11px] text-fd-muted-foreground">Stamped with the server's clock on arrival</p>
       </div>
 
-      <div className="w-full sm:w-[260px]">
+      <div className="w-full sm:w-[280px]">
         <div className="flex items-center gap-2 text-sm font-medium">
           <Server className="h-4 w-4 text-brand" />
-          On your server
+          Lumiface server, from its own frames
         </div>
         <ul className="mt-3 space-y-2">
           {GATES.map((g, i) => (
@@ -155,6 +192,7 @@ export function FlowAnimation() {
           <ScanFace className="h-4 w-4" />
           OK · verified E001 · match 0.82
         </div>
+      </div>
       </div>
     </div>
   );

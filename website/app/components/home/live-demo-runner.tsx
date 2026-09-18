@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { LumifaceClient, LumifaceView, type CapturedFrame, type Challenge, type FaceSession, type LivenessState, type VerifyResult } from "@lumiface/react";
+import { LumifaceClient, LumifaceView, type Challenge, type FaceSession, type LivenessState, type VerifyResult, type VerifyStream } from "@lumiface/react";
 import type { DemoLine } from "./live-demo";
 
 const POOL: Challenge[] = ["blink", "smile", "turn_left", "turn_right", "nod"];
@@ -18,26 +18,28 @@ class StandInClient extends LumifaceClient {
     super({ baseUrl: "stand-in" });
   }
 
-  override async createSession(): Promise<FaceSession> {
-    const challenges = ["smile" as Challenge, ...pick(POOL.filter((c) => c !== "smile"), 1)].sort(() => Math.random() - 0.5);
-    const flashColors = pick(PALETTE, 3);
-    return {
-      id: Math.random().toString(16).slice(2, 6),
-      token: "",
-      mode: "liveness",
-      purpose: "demo",
-      challenges,
-      frameKinds: ["neutral_start", ...challenges.map((_, i) => `challenge_${i}`), ...flashColors.map((_, i) => `flash_${i}`), "neutral_end"],
-      ttlSeconds: 60,
-      flashColors,
-      flashHoldMs: 450,
-      clientConfig: null,
-    };
+  /** What a backend would return from `POST /v1/sessions`; here the browser makes it up. */
+  async createSession(): Promise<FaceSession> {
+    return { id: Math.random().toString(16).slice(2, 6), token: "", mode: "liveness", purpose: "demo", ttlSeconds: 60, clientConfig: null };
   }
 
-  override async verify(options: { frames: CapturedFrame[] }): Promise<VerifyResult> {
-    await new Promise((r) => setTimeout(r, 600));
-    return { ok: true, mode: "liveness", reasonCode: "OK", scores: { match: null, spoof: null, consistency: null }, verificationId: options.frames.length };
+  /** Plays the server's side of the stream: hands out a plan, swallows frames, answers OK at the end. */
+  override openStream(): VerifyStream {
+    const challenges = ["smile" as Challenge, ...pick(POOL.filter((c) => c !== "smile"), 1)].sort(() => Math.random() - 0.5);
+    const flashColors = pick(PALETTE, 3);
+    let frames = 0;
+    return {
+      plan: Promise.resolve({ challenges, flashColors, flashHoldMs: 450, clientConfig: null }),
+      sendFrame: () => {
+        frames++;
+      },
+      event: () => {},
+      end: async () => {
+        await new Promise((r) => setTimeout(r, 600));
+        return { ok: true, mode: "liveness", reasonCode: "OK", scores: { match: null, spoof: null, consistency: null }, verificationId: frames };
+      },
+      close: () => {},
+    };
   }
 }
 
@@ -69,7 +71,8 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
   return (
     <LumifaceView
       client={client}
-      purpose="demo"
+      flow="liveness"
+      sessionProvider={() => client.createSession()}
       theme={landscape ? { guideWidthFraction: 0.34, guideCenterY: 0.48 } : {}}
       onStateChanged={onStateChanged}
       onResult={() => {}}

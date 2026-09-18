@@ -3,11 +3,12 @@ title: Lumiface documentation
 description: Self-hosted face verification with active liveness, a policy per project, and camera SDKs for Flutter and React.
 ---
 
-Lumiface has three parts:
+Lumiface has three parts, plus your backend:
 
-- **Server** (`server/`): FastAPI, InsightFace ArcFace for matching, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof, a screen-flash reflection check and a smile re-check. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy.
+- **Server** (`server/`): FastAPI. Takes a WebSocket stream of frames per session, clocks it itself and reads every blink, smile, turn and flash reflection from its own 68-point landmarks; InsightFace ArcFace for matching, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy.
 - **Flutter package** (`packages/lumiface`): `FaceVerifyView` plus the headless `FaceVerifyController`. ML Kit on iOS and Android, MediaPipe on the web.
 - **React SDK** (`packages/lumiface-react`): `LumifaceView`, `useLumiface` and the same headless controller, MediaPipe in the browser.
+- **Your backend** holds the project key: it creates sessions (`POST /v1/sessions`) and reads verdicts (`GET /v1/sessions/{id}`). `examples/backend` is a complete one in ~100 lines; the device SDKs cannot take a key.
 
 Pick a door:
 

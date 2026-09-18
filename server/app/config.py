@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 32 * 1024 * 1024  # whole request body
     max_frame_bytes: int = 4 * 1024 * 1024  # one JPEG
     max_image_pixels: int = 20_000_000
+    max_stream_frames: int = 900  # ~10 fps for the longest session
     store_frames: bool = False
     frames_dir: str = "data/frames"
 
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 60
     enrol_token_ttl_seconds: int = 300
     subject_ttl_seconds: int = 0
+    allow_browser_api_key: bool = False
     retention_interval_seconds: int = 300
     session_purge_grace_seconds: int = 3600
     challenge_count: int = 2

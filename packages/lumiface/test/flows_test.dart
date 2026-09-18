@@ -35,28 +35,29 @@ void main() {
       expect(partial.smileThreshold, const LivenessConfig().smileThreshold);
     });
 
-    test('FaceSession parses client_config and mode', () {
+    test('FaceSession parses client_config and mode; StreamPlan the challenges and colours', () {
       final s = FaceSession.fromJson({
         'session_id': 'x',
+        'session_token': 't',
         'mode': 'liveness',
         'purpose': 'kiosk',
-        'challenges': ['smile'],
-        'frame_kinds': ['neutral_start', 'challenge_0', 'neutral_end'],
         'ttl_seconds': 60,
-        'flash_colors': ['ff0000'],
-        'flash_hold_ms': 500,
         'client_config': {'challenge_timeout_ms': 4000},
       });
       expect(s.mode, 'liveness');
+      expect(s.token, 't');
       expect(s.clientConfig!.challengeTimeoutMs, 4000);
-      expect(s.flashColors.single.toARGB32(), 0xFFFF0000);
+      final p = StreamPlan.fromJson({'challenges': ['smile'], 'flash_colors': ['ff0000'], 'flash_hold_ms': 500});
+      expect(p.challenges, [Challenge.smile]);
+      expect(p.flashColors.single.toARGB32(), 0xFFFF0000);
+      expect(p.flashHoldMs, 500);
     });
   });
 
   group('FaceVerifyController', () {
     test('uses the session client_config when no explicit config is given', () async {
       api.sessionConfig = const LivenessConfig(alignHoldMs: 2000, parallaxWhenNoTurn: false);
-      final c = FaceVerifyController(source: src, capturer: src, client: api, subjectId: 'E001');
+      final c = FaceVerifyController(source: src, capturer: src, client: api, sessionProvider: api.createSession);
       await c.start();
       await pump();
       expect(c.config.alignHoldMs, 2000);
@@ -72,26 +73,40 @@ void main() {
     test('explicit config wins over the session', () async {
       api.sessionConfig = const LivenessConfig(alignHoldMs: 2000);
       final c = FaceVerifyController(
-          source: src, capturer: src, client: api, subjectId: 'E001', config: const LivenessConfig(alignHoldMs: 100));
+          source: src, capturer: src, client: api, sessionProvider: api.createSession,
+          config: const LivenessConfig(alignHoldMs: 100));
       await c.start();
       await pump();
       expect(c.config.alignHoldMs, 100);
       c.dispose();
     });
 
-    test('liveness flow sends no subject and a purpose', () async {
-      final c = FaceVerifyController(source: src, capturer: src, client: api, purpose: 'kiosk');
-      expect(c.flow, FaceFlow.liveness);
+    test('the session decides between verify and liveness', () async {
+      final c = FaceVerifyController(
+          source: src, capturer: src, client: api,
+          sessionProvider: () => api.createSession(subjectId: null, purpose: 'kiosk'));
+      expect(c.flow, FaceFlow.verify);
       await c.start();
       await pump();
+      expect(c.flow, FaceFlow.liveness);
       expect(api.lastSubjectId, isNull);
       expect(api.lastPurpose, 'kiosk');
       c.dispose();
     });
 
+    test('a failing session provider ends the flow with NETWORK_ERROR', () async {
+      final c = FaceVerifyController(
+          source: src, capturer: src, client: api, sessionProvider: () async => throw StateError('backend down'));
+      await c.start();
+      await pump();
+      expect(c.state.value.phase, LivenessPhase.failed);
+      expect(c.state.value.result!.reasonCode, 'NETWORK_ERROR');
+      c.dispose();
+    });
+
     test('progress climbs from align to success', () async {
       final c = FaceVerifyController(
-          source: src, capturer: src, client: api, subjectId: 'E001',
+          source: src, capturer: src, client: api, sessionProvider: api.createSession,
           config: const LivenessConfig(parallaxWhenNoTurn: false));
       await c.start();
       await pump();
@@ -105,7 +120,8 @@ void main() {
 
   group('FaceEnrollController', () {
     test('aligns, captures one frame and enrols', () async {
-      final c = FaceEnrollController(source: src, capturer: src, client: api, externalId: 'E9', name: 'Nine');
+      final c = FaceEnrollController(
+          source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:E9:Nine');
       expect(c.flow, FaceFlow.enroll);
       await c.start();
       expect(c.state.value.phase, LivenessPhase.aligning);
@@ -124,7 +140,8 @@ void main() {
     });
 
     test('server rejection becomes a failed result with the reason code', () async {
-      final c = FaceEnrollController(source: src, capturer: src, client: api, externalId: 'REJECT');
+      final c = FaceEnrollController(
+          source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:REJECT');
       await c.start();
       await emit(neutral(0));
       await emit(neutral(700));
@@ -135,7 +152,7 @@ void main() {
     });
 
     test('cancel', () async {
-      final c = FaceEnrollController(source: src, capturer: src, client: api, externalId: 'E9');
+      final c = FaceEnrollController(source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:E9');
       await c.start();
       c.cancel();
       expect(c.state.value.result!.reasonCode, 'CANCELLED');

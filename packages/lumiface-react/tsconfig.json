@@ -1,8 +1,15 @@
 {
-  "include": ["src", "test", "demo"],
+  "include": [
+    "src",
+    "test"
+  ],
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
@@ -12,7 +19,6 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "allowImportingTsExtensions": true,
-    "types": ["vite/client"]
+    "allowImportingTsExtensions": true
   }
 }

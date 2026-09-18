@@ -18,9 +18,9 @@ The API key is shown once, on creation and on rotation.
 | `POST` | `/v1/projects` | create; body `{name, preset?}`; 409 when the name exists |
 | `GET` | `/v1/projects` | list with subject and verification counts (no keys) |
 | `POST` | `/v1/projects/{id}/rotate-key` | new key, the old one stops working immediately |
-| `DELETE` | `/v1/projects/{id}` | removes the project with its subjects and verifications |
+| `DELETE` | `/v1/projects/{id}` | removes the project with its subjects, verifications, sessions and enrol tokens |
 
-Everything else (`/v1/subjects`, `/v1/sessions`, `/v1/verifications`, `/v1/policy`) is scoped by the `X-API-Key` header: a project only ever sees its own rows.
+Everything else (`/v1/subjects`, `/v1/sessions`, `/v1/verifications`, `/v1/policy`) is scoped by the `X-API-Key` header: a project only ever sees its own rows. The key belongs on your backend; phones and browsers get a `session_token` or an enrol token instead, see [API › Authentication](/docs/api#authentication).
 
 ## One project per app, or per environment
 

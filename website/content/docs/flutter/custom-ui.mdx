@@ -10,7 +10,7 @@ Each builder gets the same `FaceVerifyScope`:
 ```dart
 FaceVerifyView(
   client: client,
-  subjectId: id,
+  sessionProvider: faceSession,
   promptBuilder: (context, scope) => Chip(label: Text(scope.message)),
   progressBuilder: (context, scope) => StepDots(done: scope.state.challengeIndex, total: scope.state.challengeCount),
   resultBuilder: (context, scope) => scope.state.phase == LivenessPhase.success
@@ -27,7 +27,7 @@ FaceVerifyView(
 ```dart
 FaceVerifyView(
   client: client,
-  subjectId: id,
+  sessionProvider: faceSession,
   overlayBuilder: (context, scope) => Stack(children: [
     if (scope.displayBox != null) FaceBoxOutline(box: scope.displayBox!),
     Align(alignment: Alignment.bottomCenter, child: MyPromptCard(scope)),
@@ -40,12 +40,12 @@ The camera preview and the flash colour stay underneath and on top respectively;
 
 ## Headless: the controller alone
 
-`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`) and `FrameCapturer` (JPEG bytes on demand), observe `state`, and call `start()`:
+`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`), a `FrameCapturer` (JPEG bytes on demand — it streams about eight a second to the server while the flow runs) and the `sessionProvider` that asks your backend for the session, observe `state`, and call `start()`:
 
 ```dart
 final source = createCameraFaceSource();           // ML Kit or MediaPipe for the platform
 await source.initialize();
-final c = FaceVerifyController(source: source, capturer: source, client: client, subjectId: id);
+final c = FaceVerifyController(source: source, capturer: source, client: client, sessionProvider: faceSession);
 c.state.addListener(() {
   final s = c.state.value;
   if (s.phase == LivenessPhase.flash) fillScreenWith(s.flashColor!);

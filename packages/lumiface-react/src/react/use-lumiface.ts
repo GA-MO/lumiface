@@ -8,16 +8,12 @@ import type { FaceFlow, FaceSession, FaceSignal, VerifyResult } from "../types.t
 
 export interface UseLumifaceOptions {
   client: LumifaceClient;
-  /** Defaults to "verify" with a subjectId and "liveness" without. */
+  /** "verify" (default) or "liveness" need `sessionProvider`; "enroll" needs `enrolTokenProvider`. */
   flow?: FaceFlow;
-  subjectId?: string | null;
-  purpose?: string;
-  subjectName?: string;
-  replaceEnrollment?: boolean;
-  /** Production auth: your backend creates the session and the browser only holds its token. */
+  /** Your backend creates the session with the project key (fixing the subject); the browser only holds its token. */
   sessionProvider?: () => Promise<FaceSession>;
-  /** Production auth for the enroll flow: token from `POST /v1/subjects/tokens` on your backend. */
-  enrolToken?: string | null;
+  /** For the enroll flow: your backend mints a single-use token with `POST /v1/subjects/tokens`. */
+  enrolTokenProvider?: () => Promise<string>;
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
   camera?: MediaPipeSourceOptions;
@@ -41,13 +37,9 @@ export interface LumifaceHandle {
   cancel: () => void;
 }
 
-function resolveFlow(options: UseLumifaceOptions): FaceFlow {
-  return options.flow ?? (options.subjectId ? "verify" : "liveness");
-}
-
-/** Camera + controller lifecycle for one flow. Re-runs when `client`, `flow`, `subjectId` or `purpose` change. */
+/** Camera + controller lifecycle for one flow. Re-runs when `client` or `flow` change; the providers are read fresh each start. */
 export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
-  const flow = resolveFlow(options);
+  const flow = options.flow ?? "verify";
   const [state, setState] = useState<LivenessState>(IDLE_STATE);
   const [signal, setSignal] = useState<FaceSignal | null>(null);
   const [ready, setReady] = useState(false);
@@ -85,19 +77,23 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
                 source,
                 capturer: source,
                 client: o.client,
-                externalId: o.subjectId ?? "",
-                name: o.subjectName,
-                replace: o.replaceEnrollment,
-                enrolToken: o.enrolToken,
+                enrolTokenProvider: async () => {
+                  const p = optionsRef.current.enrolTokenProvider;
+                  if (!p) throw new Error('flow "enroll" needs enrolTokenProvider');
+                  return p();
+                },
                 config: o.config,
               })
             : new FaceVerifyController({
                 source,
                 capturer: source,
                 client: o.client,
-                subjectId: flow === "verify" ? o.subjectId : null,
-                purpose: o.purpose,
-                sessionProvider: o.sessionProvider,
+                flow,
+                sessionProvider: async () => {
+                  const p = optionsRef.current.sessionProvider;
+                  if (!p) throw new Error(`flow "${flow}" needs sessionProvider`);
+                  return p();
+                },
                 config: o.config,
                 clientInfo: { platform: "web", ...o.clientInfo },
               });
@@ -134,7 +130,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
       setReady(false);
       setState(IDLE_STATE);
     };
-  }, [options.client, flow, options.subjectId, options.purpose]);
+  }, [options.client, flow]);
 
   const start = useCallback(async () => {
     await controllerRef.current?.start();

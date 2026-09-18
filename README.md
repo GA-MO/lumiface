@@ -61,56 +61,74 @@ cp .env.example .env                               # BOOTSTRAP_API_KEY, ADMIN_AP
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+From your backend (the API key never leaves it):
+
 ```bash
 # enrol a reference photo (one frontal face; a bad photo is rejected with a reason_code)
-curl -X POST localhost:8000/v1/subjects -H "X-API-Key: change-me" \
+curl -X POST localhost:8000/v1/subjects -H "X-API-Key: lf_sk_change-me" \
   -F external_id=E001 -F name="Person A" -F photo=@me.jpg
 
+# or let the device enrol from its camera: mint a single-use token and hand it to the app
+curl -X POST localhost:8000/v1/subjects/tokens -H "X-API-Key: lf_sk_change-me" \
+  -H "Content-Type: application/json" -d '{"external_id": "E001", "name": "Person A"}'
+
 # pick a preset for this project
-curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
+curl -X PUT localhost:8000/v1/policy -H "X-API-Key: lf_sk_change-me" \
   -H "Content-Type: application/json" -d '{"preset": "balanced"}'
 ```
 
 ```dart
 // Flutter: pubspec.yaml → dependencies: lumiface: { path: packages/lumiface }
-final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');   // dev only: production uses sessionProvider, see docs
+final client = LumifaceClient(baseUrl: 'https://faces.example.com');
 
 FaceVerifyView(
   client: client,
-  subjectId: 'E001',            // omit for liveness only, or flow: FaceFlow.enroll
-  purpose: 'checkin',
+  // Your backend calls POST /v1/sessions with the API key and returns the JSON.
+  sessionProvider: () async => FaceSession.fromJson(await myApi.createFaceSession('E001')),
   strings: LivenessStrings.th,
-  onResult: (r) => print('${r.ok} ${r.reasonCode} ${r.scores.match}'),
+  onResult: (r) => myApi.faceDone(r.sessionId),   // the backend reads the outcome
 );
 ```
 
 ```tsx
 // React: "@lumiface/react": "github:GA-MO/lumiface#path:packages/lumiface-react"
-import { LumifaceClient, LumifaceView, TH } from "@lumiface/react";
+import { LumifaceClient, LumifaceView, TH, sessionFromJson } from "@lumiface/react";
 
-const client = new LumifaceClient({ baseUrl: "http://<lan-ip>:8000", apiKey: "change-me" }); // dev only: production uses sessionProvider, see docs
+const client = new LumifaceClient({ baseUrl: "https://faces.example.com" });
 
-<LumifaceView client={client} subjectId="E001" purpose="login" strings={TH}
-  onResult={(r) => (r.ok ? signIn(r.verificationId) : toast(r.reasonCode))} />
+<LumifaceView
+  client={client}
+  sessionProvider={async () => sessionFromJson(await fetch("/api/face/session", { method: "POST" }).then((r) => r.json()))}
+  strings={TH}
+  onResult={(r) => fetch("/api/face/done", { method: "POST", body: JSON.stringify({ sessionId: r.sessionId }) })}
+/>
 ```
+
+The device never sees the API key — `LumifaceClient` cannot even take one. Your backend holds it, creates the session with `POST /v1/sessions`, and reads the outcome with `GET /v1/sessions/{id}` once the app reports done. There is no backend SDK: it is two REST calls, and [`examples/backend`](examples/backend) is a complete one in Python.
 
 The answer is the same from every client:
 
 ```json
-{ "ok": true, "mode": "verify", "reason_code": "OK",
-  "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 }, "verification_id": 42 }
+{
+  "ok": true,
+  "mode": "verify",
+  "reason_code": "OK",
+  "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+  "verification_id": 42
+}
 ```
 
-`scores.match` is the lowest cosine similarity across the seven frames against the enrolled face; it is `null` in liveness mode because there is nothing to match against.
+`scores.match` is the lowest cosine similarity across the key frames against the enrolled face; it is `null` in liveness mode because there is nothing to match against.
 
 ## Enrol → verify
 
 | Step | Who | What happens |
 |---|---|---|
 | **Enrol** | `POST /v1/subjects` with a photo, or `FaceFlow.enroll` from the camera | One frontal face, anti-spoof checked, stored as a 512-d ArcFace embedding under `external_id`. A second photo with `replace` updates it; `ttl_seconds` (or the policy's `subject_ttl_seconds`) drops it again after a while, a purge loop deletes the row. |
-| **Session** | `POST /v1/sessions` (the SDK does this) | The server picks the challenges and flash colours, stamps a TTL and returns the project's client tunables. |
+| **Session** | `POST /v1/sessions` from your backend with the API key | The server picks the challenges and flash colours, stamps a TTL, returns the client tunables and a `session_token` for the device. |
 | **Challenge** | on the device | Blink / turn / nod / smile with timing and parallax checks, then the flash; a frame is captured per step. |
-| **Verify** | `POST /v1/sessions/{id}/verify` with seven JPEGs | Timing → face → anti-spoof → pose and smile → flash → **match against `E001`** → consistency. The first failing check names the `reason_code`. |
+| **Verify** | `WS /v1/sessions/{id}/stream` with the session token: frames flow up the whole time | The server clocks the flow itself, confirms each blink / smile / turn / nod from its own landmarks in the frames, reads the flash reflection, then anti-spoof → **match against `E001`** → consistency. The first failing check names the `reason_code`. |
+| **Confirm** | `GET /v1/sessions/{id}` from your backend | Reads `result.ok`; the device's own report is not trusted. |
 
 The live demo on the docs home runs `liveness` against a stand-in server because there is no enrolled subject in the browser; the example app and the React demo run all three flows against a real server.
 
@@ -118,8 +136,9 @@ The live demo on the docs home runs `liveness` against a stand-in server because
 
 | | What it shows | Open |
 |---|---|---|
-| **Flutter example** | Use cases (check-in, login, enrol, liveness), a subjects tab, history with scores, a preset picker; phone, Android emulator or Chrome | [source](packages/lumiface/example) · [web](https://ga-mo.github.io/lumiface/docs/flutter/web) |
-| **React demo** (Vite) | `LumifaceView` with themes and strings, the `useLumiface` hook and the headless controller | `bun run dev:react` → http://localhost:3010 · [source](packages/lumiface-react/demo) |
+| **Example backend** | The part of *your* system that holds the key: creates sessions, mints enrol tokens, reads the verdict. Both example apps talk to it | `bun run dev:backend` → http://localhost:8010 · [source](examples/backend) |
+| **Flutter example** | Use cases (check-in, login, enrol, liveness), a subjects tab, history with scores, a preset picker; phone, Android emulator or Chrome | [source](examples/flutter) · [web](https://ga-mo.github.io/lumiface/docs/flutter/web) |
+| **React demo** (Vite) | `LumifaceView` with themes and strings, the `useLumiface` hook and the headless controller | `bun run dev:react` → http://localhost:3010 · [source](examples/react) |
 | **Docs site** | Guides, policy reference, reason codes, and a live demo of the real SDK with a stand-in server | `bun run dev:site` → http://localhost:3002 · [source](website) |
 
 <p align="center">
@@ -131,16 +150,18 @@ The live demo on the docs home runs `liveness` against a stand-in server because
 ```
   device (Flutter / React)                          server (FastAPI)
   ────────────────────────                          ────────────────
-  POST /v1/sessions ─────────────────────────────▶  pick 2 challenges (smile always) + 3 flash colours,
-    ◀──────── challenges, colours, client_config      TTL, project policy tunables
-  ML Kit / MediaPipe
-    blink · turn · nod · smile  (timing, parallax)
-    flash ×3, one frame per step
-  POST /v1/sessions/{id}/verify  7 JPEGs ───────▶  timing        FRAME_*, TIMING_*
+  backend: POST /v1/sessions ───────────────────▶  pick 2 challenges (smile always) + 3 flash colours,
+    ◀──────── session_token, client_config           TTL, project policy tunables
+  WS /v1/sessions/{id}/stream  hello ───────────▶
+    ◀──────── plan: challenges, colours
+  ML Kit / MediaPipe guide the person
+    blink · turn · nod · smile · flash ×3
+  JPEG frames ~8 fps + boundary events ─────────▶  server clock   TIMING_*, FRAMES_STATIC
                                                     face          NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL
+                                                    landmarks     blink / smile / turn / nod seen in the window
+                                                                  → EXPRESSION_MISMATCH, POSE_MISMATCH
+                                                    flash         chroma in each colour window → FLASH_FAIL
                                                     anti-spoof    MiniFASNet + CVPR-2024 gate  → SPOOF
-                                                    pose / smile  POSE_MISMATCH, EXPRESSION_MISMATCH
-                                                    flash         chroma vs colours, locality → FLASH_FAIL
                                                     identity      cosine(frame, enrolled) ≥ match_threshold → NO_MATCH
                                                     consistency   frames vs each other → INCONSISTENT
     ◀──────── {ok, reason_code, scores, verification_id}
@@ -164,7 +185,8 @@ Thresholds live in the policy (`match_threshold` 0.45 for `balanced`, 0.55 for `
 cd server && uv run pytest -q                              # server
 cd packages/lumiface && flutter analyze && flutter test    # Flutter package
 bun install && bun run typecheck && bun run test:react     # React SDK + website
-cd packages/lumiface/example && flutter run -d <device>    # or -d chrome
+bun run dev:backend                                   # examples/backend on :8010
+cd examples/flutter && flutter run -d <device>        # or -d chrome
 bun run build:pages                                        # static docs into pages-site/
 ```
 

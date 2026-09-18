@@ -1,6 +1,6 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
-import { progressOf, type LivenessState } from "../controller.ts";
+import { boxInRegion, progressOf, visibleRegionFor, type LivenessState } from "../controller.ts";
 import { EN, messageFor, type LivenessStrings } from "../strings.ts";
 import type { Box, FaceFlow, FaceSignal, VerifyResult } from "../types.ts";
 import { useLumiface, type LumifaceHandle, type UseLumifaceOptions } from "./use-lumiface.ts";
@@ -73,24 +73,31 @@ export interface LumifaceViewProps extends UseLumifaceOptions {
   onStateChanged?: (state: LivenessState) => void;
 }
 
-/** Maps a full-frame box into the part of the frame that `object-fit: cover` shows in a container of `containerAspect`, mirrored if needed. */
-function displayBoxOf(signal: FaceSignal | null, mirrored: boolean, videoAspect: number, containerAspect: number): Box | null {
+/** Maps a full-frame box into the part of the frame the preview shows, mirrored if needed. */
+function displayBoxOf(signal: FaceSignal | null, mirrored: boolean, region: Box): Box | null {
   const b = signal?.box ?? null;
   if (!b) return null;
-  let { left, top, width, height } = b;
-  if (videoAspect > 0 && containerAspect > 0 && videoAspect !== containerAspect) {
-    if (videoAspect > containerAspect) {
-      const visible = containerAspect / videoAspect;
-      left = (left - (1 - visible) / 2) / visible;
-      width /= visible;
-    } else {
-      const visible = videoAspect / containerAspect;
-      top = (top - (1 - visible) / 2) / visible;
-      height /= visible;
-    }
+  const { left, top, width, height } = boxInRegion(b, region);
+  return { left: mirrored ? 1 - left - width : left, top, width, height };
+}
+
+/**
+ * The guide at `guideWidthFraction`, shrunk to fit the box and kept clear of a band at the
+ * bottom where the prompt and the buttons live, so neither ever sits on the guide's edge.
+ */
+export function guideRect(theme: LumifaceTheme, width: number, height: number) {
+  const margin = Math.min(width, height) * 0.06;
+  const bottomBand = Math.min(Math.max(height * 0.2, 72), 140);
+  let w = width * theme.guideWidthFraction;
+  let h = w * theme.guideAspectRatio;
+  const maxH = Math.max(0, height - margin - bottomBand);
+  if (h > maxH) {
+    h = maxH;
+    w = h / theme.guideAspectRatio;
   }
-  if (mirrored) left = 1 - left - width;
-  return { left, top, width, height };
+  const x = (width - w) / 2;
+  const y = Math.min(Math.max(height * theme.guideCenterY - h / 2, margin), Math.max(margin, height - h - bottomBand));
+  return { x, y, w, h };
 }
 
 function guideColor(theme: LumifaceTheme, phase: LivenessState["phase"]) {
@@ -115,10 +122,7 @@ export function FaceGuide({ theme, phase, box }: { theme: LumifaceTheme; phase: 
     return () => ro.disconnect();
   }, []);
   const { width, height } = size;
-  const w = width * theme.guideWidthFraction;
-  const h = w * theme.guideAspectRatio;
-  const x = (width - w) / 2;
-  const y = height * theme.guideCenterY - h / 2;
+  const { x, y, w, h } = guideRect(theme, width, height);
   const rx = theme.guideShape === "oval" ? w / 2 : w * 0.2;
   const ry = theme.guideShape === "oval" ? h / 2 : w * 0.2;
   const color = guideColor(theme, phase);
@@ -229,6 +233,11 @@ export function LumifaceView(props: LumifaceViewProps) {
     lastReported.current = handle.state;
     onStateChanged?.(handle.state);
   }, [handle.state, onStateChanged]);
+  const videoAspect = handle.source?.aspectRatio ?? 0;
+  const region = useMemo(() => visibleRegionFor(videoAspect, containerAspect), [videoAspect, containerAspect]);
+  useEffect(() => {
+    if (handle.controller) handle.controller.visibleRegion = region;
+  }, [handle.controller, handle.ready, region]);
   const scope: LumifaceScope = {
     ...handle,
     strings,
@@ -236,7 +245,7 @@ export function LumifaceView(props: LumifaceViewProps) {
     message: messageFor(strings, handle.state, handle.flow),
     result: handle.state.result,
     isDone: handle.state.phase === "success" || handle.state.phase === "failed",
-    displayBox: displayBoxOf(handle.signal, handle.source?.isMirrored ?? true, handle.source?.aspectRatio ?? 0, containerAspect),
+    displayBox: displayBoxOf(handle.signal, handle.source?.isMirrored ?? true, region),
   };
   const flashing = handle.state.phase === "flash" && handle.state.flashColor;
   return (

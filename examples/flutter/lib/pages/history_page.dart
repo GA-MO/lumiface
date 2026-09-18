@@ -16,7 +16,7 @@ class _HistoryPageState extends State<HistoryPage> {
   String? _purpose;
 
   Future<void> _load() async {
-    final rows = await widget.settings.client.listVerifications(purpose: _purpose);
+    final rows = await widget.settings.backend.listVerifications(purpose: _purpose);
     setState(() => _rows = rows);
   }
 

@@ -54,7 +54,7 @@ How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well 
 
 ## STORE_FRAMES and DEBUG
 
-`STORE_FRAMES=1` keeps the frames of every failed verification under `data/frames/<session_id>/`; with `DEBUG=1` every verification is kept and the verify response includes `details`: per-frame spoof and CVPR scores, yaw and pitch, the smile metrics, the flash correlation, response and background ratio. `POST /v1/debug/score` scores a single photo.
+`STORE_FRAMES=1` keeps every streamed frame of a failed verification under `data/frames/<project>/<session_id>/` (named by arrival time, with `events.json` for the timeline); with `DEBUG=1` every verification is kept. The verdict's `details` — the server's windows, per-challenge readings, flash scores and key frames — are in the verification row's `details` column. `POST /v1/debug/score` scores a single photo.
 
 ## Numbers from the reference devices
 

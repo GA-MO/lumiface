@@ -8,9 +8,11 @@ os.environ.update({
     "ADMIN_API_KEY": "admin-key",
     "MIN_FACE_SIZE": "60",
     "ENROLL_MAX_PITCH": "35",
-    "CHALLENGE_POOL": "blink,smile",
-    "SMILE_ENFORCE": "0",  # API tests upload the same still for every frame; see test_smile_enforced_rejects_static_face
+    "CHALLENGE_POOL": "smile",
+    "SMILE_ENFORCE": "0",  # API tests stream the same still for every frame; see test_smile_enforced_rejects_static_face
     "FLASH_ENFORCE": "0",  # same reason; see test_flash_enforced_rejects_unlit_frames
+    "MIN_SESSION_MS": "0",  # the server clocks the stream itself; see test_too_fast_on_the_server_clock
+    "MIN_CHALLENGE_MS": "0",
     "DEBUG": "1",
     "WEIGHTS_DIR": str(Path(__file__).resolve().parents[1] / "weights"),
 })
@@ -57,11 +59,52 @@ def person_crops():
     return crops
 
 
-def make_meta(challenges, start=0, step=800, challenge_ms=400, flash_colors=()):
-    kinds = ["neutral_start", *[f"challenge_{i}" for i in range(len(challenges))],
-             *[f"flash_{i}" for i in range(len(flash_colors))], "neutral_end"]
-    return {
-        "frames": [{"kind": k, "ts_ms": start + i * step} for i, k in enumerate(kinds)],
-        "challenge_durations_ms": [challenge_ms] * len(challenges),
-        "client": {"platform": "test"},
-    }
+def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, order=None, pause=0.0):
+    """Drive a session's WebSocket the way a device does: hello, frames, events, end.
+
+    Every frame gets a distinct tail so it hashes differently (a real camera never repeats bytes);
+    `order` overrides the event sequence; `pause` sleeps before the end so server-clock tests can
+    make the session take real time. Returns (plan, last message).
+    """
+    import time
+
+    sid, tok = session["session_id"], token if token is not None else session["session_token"]
+    seq = 0
+    with client.websocket_connect(f"/v1/sessions/{sid}/stream") as ws:
+        ws.send_json({"type": "hello", "token": tok, "client": {"platform": "test"}})
+        plan = ws.receive_json()
+        if plan.get("type") != "plan":
+            return plan, None
+
+        def frames(n=per_window):
+            nonlocal seq
+            for _ in range(n):
+                ws.send_bytes(seq.to_bytes(8, "big") + jpeg + seq.to_bytes(4, "big"))
+                seq += 1
+
+        def event(name, index=None):
+            ws.send_json({"type": "event", "name": name, **({"index": index} if index is not None else {}), "ts": seq})
+
+        if order is None:
+            frames()
+            event("aligned")
+            for i in range(len(plan["challenges"])):
+                frames()
+                event("challenge_done", i)
+            for i in range(len(plan["flash_colors"])):
+                event("flash", i)
+                time.sleep(sleep)  # past FLASH_LATENCY_MS, so these frames land inside the colour's window
+                frames()
+            if plan["flash_colors"]:
+                event("flash_end")
+            frames()
+        else:
+            for step in order:
+                frames(1)
+                if step != "frames":
+                    name, _, idx = step.partition(":")
+                    event(name, int(idx) if idx else None)
+        if pause:
+            time.sleep(pause)
+        ws.send_json({"type": "end"})
+        return plan, ws.receive_json()

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { configFromJson, configToJson, DEFAULT_CONFIG } from "../src/config.ts";
-import { FaceEnrollController, FaceVerifyController, progressOf } from "../src/controller.ts";
+import { alignHint, FaceEnrollController, FaceVerifyController, progressOf, visibleRegionFor } from "../src/controller.ts";
 import { EN, messageFor, mergeStrings } from "../src/strings.ts";
 import { noFace, type Challenge, type VerifyResult } from "../src/types.ts";
 import { FakeClient, FakeSource, neutral, pump } from "./fakes.ts";
@@ -18,7 +18,7 @@ async function boot(challenges: Challenge[], o: { response?: VerifyResult; confi
     source: src,
     capturer: src,
     client: api,
-    subjectId: o.subjectId === undefined ? "E001" : o.subjectId,
+    sessionProvider: () => api.createSession({ subjectId: o.subjectId === undefined ? "E001" : o.subjectId }),
     config: o.config ? { ...DEFAULT_CONFIG, ...o.config } : undefined,
     random: () => 0.9,
   });
@@ -63,8 +63,41 @@ async function doTurn(t: number) {
 
 afterEach(() => c?.dispose());
 
+describe("alignment follows what the preview shows", () => {
+  it("a landscape webcam behind a portrait preview is judged inside the visible crop", () => {
+    // 16:9 frame shown in a 0.88 box: only 49% of the width is on screen.
+    const region = visibleRegionFor(16 / 9, 0.88);
+    expect(region.width).toBeCloseTo(0.495, 2);
+    expect(region.left).toBeCloseTo(0.2525, 2);
+    // A face 20% of the raw frame fills 40% of the screen: aligned, not "move closer".
+    const s = { ...neutral(0), box: { left: 0.4, top: 0.3, width: 0.2, height: 0.45 } };
+    expect(alignHint(s, DEFAULT_CONFIG)).toBe("tooFar");
+    expect(alignHint(s, DEFAULT_CONFIG, region)).toBeNull();
+    // Off to the side of the frame but centred on screen counts as centred.
+    const edge = { ...s, box: { ...s.box, left: 0.25 } };
+    expect(alignHint(edge, DEFAULT_CONFIG, region)).toBe("notCentered");
+    expect(alignHint({ ...s, box: { ...s.box, left: 0.4 } }, DEFAULT_CONFIG, region)).toBeNull();
+  });
+
+  it("matching aspects change nothing; a portrait camera in a landscape box crops vertically", () => {
+    expect(visibleRegionFor(0.75, 0.75)).toEqual({ left: 0, top: 0, width: 1, height: 1 });
+    const r = visibleRegionFor(0.75, 1.5);
+    expect(r.width).toBe(1);
+    expect(r.height).toBeCloseTo(0.5);
+    expect(r.top).toBeCloseTo(0.25);
+  });
+
+  it("the controller applies the region it is given", async () => {
+    await boot(["blink"], { config: { parallaxWhenNoTurn: false } });
+    c.visibleRegion = visibleRegionFor(16 / 9, 0.88);
+    const far = { ...neutral(0), box: { left: 0.4, top: 0.3, width: 0.2, height: 0.45 } };
+    await emit(far);
+    expect(c.state.hint).toBe("holdStill");
+  });
+});
+
 describe("FaceVerifyController", () => {
-  it("happy path: blink + smile -> 4 frames uploaded, success", async () => {
+  it("happy path: blink + smile -> frames streamed throughout, events at each boundary, success", async () => {
     await boot(["blink", "smile"], { config: { parallaxWhenNoTurn: false } });
     expect(c.state.phase).toBe("aligning");
     expect(c.state.challengeCount).toBe(2);
@@ -78,13 +111,19 @@ describe("FaceVerifyController", () => {
     await emit(neutral(t + 500));
     await pump();
     expect(c.state.phase).toBe("success");
-    expect(api.sentFrames!.map((f) => f.kind)).toEqual(["neutral_start", "challenge_0", "challenge_1", "neutral_end"]);
-    expect(api.sentDurations!.length).toBe(2);
-    expect(api.sentDurations!.every((d) => d >= 300)).toBe(true);
-    expect(src.captures).toBe(4);
+    expect(api.sentEvents.map((e) => e.name)).toEqual(["aligned", "challenge_done", "challenge_done"]);
+    expect(api.sentEvents.map((e) => e.index)).toEqual([undefined, 0, 1]);
+    const ts = api.sentEvents.map((e) => e.ts);
+    expect(ts[1] - ts[0]).toBeGreaterThanOrEqual(300);
+    expect(api.ended).toBe(true);
+    // Frames went up the whole time, throttled to the stream rate, not just at the boundaries.
+    expect(src.captures).toBe(api.sentFrames.length);
+    expect(api.sentFrames.length).toBeGreaterThan(4);
+    expect(api.sentFrames[0]).toBeLessThan(ts[0]);
+    expect(api.sentFrames[api.sentFrames.length - 1]).toBeGreaterThan(ts[2]);
   });
 
-  it("screen flash: one frame per colour after the challenges, before neutral_end", async () => {
+  it("screen flash: a flash event per colour after the challenges, then flash_end", async () => {
     const colors = ["ff0000", "00ff00", "0000ff"];
     await boot(["turn_left"], { flashColors: colors });
     let t = await align(0);
@@ -93,9 +132,7 @@ describe("FaceVerifyController", () => {
     expect(c.state.phase).toBe("flash");
     expect(c.state.flashColor).toBe(colors[0]);
     await emit(neutral(t + 700));
-    expect(src.captures).toBe(2);
     await emit(neutral(t + 1000));
-    expect(src.captures).toBe(3);
     expect(c.state.flashColor).toBe(colors[1]);
     await emit(neutral(t + 1500));
     expect(c.state.flashColor).toBe(colors[2]);
@@ -107,8 +144,8 @@ describe("FaceVerifyController", () => {
     await emit(neutral(t + 2900));
     await pump();
     expect(c.state.phase).toBe("success");
-    expect(api.sentFrames!.map((f) => f.kind)).toEqual(["neutral_start", "challenge_0", "flash_0", "flash_1", "flash_2", "neutral_end"]);
-    expect(api.sentDurations!.length).toBe(1);
+    expect(api.sentEvents.map((e) => `${e.name}${e.index ?? ""}`)).toEqual(["aligned", "challenge_done0", "flash0", "flash1", "flash2", "flash_end"]);
+    expect(api.ended).toBe(true);
   });
 
   it("no turn from server -> client-only turn appended, flat picture never passes it", async () => {
@@ -128,8 +165,8 @@ describe("FaceVerifyController", () => {
     await emit(neutral(t + 500));
     await pump();
     expect(c.state.phase).toBe("success");
-    expect(api.sentFrames!.length).toBe(4);
-    expect(api.sentDurations!.length).toBe(2);
+    // The client-only turn is not reported to the server.
+    expect(api.sentEvents.map((e) => e.name)).toEqual(["aligned", "challenge_done", "challenge_done"]);
   });
 
   it("alignment hints", async () => {
@@ -192,14 +229,20 @@ describe("FaceVerifyController", () => {
     expect(c.state.phase).toBe("success");
   });
 
-  it("uses the session client_config unless a config is given; liveness sends no subject", async () => {
+  it("uses the session client_config unless a config is given; the session decides liveness", async () => {
     src = new FakeSource();
     api = new FakeClient(["blink"]);
     api.sessionConfig = { align_hold_ms: 2000, parallax_when_no_turn: false };
-    c = new FaceVerifyController({ source: src, capturer: src, client: api, purpose: "kiosk" });
-    expect(c.flow).toBe("liveness");
+    c = new FaceVerifyController({
+      source: src,
+      capturer: src,
+      client: api,
+      sessionProvider: () => api.createSession({ subjectId: null, purpose: "kiosk" }),
+    });
+    expect(c.flow).toBe("verify");
     await c.start();
     await pump();
+    expect(c.flow).toBe("liveness");
     expect(c.config.alignHoldMs).toBe(2000);
     expect(c.state.challengeCount).toBe(1);
     expect(api.lastSubjectId).toBeNull();
@@ -217,13 +260,50 @@ describe("FaceVerifyController", () => {
     c.cancel();
     expect(c.state.result!.reasonCode).toBe("CANCELLED");
   });
+
+  it("a stream the server refuses ends the flow with the server's reason code", async () => {
+    src = new FakeSource();
+    api = new FakeClient(["blink"]);
+    api.planError = "SESSION_USED";
+    c = new FaceVerifyController({ source: src, capturer: src, client: api, sessionProvider: () => api.createSession() });
+    await c.start();
+    await pump();
+    expect(c.state.phase).toBe("failed");
+    expect(c.state.result!.reasonCode).toBe("SESSION_USED");
+    expect(c.state.result!.sessionId).toBe("s1");
+  });
+
+  it("cancelling mid-flow closes the stream", async () => {
+    await boot(["blink"]);
+    await emit(neutral(0));
+    c.cancel();
+    expect(api.closed).toBe(true);
+    expect(api.ended).toBe(false);
+  });
+
+  it("a failing session provider ends the flow with NETWORK_ERROR", async () => {
+    src = new FakeSource();
+    api = new FakeClient(["blink"]);
+    c = new FaceVerifyController({
+      source: src,
+      capturer: src,
+      client: api,
+      sessionProvider: async () => {
+        throw new Error("backend down");
+      },
+    });
+    await c.start();
+    await pump();
+    expect(c.state.phase).toBe("failed");
+    expect(c.state.result!.reasonCode).toBe("NETWORK_ERROR");
+  });
 });
 
 describe("FaceEnrollController", () => {
   it("aligns, captures one frame and enrols", async () => {
     const s = new FakeSource();
     const client = new FakeClient([]);
-    const e = new FaceEnrollController({ source: s, capturer: s, client, externalId: "E9", name: "Nine" });
+    const e = new FaceEnrollController({ source: s, capturer: s, client, enrolTokenProvider: async () => "tok:E9:Nine" });
     await e.start();
     s.emit(noFace(0));
     expect(e.state.hint).toBe("noFace");
@@ -239,7 +319,7 @@ describe("FaceEnrollController", () => {
 
   it("server rejection becomes a failed result with the reason code", async () => {
     const s = new FakeSource();
-    const e = new FaceEnrollController({ source: s, capturer: s, client: new FakeClient([]), externalId: "REJECT" });
+    const e = new FaceEnrollController({ source: s, capturer: s, client: new FakeClient([]), enrolTokenProvider: async () => "tok:REJECT" });
     await e.start();
     s.emit(neutral(0));
     s.emit(neutral(700));

@@ -19,9 +19,8 @@ dependencies:
 
 ```dart
 FaceVerifyView(
-  client: LumifaceClient(baseUrl: 'https://faces.example.com', apiKey: key),
-  subjectId: 'E001',          // omit for liveness only
-  purpose: 'checkin',
+  client: LumifaceClient(baseUrl: 'https://faces.example.com'),
+  sessionProvider: () async => FaceSession.fromJson(await myApi.createFaceSession('E001')),
   strings: LivenessStrings.th,
   theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme),
   onResult: (VerifyResult r) { ... },
@@ -31,42 +30,49 @@ FaceVerifyView(
 
 It fills its parent, so put it in a `Scaffold` body or any sized box. The result arrives once through `onResult`; the default overlay then shows a Done or Try again button that pops the route.
 
-## Production auth
+## The app holds no secret
 
-Do not put the project API key in the app. Your backend creates the session with the key and returns the server's
-JSON; the app hands it to the view through `sessionProvider` and the upload goes out with the session's token:
+`LumifaceClient` takes a URL and nothing else — there is no way to give it the project key — and it can do
+exactly two things: upload the frames of a session it was handed, and upload one enrolment photo with a token it
+was handed. Both come from your backend, which is the only place the key lives:
 
 ```dart
+// app
 FaceVerifyView(
-  client: LumifaceClient(baseUrl: 'https://faces.example.com'),   // no apiKey
-  subjectId: 'E001',
+  client: LumifaceClient(baseUrl: 'https://faces.example.com'),
   sessionProvider: () async {
-    final r = await myApi.post('/face/session', {'user': 'E001'});   // backend calls POST /v1/sessions
+    final r = await myApi.post('/face/session', {'user': 'E001'});   // your route, behind your login
     return FaceSession.fromJson(r);
   },
-  onResult: ...,
+  onResult: (r) => myApi.post('/face/done', {'session': r.sessionId}),
 )
 ```
 
-Enrolment works the same way with a single-use token from `POST /v1/subjects/tokens` on your backend:
+```python
+# your backend, any language: two REST calls with the key (Python shown; see examples/backend for the whole thing)
+session = httpx.post(f"{LUMIFACE}/v1/sessions", headers=KEY, json={"subject_id": user.id, "purpose": "checkin"}).json()
+return session                                   # → the app, as is
 
-```dart
-FaceVerifyView(client: client, flow: FaceFlow.enroll, enrolToken: token, onResult: ...)
+# later, when the app says it is done:
+status = httpx.get(f"{LUMIFACE}/v1/sessions/{session_id}", headers=KEY).json()
+if status["result"] and status["result"]["ok"]: mark_checked_in(user)
 ```
 
-When `onResult` fires, tell your backend the session is done and let it read the outcome with
-`GET /v1/sessions/{id}` — the `VerifyResult` the app holds is not proof of anything.
+There is no backend SDK on purpose: the key's side of the API is a handful of REST calls
+([reference](/docs/api)), and the packages the app depends on then contain nothing a key could leak
+through. The server also refuses the key from any browser origin but localhost.
 
-`apiKey` on `LumifaceClient` remains for development and for trusted code that manages subjects and policy.
+Enrolment from the camera is the same shape with `flow: FaceFlow.enroll` and an `enrolTokenProvider` that asks
+your backend for a single-use token (`POST /v1/subjects/tokens` there).
+
+The `VerifyResult` the app receives is for the UI; the decision is the `GET /v1/sessions/{id}` on your backend.
 
 <TypeTable
   type={{
-    client: { type: "LumifaceClient", required: true, description: "Server URL; apiKey only in development." },
-    sessionProvider: { type: "Future<FaceSession> Function()?", description: "Production: your backend creates the session, the app only holds its token." },
-    enrolToken: { type: "String?", description: "Production enrol: single-use token from POST /v1/subjects/tokens." },
-    flow: { type: "FaceFlow?", description: "verify, liveness or enroll. Defaults to verify with a subjectId, liveness without." },
-    subjectId: { type: "String?", description: "Who to match against, or the id to enrol." },
-    purpose: { type: "String", description: "Label stored with the verification." },
+    client: { type: "LumifaceClient", required: true, description: "Server URL. Holds no secret." },
+    sessionProvider: { type: "Future<FaceSession> Function()?", description: "Fetches the session your backend created (FaceSession.fromJson of its JSON). Required for verify and liveness." },
+    enrolTokenProvider: { type: "Future<String> Function()?", description: "Fetches a single-use enrol token from your backend. Required for enroll." },
+    flow: { type: "FaceFlow", description: "verify (default), liveness or enroll. The session decides between verify and liveness." },
     config: { type: "LivenessConfig?", description: "Overrides the project's client_config. Leave null to follow the policy." },
     strings: { type: "LivenessStrings", description: "Every text. en and th are built in; copyWith changes single lines." },
     theme: { type: "FaceVerifyTheme", description: "Colours, guide shape and geometry, progress bar, message style." },
@@ -99,7 +105,7 @@ class VerifyResult {
 
 ## The client
 
-`LumifaceClient` wraps the HTTP API: `createSession`, `verify`, `enroll`, `listSubjects`, `getSubject`, `deleteSubject`, `listVerifications`, `getPolicy`, `updatePolicy`, `resetPolicy`, `listPresets`. Errors other than a verify verdict throw `LumifaceException(reasonCode, details)`.
+`LumifaceClient` is the device side only: `openStream(session)` returns a `VerifyStream` (`plan`, `sendFrame`, `event`, `end`, `close`) that the controller drives, and `enroll(photoJpeg:, enrolToken:)`. Errors other than a verdict throw `LumifaceException(reasonCode, details)`.
 
 ## Theme
 

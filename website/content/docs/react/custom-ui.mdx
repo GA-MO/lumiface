@@ -10,7 +10,7 @@ Every render prop receives a `LumifaceScope`: the hook's handle (`state`, `signa
 ```tsx
 <LumifaceView
   client={client}
-  subjectId={id}
+  sessionProvider={faceSession}
   renderPrompt={(s) => <h2 className="prompt">{s.message}</h2>}
   renderProgress={(s) => <Dots done={s.state.challengeIndex} total={s.state.challengeCount} />}
   renderResult={(s) => (s.state.phase === "failed" ? <button onClick={retry}>{s.strings.retry}</button> : null)}
@@ -23,7 +23,7 @@ Every render prop receives a `LumifaceScope`: the hook's handle (`state`, `signa
 ```tsx
 <LumifaceView
   client={client}
-  subjectId={id}
+  sessionProvider={faceSession}
   renderOverlay={(s) => (
     <div style={{ position: "absolute", inset: 0 }}>
       {s.displayBox && <div style={boxStyle(s.displayBox)} />}

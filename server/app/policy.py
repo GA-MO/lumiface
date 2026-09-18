@@ -75,6 +75,7 @@ class Policy(BaseModel):
 
     session_ttl_seconds: int = Field(description="A session must be verified within this time.")
     subject_ttl_seconds: int = Field(description="Default retention of an enrolled face in seconds; 0 keeps it until deleted.")
+    allow_browser_api_key: bool = Field(description="Accept the project key from a browser origin other than localhost. Development only.")
     challenge_count: int = Field(description="Challenges per session.")
     challenge_pool: str = Field(description="Comma separated pool: blink, turn_left, turn_right, smile, nod.")
     required_challenge: str = Field(description="Always included when in the pool; empty for none.")
@@ -117,7 +118,7 @@ PRESET_OVERRIDES: dict[str, dict[str, Any]] = {
         "flash_enforce": False,
         "smile_enforce": False,
         "max_challenge_ms": 8000,
-        "client": {"challenge_timeout_ms": 15000, "face_lost_grace_ms": 2500},
+        "client": {"challenge_timeout_ms": 15000, "face_lost_grace_ms": 2500, "min_face_width_fraction": 0.2},
     },
     "emulator": {
         "flash_enforce": False,

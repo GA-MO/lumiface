@@ -21,15 +21,14 @@ The package ships TypeScript source (`src/`), so Next.js needs `transpilePackage
 ```tsx
 import { LumifaceClient, LumifaceView, TH, sessionFromJson } from "@lumiface/react";
 
-const client = new LumifaceClient({ baseUrl: "https://faces.example.com", apiKey: key });
+const client = new LumifaceClient({ baseUrl: "https://faces.example.com" });
 
 export function LoginWithFace({ userId }: { userId: string }) {
   return (
     <div style={{ height: "70vh" }}>
       <LumifaceView
         client={client}
-        subjectId={userId}
-        purpose="login"
+        sessionProvider={async () => sessionFromJson(await fetch("/api/face/session", { method: "POST" }).then((r) => r.json()))}
         strings={TH}
         theme={{ guideShape: "roundedRect", guideActive: "#2dd4bf" }}
         onResult={(r) => (r.ok ? signIn(r.verificationId) : toast(r.reasonCode))}
@@ -42,44 +41,45 @@ export function LoginWithFace({ userId }: { userId: string }) {
 
 It fills its parent, so size the parent. Props mirror the Flutter view.
 
-## Production auth
+## The browser holds no secret
 
-Do not put the project API key in the bundle. Your backend creates the session with the key and returns the server's
-JSON; the view takes it through `sessionProvider` and uploads with the session's token:
+`LumifaceClient` takes a URL and nothing else — there is no option for the project key — and it can do exactly
+two things: upload the frames of a session it was handed, and upload one enrolment photo with a token it was
+handed. `/api/face/session` above is your backend route that produces the session, with two REST calls:
 
-```tsx
-const client = new LumifaceClient({ baseUrl: "https://faces.example.com" }); // no apiKey
+```ts
+// your backend (Node shown; any language — see examples/backend for a complete one in Python)
+const LUMIFACE = "https://faces.example.com";
+const KEY = { "X-API-Key": process.env.LUMIFACE_KEY! };
 
-<LumifaceView
-  client={client}
-  subjectId={userId}
-  sessionProvider={async () => sessionFromJson(await fetch("/api/face/session", { method: "POST" }).then((r) => r.json()))}
-  onResult={...}
-/>
+app.post("/api/face/session", auth, async (req, res) => {
+  const r = await fetch(`${LUMIFACE}/v1/sessions`, { method: "POST", headers: { ...KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ subject_id: req.user.id, purpose: "login" }) });
+  res.json(await r.json());                                   // straight to the browser
+});
+
+app.post("/api/face/done", auth, async (req, res) => {
+  const status = await (await fetch(`${LUMIFACE}/v1/sessions/${req.body.sessionId}`, { headers: KEY })).json();
+  if (status.result?.ok && status.subject_id === req.user.id) await signIn(req.user);   // the decision is here
+  res.sendStatus(204);
+});
 ```
 
-Enrolment takes a single-use token that your backend gets from `POST /v1/subjects/tokens`
-(`client.createEnrolToken(...)` server-side):
+There is no backend SDK on purpose: the key's side of the API is a handful of REST calls
+([reference](/docs/api)), and `@lumiface/react` then contains nothing a key could leak through. The server
+also refuses the key from any browser origin but localhost, so a key that ends up in a bundle fails loudly.
 
-```tsx
-<LumifaceView client={client} flow="enroll" enrolToken={token} onResult={...} />
-```
-
-When `onResult` fires, tell your backend the session is done and let it read the outcome with
-`GET /v1/sessions/{id}` — the result object in the browser is not proof of anything.
-
-`apiKey` on `LumifaceClient` remains for development and for server-side code that manages subjects and policy.
+Enrolment from the camera is the same shape with `flow="enroll"` and an `enrolTokenProvider` that asks your
+backend for a single-use token (`POST /v1/subjects/tokens` there).
 
 Props:
 
 <TypeTable
   type={{
-    client: { type: "LumifaceClient", required: true, description: "Server URL; apiKey only in development." },
-    sessionProvider: { type: "() => Promise<FaceSession>", description: "Production: your backend creates the session, the browser only holds its token." },
-    enrolToken: { type: "string | null", description: "Production enrol: single-use token from POST /v1/subjects/tokens." },
-    flow: { type: '"verify" | "liveness" | "enroll"', description: "Defaults to verify with a subjectId, liveness without." },
-    subjectId: { type: "string | null", description: "Who to match against, or the id to enrol." },
-    purpose: { type: "string", description: "Label stored with the verification." },
+    client: { type: "LumifaceClient", required: true, description: "Server URL. Holds no secret." },
+    sessionProvider: { type: "() => Promise<FaceSession>", description: "Fetches the session your backend created (sessionFromJson of its JSON). Required for verify and liveness." },
+    enrolTokenProvider: { type: "() => Promise<string>", description: "Fetches a single-use enrol token from your backend. Required for enroll." },
+    flow: { type: '"verify" | "liveness" | "enroll"', description: "verify (default), liveness or enroll. The session decides between verify and liveness." },
     config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
     strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
     theme: { type: "Partial<LumifaceTheme>", description: "Colours, guide shape and geometry, message style, progress." },
@@ -102,7 +102,7 @@ Props:
 `useLumiface(options)` runs the camera and the controller without any markup:
 
 ```tsx
-const fg = useLumiface({ client, subjectId, purpose: "checkin" });
+const fg = useLumiface({ client, sessionProvider: faceSession });
 return (
   <div ref={fg.mountVideo} style={{ position: "relative", height: 480 }}>
     <p>{messageFor(EN, fg.state, fg.flow)}</p>

@@ -8,18 +8,17 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 | Code | Meaning | Usual fix |
 |---|---|---|
 | `OK` | passed | |
-| `FRAME_COUNT` | number of files differs from `meta.frames` | client bug |
-| `FRAME_KINDS` | kinds or order differ from the session's `frame_kinds` | client bug |
-| `TIMING_ORDER` | timestamps not increasing | client bug |
-| `TIMING_TOO_FAST` | whole session under `min_session_ms` or a challenge under `min_challenge_ms` | scripted upload |
-| `TIMING_TOO_SLOW` | over the TTL or a challenge over `max_challenge_ms` | retry |
-| `TIMING_DURATIONS` | `challenge_durations_ms` length differs from the challenges | client bug |
-| `NO_FACE` | no face in a frame | lighting, framing |
+| `FRAME_COUNT` | no frames reached the server | client bug, network |
+| `TIMING_ORDER` | the events did not follow the plan (missing, repeated, reordered) | client bug |
+| `TIMING_TOO_FAST` | whole session under `min_session_ms` or a challenge under `min_challenge_ms`, on the server's clock | scripted client |
+| `TIMING_TOO_SLOW` | a challenge over `max_challenge_ms` | retry |
+| `FRAMES_STATIC` | the same bytes streamed again and again | a still image played as video |
+| `NO_FACE` | no face in the frames of a window (`details.window`) | lighting, framing |
 | `MULTIPLE_FACES` | more than one comparable face | one person in frame |
 | `FACE_TOO_SMALL` | face box under `min_face_size` | move closer |
 | `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
-| `POSE_MISMATCH` | turn or nod frame does not show the pose | perform the challenge |
-| `EXPRESSION_MISMATCH` | server could not see the smile | smile wider |
+| `POSE_MISMATCH` | no frame in the turn or nod window shows the pose | perform the challenge |
+| `EXPRESSION_MISMATCH` | the server saw no blink (eyes never closed and reopened) or no smile in the window | blink fully, smile wider |
 | `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
 | `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
 | `INCONSISTENT` | frames not the same person | one person for the whole session |
@@ -30,7 +29,7 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 
 ## HTTP level
 
-`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `SUBJECT_MISMATCH`, `SUBJECT_NOT_FOUND`, `META_INVALID`, `PAYLOAD_TOO_LARGE`, `ENROL_TOKEN_INVALID`, `ENROL_TOKEN_MISMATCH`, `EXTERNAL_ID_REQUIRED`, `TTL_INVALID`, `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, and `HTTP_<status>` when the server answered without a code. `BAD_IMAGE` is a verify/enrol verdict for a frame that does not decode.
+`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `SUBJECT_NOT_FOUND`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE`, `ENROL_TOKEN_INVALID`, `ENROL_TOKEN_MISMATCH`, `EXTERNAL_ID_REQUIRED`, `TTL_INVALID`, `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, and `HTTP_<status>` when the server answered without a code. `BAD_IMAGE` is a verify/enrol verdict for a frame that does not decode.
 
 ## SDK (device)
 

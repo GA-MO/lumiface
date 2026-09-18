@@ -1,168 +1,161 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../models.dart';
+import '_http.dart';
 
-/// Thin client for the Lumiface server.
-///
-/// In production the device holds **no project key**: your backend creates the
-/// session (`POST /v1/sessions`) or an enrol token (`POST /v1/subjects/tokens`)
-/// with the key and hands the result to the app, which then calls [verify] with
-/// the session's token or [enroll] with the enrol token. Pass [apiKey] only in
-/// development or from trusted code; anyone holding it can manage every
-/// subject and the project policy.
+/// One verification in flight: frames go up continuously, events tell the server
+/// where to look, [end] resolves with the verdict. The server clocks everything itself.
+abstract class VerifyStream {
+  /// The server's plan, or a [LumifaceException] when it refused the session.
+  Future<StreamPlan> get plan;
+
+  /// Queues a frame; frames are dropped rather than buffered when the link is congested.
+  void sendFrame(List<int> jpeg, int tsMs);
+
+  void event(StreamEventName name, int tsMs, {int? index});
+
+  Future<VerifyResult> end();
+
+  /// Abandons the stream; the server records the session as spent.
+  void close();
+}
+
+/// The client an app ships with. It holds no secret: every call carries a
+/// short-lived token that your backend obtained with the project key
+/// (`POST /v1/sessions` → `session_token`, `POST /v1/subjects/tokens` → enrol
+/// token). Everything the key can do — sessions, subjects, the audit log, the
+/// policy — is plain REST for your backend; see `examples/backend`.
 class LumifaceClient {
-  LumifaceClient({required String baseUrl, String? apiKey, Dio? dio})
-      : _dio = dio ??
-            Dio(BaseOptions(
-              baseUrl: baseUrl,
-              headers: {'X-API-Key': ?apiKey},
-              connectTimeout: const Duration(seconds: 10),
-              receiveTimeout: const Duration(seconds: 30),
-              validateStatus: (_) => true,
-            ));
+  LumifaceClient({required String baseUrl, Dio? dio})
+    : _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), ''),
+      _dio = dio ?? newDio(baseUrl);
 
+  final String _baseUrl;
   final Dio _dio;
 
-  static Options _bearer(String? token) =>
-      Options(headers: {if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token'});
-
-  Future<FaceSession> createSession({String? subjectId, String purpose = ''}) async {
-    final r = await _dio.post<Map<String, dynamic>>('/v1/sessions',
-        data: {'subject_id': subjectId, 'purpose': purpose});
-    _throwIfError(r);
-    return FaceSession.fromJson(r.data!);
+  /// Opens the session's stream. The server answers with the plan; the controller
+  /// then sends frames and events and finally [VerifyStream.end]s for the verdict.
+  VerifyStream openStream(FaceSession session, {Map<String, dynamic> clientInfo = const {}}) {
+    final url = Uri.parse('${_baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/v1/sessions/${session.id}/stream');
+    return _SocketStream(WebSocketChannel.connect(url), session, clientInfo);
   }
 
-  Future<VerifyResult> verify({
-    required String sessionId,
-    required List<CapturedFrame> frames,
-    required List<int> challengeDurationsMs,
-    String? subjectId,
-    Map<String, dynamic> client = const {},
-    /// The `session_token` from the session; replaces the project key for this call.
-    String? sessionToken,
-  }) async {
-    final meta = {
-      'frames': [for (final f in frames) {'kind': f.kind, 'ts_ms': f.tsMs}],
-      'challenge_durations_ms': challengeDurationsMs,
-      'client': client,
-    };
-    final form = FormData.fromMap({
-      'subject_id': ?subjectId,
-      'meta': jsonEncode(meta),
-      'frames': [
-        for (final f in frames) MultipartFile.fromBytes(f.jpeg, filename: '${f.kind}.jpg'),
-      ],
-    });
-    final r = await _dio.post<Map<String, dynamic>>('/v1/sessions/$sessionId/verify',
-        data: form, options: _bearer(sessionToken));
-    if (r.statusCode == 200) return VerifyResult.fromJson(r.data!);
-    return VerifyResult.clientError(_reasonCode(r), _detailMessage(r));
-  }
-
-  /// Enrols one photo. With [enrolToken] the subject, name, replace and ttl were
-  /// fixed by the backend that issued the token and the other fields may be left empty.
-  Future<Subject> enroll({
-    required List<int> photoJpeg,
-    String externalId = '',
-    String name = '',
-    bool replace = false,
-    /// Retention in seconds; null uses the policy's `subject_ttl_seconds`, 0 keeps until deleted.
-    int? ttlSeconds,
-    String? enrolToken,
-  }) async {
-    final viaToken = enrolToken != null && enrolToken.isNotEmpty;
-    final form = FormData.fromMap({
-      if (externalId.isNotEmpty) 'external_id': externalId,
-      if (!viaToken) 'name': name,
-      if (!viaToken) 'replace': replace.toString(),
-      if (!viaToken && ttlSeconds != null) 'ttl_seconds': ttlSeconds.toString(),
-      'photo': MultipartFile.fromBytes(photoJpeg, filename: 'photo.jpg'),
-    });
-    final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form, options: _bearer(enrolToken));
+  /// Enrols one photo as the subject named in [enrolToken].
+  Future<Subject> enroll({required List<int> photoJpeg, required String enrolToken}) async {
+    final form = FormData.fromMap({'photo': MultipartFile.fromBytes(photoJpeg, filename: 'photo.jpg')});
+    final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form, options: bearer(enrolToken));
     if (r.statusCode == 201) return Subject.fromJson(r.data!);
-    final detail = r.data?['detail'];
-    if (detail is Map<String, dynamic>) {
-      throw LumifaceException(_reasonCode(r), detail['details'] as Map<String, dynamic>?);
+    throwEnrolError(r);
+  }
+}
+
+const _maxQueuedFrames = 4; // beyond this, drop frames instead of adding latency
+
+class _SocketStream implements VerifyStream {
+  _SocketStream(this._channel, this._session, Map<String, dynamic> clientInfo) {
+    _channel.ready.then(
+      (_) {
+        _open = true;
+        _send(jsonEncode({'type': 'hello', 'token': _session.token, 'client': clientInfo}));
+      },
+      onError: (Object e) => _settle(VerifyResult.clientError('NETWORK_ERROR', e.toString())),
+    );
+    _channel.stream.listen(
+      _onMessage,
+      onError: (Object e) {
+        _settle(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
+      },
+      onDone: () {
+        _open = false;
+        _settle(VerifyResult.clientError('NETWORK_ERROR', 'stream closed (${_channel.closeCode})'));
+      },
+    );
+  }
+
+  final WebSocketChannel _channel;
+  final FaceSession _session;
+  final _plan = Completer<StreamPlan>();
+  final _result = Completer<VerifyResult>();
+  bool _open = false;
+  int _inFlight = 0;
+
+  @override
+  Future<StreamPlan> get plan => _plan.future;
+
+  void _send(Object data) {
+    if (_open) _channel.sink.add(data);
+  }
+
+  void _settle(VerifyResult r) {
+    if (_result.isCompleted) return;
+    final result = VerifyResult(
+      ok: r.ok,
+      reasonCode: r.reasonCode,
+      mode: r.mode == 'verify' ? _session.mode : r.mode,
+      scores: r.scores,
+      verificationId: r.verificationId,
+      sessionId: _session.id,
+      subject: r.subject,
+      message: r.message,
+    );
+    _result.complete(result);
+    if (!_plan.isCompleted) _plan.completeError(LumifaceException(r.reasonCode, {'result': result}));
+  }
+
+  void _onMessage(dynamic data) {
+    if (data is! String) return;
+    final j = jsonDecode(data) as Map<String, dynamic>;
+    switch (j['type']) {
+      case 'plan':
+        if (!_plan.isCompleted) _plan.complete(StreamPlan.fromJson(j));
+      case 'result':
+        _settle(VerifyResult.fromJson(j));
+      case 'error':
+        _settle(VerifyResult.clientError((j['reason_code'] as String?) ?? 'STREAM_ERROR'));
     }
-    throw LumifaceException(_reasonCode(r), {'detail': detail});
   }
 
-  Future<List<Subject>> listSubjects() async {
-    final r = await _dio.get<List<dynamic>>('/v1/subjects');
-    _throwIfError(r);
-    return r.data!.map((e) => Subject.fromJson(e as Map<String, dynamic>)).toList();
+  @override
+  void sendFrame(List<int> jpeg, int tsMs) {
+    if (!_open || _inFlight >= _maxQueuedFrames) return;
+    final out = Uint8List(8 + jpeg.length);
+    // Big-endian 64-bit client time, written as two words: dart2js has no setUint64.
+    final ms = tsMs < 0 ? 0 : tsMs;
+    ByteData.view(out.buffer)
+      ..setUint32(0, ms ~/ 0x100000000)
+      ..setUint32(4, ms % 0x100000000);
+    out.setRange(8, out.length, jpeg);
+    _inFlight++;
+    _channel.sink.add(out);
+    // The sink has no backpressure signal; count the frame as delivered on the next turn.
+    scheduleMicrotask(() => _inFlight--);
   }
 
-  Future<Subject> getSubject(String externalId) async {
-    final r = await _dio.get<Map<String, dynamic>>('/v1/subjects/$externalId');
-    _throwIfError(r);
-    return Subject.fromJson(r.data!);
+  @override
+  void event(StreamEventName name, int tsMs, {int? index}) {
+    const wire = {
+      StreamEventName.aligned: 'aligned',
+      StreamEventName.challengeDone: 'challenge_done',
+      StreamEventName.flash: 'flash',
+      StreamEventName.flashEnd: 'flash_end',
+    };
+    _send(jsonEncode({'type': 'event', 'name': wire[name], 'ts': tsMs, 'index': ?index}));
   }
 
-  Future<void> deleteSubject(String externalId) async {
-    final r = await _dio.delete<void>('/v1/subjects/$externalId');
-    _throwIfError(r);
+  @override
+  Future<VerifyResult> end() {
+    _send(jsonEncode({'type': 'end'}));
+    return _result.future;
   }
 
-  Future<List<VerificationRecord>> listVerifications({
-    String? subjectId,
-    String? purpose,
-    bool? ok,
-    int limit = 100,
-  }) async {
-    final r = await _dio.get<List<dynamic>>('/v1/verifications', queryParameters: {
-      'subject_id': ?subjectId,
-      'purpose': ?purpose,
-      'ok': ?ok,
-      'limit': limit,
-    });
-    _throwIfError(r);
-    return r.data!.map((e) => VerificationRecord.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  Future<ProjectPolicy> getPolicy() async {
-    final r = await _dio.get<Map<String, dynamic>>('/v1/policy');
-    _throwIfError(r);
-    return ProjectPolicy.fromJson(r.data!);
-  }
-
-  /// Switches the preset and/or merges [overrides] into the project's policy.
-  Future<ProjectPolicy> updatePolicy({String? preset, Map<String, dynamic>? overrides, bool merge = true}) async {
-    final r = await _dio.put<Map<String, dynamic>>('/v1/policy',
-        data: {'preset': ?preset, 'overrides': ?overrides, 'merge': merge});
-    _throwIfError(r);
-    return ProjectPolicy.fromJson(r.data!);
-  }
-
-  Future<ProjectPolicy> resetPolicy() async {
-    final r = await _dio.delete<Map<String, dynamic>>('/v1/policy');
-    _throwIfError(r);
-    return ProjectPolicy.fromJson(r.data!);
-  }
-
-  Future<List<PolicyPreset>> listPresets() async {
-    final r = await _dio.get<List<dynamic>>('/v1/policy/presets');
-    _throwIfError(r);
-    return r.data!.map((e) => PolicyPreset.fromJson(e as Map<String, dynamic>)).toList();
-  }
-
-  String _reasonCode(Response<dynamic> r) {
-    final detail = r.data is Map ? (r.data as Map)['detail'] : null;
-    if (detail is Map && detail['reason_code'] is String) return detail['reason_code'] as String;
-    return 'HTTP_${r.statusCode}';
-  }
-
-  String? _detailMessage(Response<dynamic> r) {
-    final detail = r.data is Map ? (r.data as Map)['detail'] : null;
-    return detail is String ? detail : null;
-  }
-
-  void _throwIfError(Response<dynamic> r) {
-    if (r.statusCode == null || r.statusCode! >= 400) {
-      throw LumifaceException(_reasonCode(r), r.data is Map ? (r.data as Map).cast<String, dynamic>() : null);
-    }
+  @override
+  void close() {
+    _settle(VerifyResult.clientError('CANCELLED'));
+    _channel.sink.close();
   }
 }

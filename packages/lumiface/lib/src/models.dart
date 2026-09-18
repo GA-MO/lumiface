@@ -11,21 +11,21 @@ enum Challenge {
   nod;
 
   static Challenge fromWire(String s) => switch (s) {
-        'blink' => Challenge.blink,
-        'turn_left' => Challenge.turnLeft,
-        'turn_right' => Challenge.turnRight,
-        'smile' => Challenge.smile,
-        'nod' => Challenge.nod,
-        _ => throw ArgumentError('unknown challenge $s'),
-      };
+    'blink' => Challenge.blink,
+    'turn_left' => Challenge.turnLeft,
+    'turn_right' => Challenge.turnRight,
+    'smile' => Challenge.smile,
+    'nod' => Challenge.nod,
+    _ => throw ArgumentError('unknown challenge $s'),
+  };
 
   String get wire => switch (this) {
-        Challenge.blink => 'blink',
-        Challenge.turnLeft => 'turn_left',
-        Challenge.turnRight => 'turn_right',
-        Challenge.smile => 'smile',
-        Challenge.nod => 'nod',
-      };
+    Challenge.blink => 'blink',
+    Challenge.turnLeft => 'turn_left',
+    Challenge.turnRight => 'turn_right',
+    Challenge.smile => 'smile',
+    Challenge.nod => 'nod',
+  };
 }
 
 /// What a session proves: `verify` matches an enrolled subject, `liveness`
@@ -55,16 +55,16 @@ class FaceSignal {
   });
 
   const FaceSignal.none(this.tsMs)
-      : faceCount = 0,
-        box = null,
-        eyeOpenLeft = null,
-        eyeOpenRight = null,
-        smile = null,
-        yaw = null,
-        pitch = null,
-        nose = null,
-        leftEye = null,
-        rightEye = null;
+    : faceCount = 0,
+      box = null,
+      eyeOpenLeft = null,
+      eyeOpenRight = null,
+      smile = null,
+      yaw = null,
+      pitch = null,
+      nose = null,
+      leftEye = null,
+      rightEye = null;
 
   final int tsMs;
   final int faceCount;
@@ -80,9 +80,7 @@ class FaceSignal {
 
   bool get present => faceCount == 1 && box != null;
 
-  double? get eyeOpen => (eyeOpenLeft == null || eyeOpenRight == null)
-      ? null
-      : (eyeOpenLeft! + eyeOpenRight!) / 2;
+  double? get eyeOpen => (eyeOpenLeft == null || eyeOpenRight == null) ? null : (eyeOpenLeft! + eyeOpenRight!) / 2;
 
   /// Horizontal offset of the nose base from the eye midpoint, in units of
   /// inter-eye distance. Stays constant when a flat picture is rotated; shifts
@@ -97,64 +95,65 @@ class FaceSignal {
 
 /// A verification session issued by the server. Carries the challenges, the
 /// screen-flash colours and the client tunables of the project's policy.
+/// What the backend hands the device. The plan (challenges, colours) only arrives over the stream.
 class FaceSession {
   const FaceSession({
     required this.id,
-    required this.challenges,
-    required this.frameKinds,
     required this.ttlSeconds,
     this.token = '',
     this.mode = 'verify',
     this.purpose = '',
-    this.flashColors = const [],
-    this.flashHoldMs = 450,
     this.clientConfig,
   });
 
   final String id;
 
-  /// Bearer secret good for this session's verify only; empty on servers that predate it.
+  /// Bearer secret good for this session's stream only.
   final String token;
   final String mode;
   final String purpose;
-  final List<Challenge> challenges;
-  final List<String> frameKinds;
   final int ttlSeconds;
-
-  /// Screen-flash sequence: the screen is filled with each colour in turn and one
-  /// frame is uploaded per colour (`flash_<i>`). Empty when the server disabled it.
-  final List<Color> flashColors;
-  final int flashHoldMs;
 
   /// Client tunables from the project's policy, null on servers that predate it.
   final LivenessConfig? clientConfig;
 
   factory FaceSession.fromJson(Map<String, dynamic> j) => FaceSession(
-        id: j['session_id'] as String,
-        token: (j['session_token'] as String?) ?? '',
-        mode: (j['mode'] as String?) ?? 'verify',
-        purpose: (j['purpose'] as String?) ?? '',
-        challenges: (j['challenges'] as List).map((e) => Challenge.fromWire(e as String)).toList(),
-        frameKinds: (j['frame_kinds'] as List).cast<String>(),
-        ttlSeconds: j['ttl_seconds'] as int,
-        flashColors: [
-          for (final h in (j['flash_colors'] as List?)?.cast<String>() ?? const <String>[])
-            Color(0xFF000000 | int.parse(h, radix: 16)),
-        ],
-        flashHoldMs: (j['flash_hold_ms'] as int?) ?? 450,
-        clientConfig: j['client_config'] is Map
-            ? LivenessConfig.fromJson((j['client_config'] as Map).cast<String, dynamic>())
-            : null,
-      );
+    id: j['session_id'] as String,
+    token: (j['session_token'] as String?) ?? '',
+    mode: (j['mode'] as String?) ?? 'verify',
+    purpose: (j['purpose'] as String?) ?? '',
+    ttlSeconds: j['ttl_seconds'] as int,
+    clientConfig: j['client_config'] is Map
+        ? LivenessConfig.fromJson((j['client_config'] as Map).cast<String, dynamic>())
+        : null,
+  );
 }
 
-class CapturedFrame {
-  const CapturedFrame({required this.kind, required this.tsMs, required this.jpeg});
+/// The server's first message on the stream: what to do, decided server-side for this session.
+class StreamPlan {
+  const StreamPlan({required this.challenges, this.flashColors = const [], this.flashHoldMs = 450, this.clientConfig});
 
-  final String kind;
-  final int tsMs;
-  final List<int> jpeg;
+  final List<Challenge> challenges;
+
+  /// Screen-flash sequence: the screen is filled with each colour in turn. Empty when disabled.
+  final List<Color> flashColors;
+  final int flashHoldMs;
+  final LivenessConfig? clientConfig;
+
+  factory StreamPlan.fromJson(Map<String, dynamic> j) => StreamPlan(
+    challenges: ((j['challenges'] as List?) ?? const []).map((e) => Challenge.fromWire(e as String)).toList(),
+    flashColors: [
+      for (final h in (j['flash_colors'] as List?)?.cast<String>() ?? const <String>[])
+        Color(0xFF000000 | int.parse(h, radix: 16)),
+    ],
+    flashHoldMs: (j['flash_hold_ms'] as int?) ?? 450,
+    clientConfig: j['client_config'] is Map
+        ? LivenessConfig.fromJson((j['client_config'] as Map).cast<String, dynamic>())
+        : null,
+  );
 }
+
+enum StreamEventName { aligned, challengeDone, flash, flashEnd }
 
 class VerifyScores {
   const VerifyScores({this.match, this.spoof, this.consistency});
@@ -164,10 +163,10 @@ class VerifyScores {
   final double? consistency;
 
   factory VerifyScores.fromJson(Map<String, dynamic>? j) => VerifyScores(
-        match: (j?['match'] as num?)?.toDouble(),
-        spoof: (j?['spoof'] as num?)?.toDouble(),
-        consistency: (j?['consistency'] as num?)?.toDouble(),
-      );
+    match: (j?['match'] as num?)?.toDouble(),
+    spoof: (j?['spoof'] as num?)?.toDouble(),
+    consistency: (j?['consistency'] as num?)?.toDouble(),
+  );
 }
 
 /// Final outcome of a flow. [reasonCode] is either a server code
@@ -180,6 +179,7 @@ class VerifyResult {
     this.mode = 'verify',
     this.scores = const VerifyScores(),
     this.verificationId,
+    this.sessionId,
     this.subject,
     this.message,
   });
@@ -190,20 +190,36 @@ class VerifyResult {
   final VerifyScores scores;
   final int? verificationId;
 
+  /// The session this result belongs to; hand it to your backend, which reads
+  /// the outcome with `GET /v1/sessions/{id}` instead of trusting this object.
+  final String? sessionId;
+
   /// Set by the enrol flow when the photo was accepted.
   final Subject? subject;
   final String? message;
 
   factory VerifyResult.fromJson(Map<String, dynamic> j) => VerifyResult(
-        ok: j['ok'] as bool,
-        mode: (j['mode'] as String?) ?? 'verify',
-        reasonCode: j['reason_code'] as String,
-        scores: VerifyScores.fromJson(j['scores'] as Map<String, dynamic>?),
-        verificationId: j['verification_id'] as int?,
-      );
+    ok: j['ok'] as bool,
+    mode: (j['mode'] as String?) ?? 'verify',
+    reasonCode: j['reason_code'] as String,
+    scores: VerifyScores.fromJson(j['scores'] as Map<String, dynamic>?),
+    verificationId: j['verification_id'] as int?,
+    sessionId: j['session_id'] as String?,
+  );
 
   factory VerifyResult.clientError(String code, [String? message]) =>
       VerifyResult(ok: false, reasonCode: code, message: message);
+
+  VerifyResult withSession(String sessionId) => VerifyResult(
+    ok: ok,
+    reasonCode: reasonCode,
+    mode: mode,
+    scores: scores,
+    verificationId: verificationId,
+    sessionId: sessionId,
+    subject: subject,
+    message: message,
+  );
 
   factory VerifyResult.enrolled(Subject subject) =>
       VerifyResult(ok: true, mode: 'enroll', reasonCode: 'OK', subject: subject);
@@ -220,16 +236,17 @@ class Subject {
   final DateTime? expiresAt;
 
   factory Subject.fromJson(Map<String, dynamic> j) => Subject(
-        externalId: j['external_id'] as String,
-        name: (j['name'] as String?) ?? '',
-        enrollSpoofScore: (j['enroll_spoof_score'] as num).toDouble(),
-        expiresAt: j['expires_at'] == null ? null : DateTime.parse(j['expires_at'] as String),
-      );
+    externalId: j['external_id'] as String,
+    name: (j['name'] as String?) ?? '',
+    enrollSpoofScore: (j['enroll_spoof_score'] as num).toDouble(),
+    expiresAt: j['expires_at'] == null ? null : DateTime.parse(j['expires_at'] as String),
+  );
 }
 
 class VerificationRecord {
   const VerificationRecord({
     required this.id,
+    this.sessionId = '',
     required this.subjectId,
     required this.purpose,
     required this.ok,
@@ -239,6 +256,7 @@ class VerificationRecord {
   });
 
   final int id;
+  final String sessionId;
   final String? subjectId;
   final String purpose;
   final bool ok;
@@ -247,43 +265,38 @@ class VerificationRecord {
   final VerifyScores scores;
 
   factory VerificationRecord.fromJson(Map<String, dynamic> j) => VerificationRecord(
-        id: j['id'] as int,
-        subjectId: j['subject_id'] as String?,
-        purpose: (j['purpose'] as String?) ?? '',
-        ok: j['ok'] as bool,
-        reasonCode: j['reason_code'] as String,
-        createdAt: DateTime.parse(j['created_at'] as String),
-        scores: VerifyScores(
-          match: (j['match_score'] as num?)?.toDouble(),
-          spoof: (j['spoof_score'] as num?)?.toDouble(),
-          consistency: (j['consistency_score'] as num?)?.toDouble(),
-        ),
-      );
+    id: j['id'] as int,
+    sessionId: (j['session_id'] as String?) ?? '',
+    subjectId: j['subject_id'] as String?,
+    purpose: (j['purpose'] as String?) ?? '',
+    ok: j['ok'] as bool,
+    reasonCode: j['reason_code'] as String,
+    createdAt: DateTime.parse(j['created_at'] as String),
+    scores: VerifyScores(
+      match: (j['match_score'] as num?)?.toDouble(),
+      spoof: (j['spoof_score'] as num?)?.toDouble(),
+      consistency: (j['consistency_score'] as num?)?.toDouble(),
+    ),
+  );
 }
 
 /// A project's verification policy as the server reports it.
 class ProjectPolicy {
-  const ProjectPolicy({
-    required this.project,
-    required this.preset,
-    required this.overrides,
-    required this.effective,
-  });
+  const ProjectPolicy({required this.project, required this.preset, required this.overrides, required this.effective});
 
   final String project;
   final String preset;
   final Map<String, dynamic> overrides;
   final Map<String, dynamic> effective;
 
-  LivenessConfig get clientConfig =>
-      LivenessConfig.fromJson((effective['client'] as Map).cast<String, dynamic>());
+  LivenessConfig get clientConfig => LivenessConfig.fromJson((effective['client'] as Map).cast<String, dynamic>());
 
   factory ProjectPolicy.fromJson(Map<String, dynamic> j) => ProjectPolicy(
-        project: j['project'] as String,
-        preset: j['preset'] as String,
-        overrides: (j['overrides'] as Map).cast<String, dynamic>(),
-        effective: (j['effective'] as Map).cast<String, dynamic>(),
-      );
+    project: j['project'] as String,
+    preset: j['preset'] as String,
+    overrides: (j['overrides'] as Map).cast<String, dynamic>(),
+    effective: (j['effective'] as Map).cast<String, dynamic>(),
+  );
 }
 
 class PolicyPreset {
@@ -294,10 +307,10 @@ class PolicyPreset {
   final Map<String, dynamic> overrides;
 
   factory PolicyPreset.fromJson(Map<String, dynamic> j) => PolicyPreset(
-        name: j['name'] as String,
-        summary: j['summary'] as String,
-        overrides: (j['overrides'] as Map).cast<String, dynamic>(),
-      );
+    name: j['name'] as String,
+    summary: j['summary'] as String,
+    overrides: (j['overrides'] as Map).cast<String, dynamic>(),
+  );
 }
 
 class LumifaceException implements Exception {

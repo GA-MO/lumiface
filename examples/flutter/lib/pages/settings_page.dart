@@ -13,7 +13,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage> {
   late final _url = TextEditingController(text: widget.settings.baseUrl);
-  late final _key = TextEditingController(text: widget.settings.apiKey);
+  late final _backend = TextEditingController(text: widget.settings.backendUrl);
   late final _subject = TextEditingController(text: widget.settings.subjectId);
   ProjectPolicy? _policy;
   List<PolicyPreset>? _presets;
@@ -21,7 +21,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _loadPolicy() async {
     try {
-      final client = widget.settings.client;
+      final client = widget.settings.backend;
       final policy = await client.getPolicy();
       final presets = await client.listPresets();
       setState(() {
@@ -36,7 +36,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _applyPreset(String preset) async {
     try {
-      final policy = await widget.settings.client.updatePolicy(preset: preset);
+      final policy = await widget.settings.backend.setPreset(preset);
       setState(() => _policy = policy);
     } catch (e) {
       setState(() => _policyError = e.toString());
@@ -52,8 +52,22 @@ class _SettingsPageState extends State<SettingsPage> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          TextField(controller: _url, decoration: const InputDecoration(labelText: 'Server URL')),
-          TextField(controller: _key, decoration: const InputDecoration(labelText: 'Project API key')),
+          TextField(
+            controller: _url,
+            decoration: const InputDecoration(
+              labelText: 'Lumiface server URL',
+              helperText: 'Where the app uploads frames, with a session token. No key in the app.',
+              helperMaxLines: 2,
+            ),
+          ),
+          TextField(
+            controller: _backend,
+            decoration: const InputDecoration(
+              labelText: 'Your backend URL',
+              helperText: 'examples/backend (bun run dev:backend): holds the key, creates sessions, reads the verdict.',
+              helperMaxLines: 2,
+            ),
+          ),
           TextField(controller: _subject, decoration: const InputDecoration(labelText: 'My subject id')),
           SwitchListTile(
             title: const Text('Thai strings'),
@@ -68,7 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () async {
-              await s.save(baseUrl: _url.text.trim(), apiKey: _key.text.trim(), subjectId: _subject.text.trim());
+              await s.save(baseUrl: _url.text.trim(), backendUrl: _backend.text.trim(), subjectId: _subject.text.trim());
               if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
             },
             child: const Text('Save'),

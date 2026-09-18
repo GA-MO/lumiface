@@ -2,6 +2,7 @@ import 'package:lumiface/lumiface.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'example_backend.dart';
 import 'pages/history_page.dart';
 import 'pages/settings_page.dart';
 import 'pages/subjects_page.dart';
@@ -13,24 +14,31 @@ class AppSettings extends ChangeNotifier {
   AppSettings(this._prefs);
   final SharedPreferences _prefs;
 
+  /// Where the device uploads frames (with a session token).
   String get baseUrl => _prefs.getString('baseUrl') ?? 'http://localhost:8000';
-  String get apiKey => _prefs.getString('apiKey') ?? 'change-me';
+
+  /// Your backend, which holds the key: examples/backend on a laptop.
+  String get backendUrl => _prefs.getString('backendUrl') ?? 'http://localhost:8010';
   String get subjectId => _prefs.getString('subjectId') ?? '';
   bool get debug => _prefs.getBool('debug') ?? false;
   bool get thai => _prefs.getBool('thai') ?? false;
 
   LivenessStrings get strings => thai ? LivenessStrings.th : LivenessStrings.en;
 
-  Future<void> save({String? baseUrl, String? apiKey, String? subjectId, bool? debug, bool? thai}) async {
+  Future<void> save({String? baseUrl, String? backendUrl, String? subjectId, bool? debug, bool? thai}) async {
     if (baseUrl != null) await _prefs.setString('baseUrl', baseUrl);
-    if (apiKey != null) await _prefs.setString('apiKey', apiKey);
+    if (backendUrl != null) await _prefs.setString('backendUrl', backendUrl);
     if (subjectId != null) await _prefs.setString('subjectId', subjectId);
     if (debug != null) await _prefs.setBool('debug', debug);
     if (thai != null) await _prefs.setBool('thai', thai);
     notifyListeners();
   }
 
-  LumifaceClient get client => LumifaceClient(baseUrl: baseUrl, apiKey: apiKey);
+  /// What the app ships with: no secret.
+  LumifaceClient get client => LumifaceClient(baseUrl: baseUrl);
+
+  /// Plain HTTP to your backend (examples/backend), which holds the key.
+  ExampleBackend get backend => ExampleBackend(backendUrl);
 }
 
 class App extends StatelessWidget {

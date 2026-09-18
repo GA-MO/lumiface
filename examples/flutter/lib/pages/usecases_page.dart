@@ -28,8 +28,7 @@ final useCases = <UseCase>[
       context,
       (done) => FaceVerifyView(
         client: s.client,
-        subjectId: s.subjectId,
-        purpose: 'checkin',
+        sessionProvider: () => s.backend.createSession(subjectId: s.subjectId, purpose: 'checkin'),
         strings: s.strings.copyWith(success: s.thai ? 'เช็คอินสำเร็จ' : 'Checked in'),
         showDebug: s.debug,
         onResult: done,
@@ -45,8 +44,7 @@ final useCases = <UseCase>[
       context,
       (done) => FaceVerifyView(
         client: s.client,
-        subjectId: s.subjectId,
-        purpose: 'login',
+        sessionProvider: () => s.backend.createSession(subjectId: s.subjectId, purpose: 'login'),
         strings: s.strings.copyWith(success: 'Welcome back'),
         theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme).copyWith(
           guideShape: FaceGuideShape.roundedRect,
@@ -61,13 +59,14 @@ final useCases = <UseCase>[
   ),
   UseCase(
     title: 'Liveness only (kiosk)',
-    subtitle: 'No subject id: proves a live person, nothing to match against.',
+    subtitle: 'The backend creates the session without a subject: proves a live person, nothing to match against.',
     icon: Icons.sensors,
     open: (context, s) => pushFlow(
       context,
       (done) => FaceVerifyView(
         client: s.client,
-        purpose: 'kiosk',
+        flow: FaceFlow.liveness,
+        sessionProvider: () => s.backend.createSession(purpose: 'kiosk'),
         strings: s.strings,
         showDebug: s.debug,
         onResult: done,
@@ -77,7 +76,7 @@ final useCases = <UseCase>[
   ),
   UseCase(
     title: 'Enrol from the camera',
-    subtitle: 'FaceFlow.enroll: align, capture one frontal frame, POST /v1/subjects.',
+    subtitle: 'FaceFlow.enroll: the backend mints an enrol token for the id, the device aligns and uploads one frame.',
     icon: Icons.person_add_alt_1,
     open: (context, s) async {
       final id = await askText(context, 'Subject id to enrol', initial: s.subjectId);
@@ -87,8 +86,7 @@ final useCases = <UseCase>[
         (done) => FaceVerifyView(
           client: s.client,
           flow: FaceFlow.enroll,
-          subjectId: id,
-          replaceEnrollment: true,
+          enrolTokenProvider: () => s.backend.createEnrolToken(id),
           strings: s.strings,
           showDebug: s.debug,
           onResult: done,
@@ -130,6 +128,7 @@ class UseCasesPage extends StatefulWidget {
 class _UseCasesPageState extends State<UseCasesPage> {
   VerifyResult? _last;
   String? _lastTitle;
+  String? _verdict;
 
   Future<void> _open(UseCase u) async {
     final s = widget.settings;
@@ -139,11 +138,24 @@ class _UseCasesPageState extends State<UseCasesPage> {
       return;
     }
     final r = await u.open(context, s);
-    if (mounted) {
-      setState(() {
-        _last = r;
-        _lastTitle = u.title;
-      });
+    if (!mounted) return;
+    setState(() {
+      _last = r;
+      _lastTitle = u.title;
+      _verdict = null;
+    });
+    // What a real app does next: tell the backend, which reads the outcome from Lumiface itself.
+    if (r?.sessionId == null) return;
+    try {
+      final v = await s.backend.done(r!.sessionId!);
+      if (mounted) {
+        setState(() => _verdict = v == null
+            ? 'backend: no upload recorded for this session'
+            : 'backend read the session: ok=${v.ok} reason=${v.reasonCode}'
+                '${v.verificationId != null ? ' verification #${v.verificationId}' : ''}');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _verdict = 'backend error: $e');
     }
   }
 
@@ -182,6 +194,10 @@ class _UseCasesPageState extends State<UseCasesPage> {
                     if (r.message != null) Text(r.message!),
                     Text('match=${fmt(r.scores.match)}  spoof=${fmt(r.scores.spoof)}  '
                         'consistency=${fmt(r.scores.consistency)}'),
+                    if (_verdict != null) ...[
+                      const SizedBox(height: 8),
+                      Text(_verdict!, style: Theme.of(context).textTheme.bodySmall),
+                    ],
                   ],
                 ),
               ),

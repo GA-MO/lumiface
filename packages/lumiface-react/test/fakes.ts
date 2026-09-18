@@ -1,6 +1,7 @@
 import { LumifaceClient } from "../src/client.ts";
+import { LumifaceError } from "../src/types.ts";
 import type { FaceSignalSource, FrameCapturer } from "../src/controller.ts";
-import type { CapturedFrame, Challenge, FaceSession, FaceSignal, Subject, VerifyResult } from "../src/types.ts";
+import type { Challenge, FaceSession, FaceSignal, StreamEventName, Subject, VerifyResult, VerifyStream } from "../src/types.ts";
 
 export class FakeSource implements FaceSignalSource, FrameCapturer {
   private listeners = new Set<(s: FaceSignal) => void>();
@@ -25,8 +26,12 @@ export class FakeSource implements FaceSignalSource, FrameCapturer {
 
 export class FakeClient extends LumifaceClient {
   response: VerifyResult | null = null;
-  sentFrames: CapturedFrame[] | null = null;
-  sentDurations: number[] | null = null;
+  /** What the controller streamed: frame timestamps and events, in order. */
+  sentFrames: number[] = [];
+  sentEvents: { name: StreamEventName; ts: number; index?: number }[] = [];
+  ended = false;
+  closed = false;
+  planError: string | null = null;
   lastSubjectId: string | null | undefined;
   lastPurpose = "";
   sessionConfig: Record<string, unknown> | null = null;
@@ -36,10 +41,11 @@ export class FakeClient extends LumifaceClient {
     readonly challenges: Challenge[],
     readonly flashColors: string[] = [],
   ) {
-    super({ baseUrl: "http://x", apiKey: "k" });
+    super({ baseUrl: "http://x" });
   }
 
-  override async createSession(options: { subjectId?: string | null; purpose?: string } = {}): Promise<FaceSession> {
+  /** Stands in for the app's backend call; `subjectId: null` = liveness session. */
+  createSession = async (options: { subjectId?: string | null; purpose?: string } = { subjectId: "E001" }): Promise<FaceSession> => {
     this.lastSubjectId = options.subjectId;
     this.lastPurpose = options.purpose ?? "";
     return {
@@ -47,33 +53,40 @@ export class FakeClient extends LumifaceClient {
       token: "tok",
       mode: options.subjectId ? "verify" : "liveness",
       purpose: this.lastPurpose,
-      challenges: this.challenges,
-      frameKinds: [
-        "neutral_start",
-        ...this.challenges.map((_, i) => `challenge_${i}`),
-        ...this.flashColors.map((_, i) => `flash_${i}`),
-        "neutral_end",
-      ],
       ttlSeconds: 60,
-      flashColors: this.flashColors,
-      flashHoldMs: 450,
-      clientConfig: this.sessionConfig,
+      clientConfig: null,
+    };
+  };
+
+  override openStream(): VerifyStream {
+    const plan = this.planError
+      ? Promise.reject(new LumifaceError(this.planError))
+      : Promise.resolve({ challenges: this.challenges, flashColors: this.flashColors, flashHoldMs: 450, clientConfig: this.sessionConfig });
+    plan.catch(() => {});
+    return {
+      plan,
+      sendFrame: (_jpeg, ts) => {
+        this.sentFrames.push(ts);
+      },
+      event: (name, ts, index) => {
+        this.sentEvents.push({ name, ts, ...(index === undefined ? {} : { index }) });
+      },
+      end: async () => {
+        this.ended = true;
+        return this.response ?? { ok: true, mode: "verify", reasonCode: "OK", scores: { match: 0.9, spoof: 0.9, consistency: 0.9 }, verificationId: 1 };
+      },
+      close: () => {
+        this.closed = true;
+      },
     };
   }
 
-  override async verify(options: { frames: CapturedFrame[]; challengeDurationsMs: number[] }): Promise<VerifyResult> {
-    this.sentFrames = options.frames;
-    this.sentDurations = options.challengeDurationsMs;
-    return this.response ?? { ok: true, mode: "verify", reasonCode: "OK", scores: { match: 0.9, spoof: 0.9, consistency: 0.9 }, verificationId: 1 };
-  }
-
-  override async enroll(options: { externalId?: string; name?: string }): Promise<Subject> {
+  /** The fake token names the subject, like the real one does server-side: `tok:<id>:<name>`. */
+  override async enroll(options: { photo: Blob; enrolToken: string }): Promise<Subject> {
     this.enrollCalls++;
-    if (options.externalId === "REJECT") {
-      const { LumifaceError } = await import("../src/types.ts");
-      throw new LumifaceError("POSE_NOT_FRONTAL");
-    }
-    return { externalId: options.externalId ?? "", name: options.name ?? "", enrollSpoofScore: 0.9, expiresAt: null };
+    const [, externalId = "", name = ""] = options.enrolToken.split(":");
+    if (externalId === "REJECT") throw new LumifaceError("POSE_NOT_FRONTAL");
+    return { externalId, name, enrollSpoofScore: 0.9, expiresAt: null };
   }
 }
 

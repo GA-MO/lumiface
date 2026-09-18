@@ -1,11 +1,10 @@
-import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from ..db import get_db
-from ..deps import admin_key
+from ..deps import admin_key, new_api_key
 from ..models import EnrolToken, Project, Subject, Verification, VerifySession
 from ..policy import PRESETS
 
@@ -40,7 +39,7 @@ def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
         raise HTTPException(422, {"reason_code": "UNKNOWN_PRESET", "presets": list(PRESETS)})
     if db.exec(select(Project).where(Project.name == body.name)).first():
         raise HTTPException(409, {"reason_code": "PROJECT_EXISTS"})
-    key = secrets.token_urlsafe(24)
+    key = new_api_key()
     p = Project(name=body.name, api_key=key, preset=body.preset)
     db.add(p)
     db.commit()
@@ -58,7 +57,7 @@ def rotate_key(project_id: int, db: Session = Depends(get_db)):
     p = db.get(Project, project_id)
     if not p:
         raise HTTPException(404, {"reason_code": "PROJECT_NOT_FOUND"})
-    p.api_key = secrets.token_urlsafe(24)
+    p.api_key = new_api_key()
     db.add(p)
     db.commit()
     db.refresh(p)

@@ -23,7 +23,7 @@ The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet
 | `BOOTSTRAP_PRESET` | `balanced` | its preset |
 | `ADMIN_API_KEY` | unset | enables `/v1/projects` (`X-Admin-Key`) |
 | `DEBUG` | `0` | mounts `/v1/debug/score` and returns `details` on verify |
-| `STORE_FRAMES` | `0` | keep uploaded frames of failed (or, with DEBUG, all) verifications |
+| `STORE_FRAMES` | `0` | keep the streamed frames of failed (or, with DEBUG, all) verifications under `data/frames/<project>/<session>/` |
 | `WEIGHTS_DIR` | `weights` | ONNX files |
 | `CVPR_ENABLED` | `1` | load the CVPR-2024 gate (can also be switched per project) |
 | every policy field | see reference | the defaults of the `balanced` preset |

@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import secrets
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,6 +10,7 @@ from sqlmodel import Session, select
 
 from .config import get_settings
 from .db import get_engine, init_db
+from .deps import new_api_key
 from .models import Project
 from .policy import PRESETS, PolicyScopeMiddleware
 from .routers import debug, policy, projects, sessions, subjects, verifications
@@ -26,7 +26,7 @@ def bootstrap_project() -> None:
     with Session(get_engine()) as db:
         if db.exec(select(Project)).first():
             return
-        key = s.bootstrap_api_key or secrets.token_urlsafe(24)
+        key = s.bootstrap_api_key or new_api_key()
         preset = s.bootstrap_preset if s.bootstrap_preset in PRESETS else "balanced"
         db.add(Project(name=s.bootstrap_project_name, api_key=key, preset=preset))
         db.commit()

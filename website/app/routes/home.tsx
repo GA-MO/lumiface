@@ -37,11 +37,11 @@ const TERMINAL = `cd server && uv sync
 uv run python weights/download.py && cp .env.example .env
 uv run uvicorn app.main:app --port 8000
 
-curl -X POST localhost:8000/v1/subjects -H "X-API-Key: change-me" \\
+curl -X POST localhost:8000/v1/subjects -H "X-API-Key: lf_sk_change-me" \\
   -F external_id=E001 -F photo=@me.jpg
 
-flutter run -d chrome      # packages/lumiface/example
-bun run dev:react          # packages/lumiface-react/demo`;
+flutter run -d chrome      # examples/flutter
+bun run dev:react          # examples/react`;
 
 export async function loader() {
   const [terminal, snippets, presetEntries] = await Promise.all([
@@ -63,27 +63,27 @@ const STATS = [
   ["2", "anti-spoof models", "MiniFASNet + CVPR-2024"],
   ["4", "device challenges", "blink, smile, turn, nod"],
   ["55", "policy fields", "tuned per project, no redeploy"],
-  ["5", "HTTP endpoints", "enrol, session, verify, policy, health"],
+  ["1", "stream per session", "frames + events over WebSocket, server clock"],
 ] as const;
 
 const STEPS = [
-  { icon: KeyRound, title: "Enrol once", body: "POST a photo per subject behind your project's API key. The embedding stays on your server." },
-  { icon: ScanFace, title: "Challenge on the device", body: "The SDK opens the camera, picks random challenges and flashes three server-chosen colours." },
-  { icon: ShieldCheck, title: "Verify on the server", body: "Two anti-spoof gates, flash reflection, smile re-check and identity match return one result with reason codes." },
+  { icon: KeyRound, title: "Enrol once", body: "POST a photo per subject from your backend. The key never reaches a device; the embedding never leaves your server." },
+  { icon: ScanFace, title: "Stream from the device", body: "Your backend mints a session; the SDK opens its stream, gets the plan and sends frames the whole time while it guides the person through the challenges and the flash." },
+  { icon: ShieldCheck, title: "Judge on the server", body: "The server clocks the stream itself, reads every blink, smile, turn and flash from its own landmarks, runs anti-spoof and identity, and your backend reads the verdict." },
 ] as const;
 
 const DEVICE_CHECKS: readonly [LucideIcon, string, string][] = [
-  [Sparkles, "Random challenges", "Blink, smile, turn or nod, picked per session. A blink must last 40 to 600 ms."],
-  [Eye, "Nose parallax", "During a turn the nose must move against the eyes; a rotated print or screen cannot do that."],
-  [Zap, "Screen flash", "Three colours the server chose seconds earlier fill the screen, one frame each."],
-  [Timer, "Timing", "Every step is stamped; a scripted upload or a replay answering at random times fails."],
+  [Sparkles, "Prompts the challenges", "Blink, smile, turn or nod from the server's plan; ML Kit or MediaPipe tell the person when to move on. The server re-reads each one itself."],
+  [Eye, "Nose parallax", "During a turn the nose must move against the eyes; a rotated print or screen cannot do that. The one check that stays on the device, as an extra hurdle."],
+  [Zap, "Shows the flash", "Three colours from the plan fill the screen in turn while the frames keep flowing; the server reads the reflection."],
+  [Timer, "Streams and marks", "About eight frames a second plus a marker at each boundary. The markers say where to look; the device's timestamps are recorded, not trusted."],
 ];
 
 const SERVER_CHECKS: readonly [LucideIcon, string, string][] = [
-  [ShieldCheck, "Two anti-spoof gates", "MiniFASNet on every frame, then the CVPR-2024 ResNet50 on a face crop for bezel-free replays."],
-  [Zap, "Flash reflection", "The cheeks must follow the colour sequence and reflect more than the wall behind."],
-  [ScanFace, "Smile re-check", "68 landmarks confirm the smile; a latex or silicone mask passes both gates but cannot smile."],
-  [KeyRound, "Identity", "Every frame matches the enrolled face, and every pair of frames matches each other."],
+  [ScanFace, "Reads the challenges itself", "68 landmarks on the streamed frames: a blink is an eye-aspect-ratio dip and recovery, a smile a wider mouth, a turn a yaw. A patched client cannot skip them."],
+  [Timer, "Its own clock", "Every frame and event is stamped on arrival; durations, order and a repeated feed are judged server-side."],
+  [Zap, "Flash reflection", "The cheeks must follow the colour sequence in each colour's window and reflect more than the wall behind."],
+  [ShieldCheck, "Anti-spoof and identity", "MiniFASNet and the CVPR-2024 ResNet50 on the key frames, then ArcFace against the enrolled face and across frames."],
 ];
 
 const POLICY_POINTS: readonly [LucideIcon, string][] = [
@@ -211,8 +211,8 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
           <section className="py-24 lg:py-32">
             <SectionHeading
               eyebrow="How it works"
-              title="Three calls, one result"
-              body="Enrol a face, run a session on the device, verify on the server. Every step is stamped and every threshold is on the security page."
+              title="One stream, one verdict"
+              body="Your backend creates the session, the device streams it, the server decides from what it received and your backend reads the answer. Every threshold is on the security page."
             />
             <FlowAnimation />
             <ol className="mt-6 grid overflow-hidden rounded-3xl border border-fd-border bg-fd-card md:grid-cols-3">
@@ -234,12 +234,12 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
           <section className="border-t border-fd-border py-24 lg:py-32">
             <SectionHeading
               eyebrow="Liveness"
-              title="Checks on both sides of the wire"
-              body="The device proves a live person is in front of the camera; the server proves the frames are real and belong to the enrolled subject."
+              title="The device guides, the server decides"
+              body="Nothing the device reports counts as evidence. It shows the person what to do and streams the camera; the server proves from the stream that it happened, that the frames are real and that they belong to the enrolled subject."
             />
             <div className="mt-12 grid gap-6 lg:grid-cols-2">
-              <CheckList icon={Smartphone} title="On the device" rows={DEVICE_CHECKS} />
-              <CheckList icon={Server} title="On the server" rows={SERVER_CHECKS} />
+              <CheckList icon={Smartphone} title="On the device — guidance only" rows={DEVICE_CHECKS} />
+              <CheckList icon={Server} title="On the server — every verdict" rows={SERVER_CHECKS} />
             </div>
           </section>
 

@@ -3,17 +3,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from app.services.challenge import VerifyMeta, expected_frame_kinds, new_challenges, validate_timing
+from app.services.challenge import new_challenges
 from app.services.expression import mouth_metrics, smile_ok
 from app.services.face import FaceResult
 from app.services.flash import PALETTE, face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
+from app.services.stream import StreamEvent, blink_observed, build_windows, eye_aspect_ratio
 from app.services.verify import _pose_ok
-from tests.conftest import make_meta
 
 SAMPLES = Path(__file__).resolve().parents[1] / "data" / "samples"
 
 
-def test_new_challenges_from_pool():
+def test_new_challenges_from_pool(monkeypatch):
+    from app.policy import default_policy
+    monkeypatch.setattr(default_policy(), "challenge_pool", "blink,smile")
     for _ in range(20):
         c = new_challenges()
         assert len(c) == 2 and len(set(c)) == 2 and set(c) <= {"blink", "smile"}
@@ -28,12 +30,6 @@ def test_new_challenges_always_include_required(monkeypatch):
         assert "smile" in c and len(c) == 2
         firsts.add(c[0])
     assert len(firsts) > 1, "required challenge must not always come first"
-
-
-def test_expected_frame_kinds():
-    assert expected_frame_kinds(["blink", "smile"]) == ["neutral_start", "challenge_0", "challenge_1", "neutral_end"]
-    assert expected_frame_kinds(["blink"], ["FF0000", "0000FF"]) == \
-        ["neutral_start", "challenge_0", "flash_0", "flash_1", "neutral_end"]
 
 
 def _lit(base, colors, gain, noise=0.0, seed=0):
@@ -157,34 +153,66 @@ def test_face_patch_mean_rgb_reads_centre_block():
     assert rgb[2] > 200 and rgb[0] < 60
 
 
-def test_timing_ok():
-    assert validate_timing(VerifyMeta(**make_meta(["blink", "smile"])), ["blink", "smile"]) is None
+def _eyes(open_ratio):
+    """68-point landmarks with both eyes `open_ratio` as tall as they are wide (iBUG 36-47)."""
+    pts = np.zeros((68, 3), dtype=np.float32)
+    for base, cx in ((36, 40.0), (42, 80.0)):
+        pts[base] = (cx - 10, 50, 0)
+        pts[base + 3] = (cx + 10, 50, 0)
+        h = 20 * open_ratio / 2
+        pts[base + 1] = (cx - 4, 50 - h, 0)
+        pts[base + 2] = (cx + 4, 50 - h, 0)
+        pts[base + 5] = (cx - 4, 50 + h, 0)
+        pts[base + 4] = (cx + 4, 50 + h, 0)
+    return pts
 
 
-def test_timing_too_fast_total():
-    m = make_meta(["blink", "smile"], step=100)
-    assert validate_timing(VerifyMeta(**m), ["blink", "smile"]) == "TIMING_TOO_FAST"
+def test_eye_aspect_ratio_tracks_openness():
+    assert eye_aspect_ratio(_eyes(0.3)) == pytest.approx(0.3)
+    assert eye_aspect_ratio(_eyes(0.1)) == pytest.approx(0.1)
+    assert eye_aspect_ratio(None) is None
 
 
-def test_timing_too_fast_challenge():
-    m = make_meta(["blink", "smile"], challenge_ms=50)
-    assert validate_timing(VerifyMeta(**m), ["blink", "smile"]) == "TIMING_TOO_FAST"
+def test_blink_needs_a_close_and_a_reopen():
+    assert blink_observed([0.3, 0.29, 0.12, 0.28, 0.3], 0.3)
+    assert not blink_observed([0.3, 0.3, 0.31, 0.29], 0.3), "eyes never closed"
+    assert not blink_observed([0.3, 0.15, 0.12, 0.1], 0.3), "closed and stayed closed"
+    assert not blink_observed([0.1, 0.3], 0.0)
 
 
-def test_timing_too_slow_challenge():
-    m = make_meta(["blink", "smile"], challenge_ms=9000)
-    assert validate_timing(VerifyMeta(**m), ["blink", "smile"]) == "TIMING_TOO_SLOW"
+def _events(*names):
+    out, t = [], 1000
+    counts: dict[str, int] = {}
+    for n in names:
+        idx = None
+        if n in ("challenge_done", "flash"):
+            idx = counts.get(n, 0)
+            counts[n] = idx + 1
+        out.append(StreamEvent(name=n, recv_ms=t, index=idx))
+        t += 500
+    return out
 
 
-def test_timing_wrong_kinds():
-    m = make_meta(["blink"])
-    assert validate_timing(VerifyMeta(**m), ["blink", "smile"]) == "FRAME_KINDS"
+def test_windows_follow_the_plan_on_the_server_clock():
+    w = build_windows(_events("aligned", "challenge_done", "challenge_done", "flash", "flash", "flash_end", "end"),
+                      first_frame_ms=200, challenges=["blink", "smile"], flash_colors=["FF0000", "00FF00"])
+    assert w.align == (200, 1000)
+    assert w.challenges == [(1000, 1500), (1500, 2000)]
+    assert w.flashes == [(2500 + 120, 3000), (3000 + 120, 3500)]
+    assert w.end == (3500, 4000)
 
 
-def test_timing_order():
-    m = make_meta(["blink", "smile"])
-    m["frames"][2]["ts_ms"] = 0
-    assert validate_timing(VerifyMeta(**m), ["blink", "smile"]) == "TIMING_ORDER"
+def test_windows_reject_a_wrong_or_reordered_sequence():
+    assert build_windows(_events("aligned", "end"), 0, ["blink"], []) == "TIMING_ORDER"
+    assert build_windows(_events("challenge_done", "aligned", "end"), 0, ["blink"], []) == "TIMING_ORDER"
+    bad = _events("aligned", "challenge_done", "challenge_done", "end")
+    bad[2].index = 0  # the same challenge reported twice
+    assert build_windows(bad, 0, ["blink", "smile"], []) == "TIMING_ORDER"
+    late = _events("aligned", "challenge_done", "end")
+    late[1].recv_ms = 100  # earlier than the event before it
+    assert build_windows(late, 0, ["blink"], []) == "TIMING_ORDER"
+    w = build_windows(_events("aligned", "challenge_done", "end"), 0, ["blink"], [])
+    assert w.flashes == [] and w.end == (1500, 2000)
 
 
 def _face(yaw=0.0, pitch=0.0):

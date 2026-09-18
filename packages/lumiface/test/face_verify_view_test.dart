@@ -58,7 +58,7 @@ void main() {
     final results = <VerifyResult>[];
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
-      subjectId: 'E001',
+      sessionProvider: api.createSession,
       sourceFactory: () => cam,
       config: const LivenessConfig(parallaxWhenNoTurn: false),
       onResult: results.add,
@@ -99,6 +99,7 @@ void main() {
     LivenessState? seen;
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
+      sessionProvider: () => api.createSession(subjectId: null),
       sourceFactory: () => cam,
       strings: LivenessStrings.th,
       theme: const FaceVerifyTheme(guideShape: FaceGuideShape.none, showProgress: false),
@@ -118,7 +119,7 @@ void main() {
     FaceFlowController? ctrl;
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
-      subjectId: 'E001',
+      sessionProvider: api.createSession,
       sourceFactory: () => cam,
       autoStart: false,
       onController: (c) => ctrl = c,
@@ -138,8 +139,7 @@ void main() {
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
       flow: FaceFlow.enroll,
-      subjectId: 'E7',
-      subjectName: 'Seven',
+      enrolTokenProvider: () async => 'tok:E7:Seven',
       sourceFactory: () => cam,
       onResult: (r) => result = r,
     )));
@@ -155,6 +155,7 @@ void main() {
   testWidgets('camera failure renders the error builder', (tester) async {
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
+      sessionProvider: api.createSession,
       sourceFactory: () => throw StateError('no camera'),
       errorBuilder: (context, e) => Text('err:$e'),
       onResult: (_) {},
