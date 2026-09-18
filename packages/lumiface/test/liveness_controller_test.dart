@@ -133,7 +133,7 @@ void main() {
     expect(src.captures, api.sentFrames.length);
     expect(api.sentFrames.length, greaterThan(4));
     expect(api.sentFrames.first, lessThan(ts[0]));
-    expect(api.sentFrames.last, greaterThan(ts[2]));
+    expect(api.sentFrames.last, greaterThanOrEqualTo(ts[2]));
   });
 
   test('no turn from server -> client-only turn appended, nothing extra uploaded', () async {

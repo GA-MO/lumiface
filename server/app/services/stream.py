@@ -121,9 +121,29 @@ def build_windows(events: list[StreamEvent], first_frame_ms: int, challenges: li
                    end=(boundary, events[-1].recv_ms))
 
 
-def _in(frames: list[StreamFrame], window: tuple[int, int]) -> list[StreamFrame]:
+def placement_windows(frames: list[StreamFrame], events: list[StreamEvent], challenges: list[str],
+                      flash_colors: list[str], server: Windows) -> Windows:
+    """Where each frame belongs, on the device's capture clock. A phone encodes and uploads a frame
+    hundreds of ms after the camera saw it while an event is a few bytes, so by server arrival a
+    frame taken under colour 0 lands in colour 1's window and a blink's reopening lands after
+    `challenge_done`. Durations stay on the server clock; only membership uses the device stamps,
+    and only when every event but `end` carries one, in order (older clients keep the server clock).
+    A client that lies about its stamps still has to show the right colours in the right windows."""
+    stamped = [e for e in events if e.name != "end"]
+    if not frames or any(e.client_ms is None for e in stamped):
+        return server
+    ts = [e.client_ms for e in stamped]
+    if any(b < a for a, b in zip(ts, ts[1:])):
+        return server
+    last = max(f.client_ms for f in frames)
+    shadow = [StreamEvent(e.name, e.client_ms if e.client_ms is not None else last, e.index) for e in events]
+    w = build_windows(shadow, min(f.client_ms for f in frames), challenges, flash_colors)
+    return server if isinstance(w, str) else w
+
+
+def _in(frames: list[StreamFrame], window: tuple[int, int], by_client: bool = False) -> list[StreamFrame]:
     lo, hi = window
-    return [f for f in frames if lo <= f.recv_ms <= hi]
+    return [f for f in frames if lo <= (f.client_ms if by_client else f.recv_ms) <= hi]
 
 
 def _sample(frames: list[StreamFrame], n: int = MAX_FRAMES_PER_WINDOW) -> list[StreamFrame]:
@@ -190,6 +210,10 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
     if len(frames) >= 8 and len(digests) < max(4, len(frames) // 2):
         return VerifyResult(False, "FRAMES_STATIC", details=details)
 
+    place = placement_windows(frames, events, challenges, flash_colors, windows)
+    by_client = place is not windows
+    details["placement"] = "client" if by_client else "server"
+
     analyser = _Analyser()
     per_frame: list[dict] = []
 
@@ -198,7 +222,7 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
                           "pitch": round(a.face.pitch, 1), "det": round(a.face.det_score, 3)})
 
     # Neutral baseline: the last frames of the align window, when the device said the face was set.
-    baseline = _with_face(analyser, _sample(_in(frames, windows.align))[-3:])
+    baseline = _with_face(analyser, _sample(_in(frames, place.align, by_client))[-3:])
     if not baseline:
         return VerifyResult(False, "NO_FACE", details={**details, "window": "align"})
     neutral = baseline[-1]
@@ -209,9 +233,9 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
 
     # Challenges: read off the server's own landmarks inside each window.
     key_faces: list[Analysed] = [neutral]
-    for i, (ch, window) in enumerate(zip(challenges, windows.challenges)):
+    for i, (ch, window) in enumerate(zip(challenges, place.challenges)):
         # A blink lasts a few frames; look at every frame of its window rather than a sample.
-        seen = _with_face(analyser, _sample(_in(frames, window), 48 if ch == "blink" else MAX_FRAMES_PER_WINDOW))
+        seen = _with_face(analyser, _sample(_in(frames, window, by_client), 48 if ch == "blink" else MAX_FRAMES_PER_WINDOW))
         if not seen:
             return VerifyResult(False, "NO_FACE", details={**details, "window": f"challenge_{i}"})
         peak: Analysed | None = None
@@ -249,8 +273,8 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
     if flash_colors:
         observed, background = [], []
         last_box = key_faces[-1].face.bbox
-        for i, window in enumerate(windows.flashes):
-            fw = _in(frames, window)
+        for i, window in enumerate(place.flashes):
+            fw = _in(frames, window, by_client)
             if not fw:
                 details["flash"] = {"window": f"flash_{i}", "reason": "no frames", "enforced": s.flash_enforce}
                 if s.flash_enforce:
@@ -283,7 +307,7 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
                 return VerifyResult(False, "FLASH_FAIL", details=details)
 
     # Neutral again at the end.
-    ending = _with_face(analyser, _sample(_in(frames, windows.end))[-3:])
+    ending = _with_face(analyser, _sample(_in(frames, place.end, by_client))[-3:])
     if not ending:
         return VerifyResult(False, "NO_FACE", details={**details, "window": "end"})
     note("neutral_end", ending[-1])

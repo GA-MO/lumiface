@@ -39,4 +39,16 @@ void main() {
     final p = out.getPixel(1, 1);
     expect(p.r > 240 && p.g > 240 && p.b > 240, true);
   });
+
+  test('720p nv21 frame is subsampled to 640 on the long side', () {
+    const w = 1280, h = 720;
+    final bytes = Uint8List(w * h * 3 ~/ 2)..fillRange(0, w * h, 200)..fillRange(w * h, w * h * 3 ~/ 2, 128);
+    final jpeg = rawFrameToJpeg(RawFrame(
+      width: w, height: h, format: 'nv21', planes: [bytes], bytesPerRow: [w], bytesPerPixel: [1],
+      rotationDegrees: 270,
+    ));
+    final out = img.decodeJpg(jpeg)!;
+    expect(out.width, 360);
+    expect(out.height, 640);
+  });
 }

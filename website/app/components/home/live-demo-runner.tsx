@@ -12,7 +12,9 @@ function pick<T>(items: T[], n: number): T[] {
   return out;
 }
 
-/** Plays the server's part in the browser: random challenges and colours, then an OK. */
+/** Plays the server's part in the browser: random challenges and colours, then lets the flow end.
+ *  It judges nothing, so a replayed video gets through it; the real server's passive anti-spoof,
+ *  screen-flash and identity checks are what stop that. */
 class StandInClient extends LumifaceClient {
   constructor() {
     super({ baseUrl: "stand-in" });
@@ -56,7 +58,10 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
       if (s.phase === "aligning") onLine({ kind: "step", text: `session  ${s.challengeCount} challenges, 3 flash colours` });
       if (s.phase === "flash") onLine({ kind: "step", text: "flash  3 server colours, one frame each" });
       if (s.phase === "uploading") onLine({ kind: "step", text: "upload  neutral, challenge and flash frames" });
-      if (s.phase === "success") onLine({ kind: "ok", text: `OK  ${s.result?.verificationId} frames verified by the stand-in` });
+      if (s.phase === "success") {
+        onLine({ kind: "step", text: `challenges done  ${s.result?.verificationId} frames streamed to the stand-in` });
+        onLine({ kind: "info", text: "not judged: passive anti-spoof, screen-flash and identity match run on the server" });
+      }
       if (s.phase === "failed") onLine({ kind: "fail", text: `failed  ${s.result?.reasonCode}` });
     }
     if (s.phase === "challenge" && s.challenge && (prev?.phase !== "challenge" || prev.challengeIndex !== s.challengeIndex)) {
@@ -79,8 +84,8 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
       onDone={onClose}
       renderPrompt={(s) => (
         <div className="pointer-events-none flex justify-center px-4 pb-5">
-          <span className={`rounded-full px-4 py-2 text-[15px] font-semibold text-white shadow-lg backdrop-blur ${s.state.phase === "failed" ? "bg-red-600/85" : s.state.phase === "success" ? "bg-emerald-600/85" : "bg-black/60"}`}>
-            {s.message}
+          <span className={`rounded-full px-4 py-2 text-center text-[15px] font-semibold text-white shadow-lg backdrop-blur ${s.state.phase === "failed" ? "bg-red-600/85" : "bg-black/60"}`}>
+            {s.state.phase === "success" ? "Challenges done. The server's checks did not run here." : s.message}
           </span>
         </div>
       )}

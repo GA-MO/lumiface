@@ -208,6 +208,7 @@ export class FaceVerifyController extends FaceFlowController {
   private challengeStartedAt: number | null = null;
   private lastFaceSeenAt: number | null = null;
   private settleUntil: number | null = null;
+  private doneReported = false;
   private flashStartedAt: number | null = null;
   private flashDone = false;
   private detector: ChallengeDetector | null = null;
@@ -335,6 +336,7 @@ export class FaceVerifyController extends FaceFlowController {
     this.detector.feed(s);
     this.challengeStartedAt = s.tsMs;
     this.settleUntil = null;
+    this.doneReported = false;
     this.set({ phase: "challenge", challenge: c, challengeIndex: i, hint: null });
   }
 
@@ -355,7 +357,12 @@ export class FaceVerifyController extends FaceFlowController {
     }
     if (this.settleUntil !== null) {
       if (s.tsMs < this.settleUntil) return;
-      const next = this.state.challengeIndex + 1;
+      const i = this.state.challengeIndex;
+      if (!this.doneReported) {
+        this.doneReported = true;
+        if (this.isServerChallenge(i)) this.stream?.event("challenge_done", s.tsMs, i);
+      }
+      const next = i + 1;
       if (next < this.plan.length) {
         this.startChallenge(next, s);
         return;
@@ -372,11 +379,9 @@ export class FaceVerifyController extends FaceFlowController {
       this.guard(() => this.upload());
       return;
     }
-    if (this.detector!.feed(s)) {
-      const i = this.state.challengeIndex;
-      if (this.isServerChallenge(i)) this.stream?.event("challenge_done", s.tsMs, i);
-      this.settleUntil = s.tsMs + this.config.settleAfterChallengeMs;
-    }
+    // The window closes after the settle, so the frames that show the gesture ending (eyes
+    // open again after a blink, head back) are inside it rather than in the next one.
+    if (this.detector!.feed(s)) this.settleUntil = s.tsMs + this.config.settleAfterChallengeMs;
   }
 
   private startFlash(i: number, tsMs: number) {

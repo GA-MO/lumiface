@@ -204,10 +204,12 @@ class FaceVerifyController extends FaceFlowController {
   bool _disposed = false;
   bool _busy = false;
   int? _lastFrameAt;
+  bool _capturing = false;
   int? _alignedSince;
   int? _challengeStartedAt;
   int? _lastFaceSeenAt;
   int? _settleUntil;
+  bool _doneReported = false;
   int? _flashStartedAt;
   bool _flashDone = false;
   ChallengeDetector? _detector;
@@ -287,12 +289,18 @@ class FaceVerifyController extends FaceFlowController {
   }
 
   /// One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow.
+  /// One encode at a time: a slow device sends fewer frames rather than piling up isolates.
   void _streamFrame(FaceSignal s) {
     final stream = _stream;
-    if (stream == null) return;
+    if (stream == null || _capturing) return;
     if (_lastFrameAt != null && s.tsMs - _lastFrameAt! < 1000 ~/ streamFps) return;
     _lastFrameAt = s.tsMs;
-    capturer.captureJpeg().then((jpeg) => stream.sendFrame(jpeg, s.tsMs)).catchError((_) {});
+    _capturing = true;
+    capturer
+        .captureJpeg()
+        .then((jpeg) => stream.sendFrame(jpeg, s.tsMs))
+        .catchError((_) {})
+        .whenComplete(() => _capturing = false);
   }
 
   Future<void> _onSignal(FaceSignal s) async {
@@ -333,6 +341,7 @@ class FaceVerifyController extends FaceFlowController {
     _detector = ChallengeDetector.forChallenge(c, config)..feed(s);
     _challengeStartedAt = s.tsMs;
     _settleUntil = null;
+    _doneReported = false;
     _set(state.value.copyWith(phase: LivenessPhase.challenge, challenge: c, challengeIndex: i, clearHint: true));
   }
 
@@ -350,7 +359,12 @@ class FaceVerifyController extends FaceFlowController {
     }
     if (_settleUntil != null) {
       if (s.tsMs < _settleUntil!) return;
-      final next = state.value.challengeIndex + 1;
+      final i = state.value.challengeIndex;
+      if (!_doneReported) {
+        _doneReported = true;
+        if (_isServerChallenge(i)) _stream?.event(StreamEventName.challengeDone, s.tsMs, index: i);
+      }
+      final next = i + 1;
       if (next < _plan.length) {
         _startChallenge(next, s);
         return;
@@ -367,11 +381,9 @@ class FaceVerifyController extends FaceFlowController {
       _guard(_upload);
       return;
     }
-    if (_detector!.feed(s)) {
-      final i = state.value.challengeIndex;
-      if (_isServerChallenge(i)) _stream?.event(StreamEventName.challengeDone, s.tsMs, index: i);
-      _settleUntil = s.tsMs + config.settleAfterChallengeMs;
-    }
+    // The window closes after the settle, so the frames that show the gesture ending (eyes
+    // open again after a blink, head back) are inside it rather than in the next one.
+    if (_detector!.feed(s)) _settleUntil = s.tsMs + config.settleAfterChallengeMs;
   }
 
   void _startFlash(int i, int tsMs) {

@@ -120,7 +120,7 @@ describe("FaceVerifyController", () => {
     expect(src.captures).toBe(api.sentFrames.length);
     expect(api.sentFrames.length).toBeGreaterThan(4);
     expect(api.sentFrames[0]).toBeLessThan(ts[0]);
-    expect(api.sentFrames[api.sentFrames.length - 1]).toBeGreaterThan(ts[2]);
+    expect(api.sentFrames[api.sentFrames.length - 1]).toBeGreaterThanOrEqual(ts[2]);
   });
 
   it("screen flash: a flash event per colour after the challenges, then flash_end", async () => {

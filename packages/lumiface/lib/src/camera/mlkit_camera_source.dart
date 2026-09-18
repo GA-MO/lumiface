@@ -210,7 +210,7 @@ class MlKitCameraSource implements CameraFaceSource {
       width: image.width,
       height: image.height,
       format: format,
-      planes: [for (final p in image.planes) Uint8List.fromList(p.bytes)],
+      planes: [for (final p in image.planes) p.bytes],
       bytesPerRow: [for (final p in image.planes) p.bytesPerRow],
       bytesPerPixel: [for (final p in image.planes) p.bytesPerPixel ?? 1],
       rotationDegrees: _rotationDegrees(),

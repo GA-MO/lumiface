@@ -25,27 +25,25 @@ class RawFrame {
   final bool mirror;
 }
 
-/// Converts a raw frame to an upright JPEG. Pure function, safe for `compute`.
-Uint8List rawFrameToJpeg(RawFrame f, {int quality = 90}) {
-  img.Image image;
+/// Converts a raw frame to an upright JPEG whose long side is at most [maxSide]
+/// (the server detects at 640; a 720p frame is subsampled 2x, which is also what
+/// keeps 8 fps affordable on a phone). Pure function, safe for `compute`.
+Uint8List rawFrameToJpeg(RawFrame f, {int quality = 90, int maxSide = 640}) {
+  final long = f.width > f.height ? f.width : f.height;
+  final step = long <= maxSide ? 1 : (long + maxSide - 1) ~/ maxSide;
+  final w = f.width ~/ step, h = f.height ~/ step;
+  final rgb = Uint8List(w * h * 3);
   switch (f.format) {
     case 'bgra8888':
-      image = img.Image.fromBytes(
-        width: f.width,
-        height: f.height,
-        bytes: f.planes[0].buffer,
-        bytesOffset: f.planes[0].offsetInBytes,
-        rowStride: f.bytesPerRow[0],
-        numChannels: 4,
-        order: img.ChannelOrder.bgra,
-      );
+      _bgraToRgb(f, rgb, w, h, step);
     case 'nv21':
-      image = _nv21ToImage(f);
+      _nv21ToRgb(f, rgb, w, h, step);
     case 'yuv420':
-      image = _yuv420ToImage(f);
+      _yuv420ToRgb(f, rgb, w, h, step);
     default:
       throw UnsupportedError('frame format ${f.format}');
   }
+  var image = img.Image.fromBytes(width: w, height: h, bytes: rgb.buffer, numChannels: 3);
   if (f.rotationDegrees % 360 != 0) {
     image = img.copyRotate(image, angle: f.rotationDegrees);
   }
@@ -53,44 +51,58 @@ Uint8List rawFrameToJpeg(RawFrame f, {int quality = 90}) {
   return img.encodeJpg(image, quality: quality);
 }
 
-img.Image _nv21ToImage(RawFrame f) {
-  final w = f.width, h = f.height;
-  final y = f.planes[0];
-  final yStride = f.bytesPerRow[0];
-  final vuOffset = yStride * h;
-  final out = img.Image(width: w, height: h, numChannels: 3);
+void _bgraToRgb(RawFrame f, Uint8List out, int w, int h, int step) {
+  final src = f.planes[0];
+  final stride = f.bytesPerRow[0];
+  var o = 0;
   for (var row = 0; row < h; row++) {
-    final vuRow = vuOffset + (row >> 1) * yStride;
-    for (var col = 0; col < w; col++) {
-      final yy = y[row * yStride + col];
-      final vuIdx = vuRow + (col & ~1);
-      final v = y[vuIdx];
-      final u = y[vuIdx + 1];
-      _setYuv(out, col, row, yy, u, v);
+    var i = row * step * stride;
+    for (var col = 0; col < w; col++, i += 4 * step) {
+      out[o++] = src[i + 2];
+      out[o++] = src[i + 1];
+      out[o++] = src[i];
     }
   }
-  return out;
 }
 
-img.Image _yuv420ToImage(RawFrame f) {
-  final w = f.width, h = f.height;
+void _nv21ToRgb(RawFrame f, Uint8List out, int w, int h, int step) {
+  final y = f.planes[0];
+  final yStride = f.bytesPerRow[0];
+  final vuOffset = yStride * f.height;
+  var o = 0;
+  for (var row = 0; row < h; row++) {
+    final sy = row * step;
+    final yRow = sy * yStride;
+    final vuRow = vuOffset + (sy >> 1) * yStride;
+    for (var col = 0; col < w; col++) {
+      final sx = col * step;
+      final vuIdx = vuRow + (sx & ~1);
+      o = _putYuv(out, o, y[yRow + sx], y[vuIdx + 1], y[vuIdx]);
+    }
+  }
+}
+
+void _yuv420ToRgb(RawFrame f, Uint8List out, int w, int h, int step) {
   final y = f.planes[0], u = f.planes[1], v = f.planes[2];
   final yStride = f.bytesPerRow[0], uvStride = f.bytesPerRow[1];
   final uvPixel = f.bytesPerPixel[1];
-  final out = img.Image(width: w, height: h, numChannels: 3);
+  var o = 0;
   for (var row = 0; row < h; row++) {
+    final sy = row * step;
+    final yRow = sy * yStride;
+    final uvRow = (sy >> 1) * uvStride;
     for (var col = 0; col < w; col++) {
-      final uvIdx = (row >> 1) * uvStride + (col >> 1) * uvPixel;
-      _setYuv(out, col, row, y[row * yStride + col], u[uvIdx], v[uvIdx]);
+      final sx = col * step;
+      final uvIdx = uvRow + (sx >> 1) * uvPixel;
+      o = _putYuv(out, o, y[yRow + sx], u[uvIdx], v[uvIdx]);
     }
   }
-  return out;
 }
 
-void _setYuv(img.Image out, int x, int y, int yy, int u, int v) {
+int _putYuv(Uint8List out, int o, int yy, int u, int v) {
   final c = yy - 16, d = u - 128, e = v - 128;
-  final r = (298 * c + 409 * e + 128) >> 8;
-  final g = (298 * c - 100 * d - 208 * e + 128) >> 8;
-  final b = (298 * c + 516 * d + 128) >> 8;
-  out.setPixelRgb(x, y, r.clamp(0, 255), g.clamp(0, 255), b.clamp(0, 255));
+  out[o] = ((298 * c + 409 * e + 128) >> 8).clamp(0, 255);
+  out[o + 1] = ((298 * c - 100 * d - 208 * e + 128) >> 8).clamp(0, 255);
+  out[o + 2] = ((298 * c + 516 * d + 128) >> 8).clamp(0, 255);
+  return o + 3;
 }

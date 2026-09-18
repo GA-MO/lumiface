@@ -7,7 +7,7 @@ from app.services.challenge import new_challenges
 from app.services.expression import mouth_metrics, smile_ok
 from app.services.face import FaceResult
 from app.services.flash import PALETTE, face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
-from app.services.stream import StreamEvent, blink_observed, build_windows, eye_aspect_ratio
+from app.services.stream import StreamEvent, StreamFrame, blink_observed, build_windows, eye_aspect_ratio, placement_windows
 from app.services.verify import _pose_ok
 
 SAMPLES = Path(__file__).resolve().parents[1] / "data" / "samples"
@@ -213,6 +213,20 @@ def test_windows_reject_a_wrong_or_reordered_sequence():
     assert build_windows(late, 0, ["blink"], []) == "TIMING_ORDER"
     w = build_windows(_events("aligned", "challenge_done", "end"), 0, ["blink"], [])
     assert w.flashes == [] and w.end == (1500, 2000)
+
+
+def test_frames_are_placed_on_the_device_clock_when_it_is_stamped():
+    events = _events("aligned", "challenge_done", "flash", "flash_end", "end")
+    for e in events[:-1]:
+        e.client_ms = e.recv_ms - 300  # every event reaches the server 300 ms after the device raised it
+    frames = [StreamFrame(recv_ms=t + 300, client_ms=t, data=b"") for t in range(0, 2500, 100)]
+    server = build_windows(events, 300, ["blink"], ["FF0000"])
+    place = placement_windows(frames, events, ["blink"], ["FF0000"], server)
+    assert place is not server
+    assert place.align == (0, 700) and place.challenges == [(700, 1200)]
+    assert place.flashes == [(1700 + 120, 2200)] and place.end == (2200, 2400)
+    events[1].client_ms = None
+    assert placement_windows(frames, events, ["blink"], ["FF0000"], server) is server
 
 
 def _face(yaw=0.0, pitch=0.0):

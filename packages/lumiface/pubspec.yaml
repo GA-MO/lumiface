@@ -23,5 +23,10 @@ dev_dependencies:
   mocktail: ^1.0.5
 
 flutter:
+  plugin:
+    platforms:
+      android:
+        package: ai.lumiface.lumiface
+        pluginClass: LumifacePlugin
   assets:
     - assets/lumiface_mediapipe.js

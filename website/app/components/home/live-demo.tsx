@@ -14,7 +14,9 @@ function Placeholder({ onStart }: { onStart: () => void }) {
       <div>
         <p className="font-display text-lg font-semibold text-white">Try the real SDK</p>
         <p className="mx-auto mt-1 max-w-xs text-sm text-white/60">
-          MediaPipe on your camera, the real challenge state machine, a stand-in for the server. Nothing leaves this tab.
+          MediaPipe on your camera and the real challenge state machine, with a stand-in for the server. It judges
+          nothing: the anti-spoof, screen-flash and identity checks that stop a replayed video run only on the real
+          server. Nothing leaves this tab.
         </p>
       </div>
       <button

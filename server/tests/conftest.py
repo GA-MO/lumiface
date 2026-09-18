@@ -63,6 +63,7 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
     """Drive a session's WebSocket the way a device does: hello, frames, events, end.
 
     Every frame gets a distinct tail so it hashes differently (a real camera never repeats bytes);
+    device stamps run 200 ms per frame with each event raised 150 ms before the frame that follows it;
     `order` overrides the event sequence; `pause` sleeps before the end so server-clock tests can
     make the session take real time. Returns (plan, last message).
     """
@@ -79,11 +80,12 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
         def frames(n=per_window):
             nonlocal seq
             for _ in range(n):
-                ws.send_bytes(seq.to_bytes(8, "big") + jpeg + seq.to_bytes(4, "big"))
+                ws.send_bytes((seq * 200).to_bytes(8, "big") + jpeg + seq.to_bytes(4, "big"))
                 seq += 1
 
         def event(name, index=None):
-            ws.send_json({"type": "event", "name": name, **({"index": index} if index is not None else {}), "ts": seq})
+            ws.send_json({"type": "event", "name": name, **({"index": index} if index is not None else {}),
+                          "ts": seq * 200 - 150})
 
         if order is None:
             frames()
