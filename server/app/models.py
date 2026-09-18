@@ -31,6 +31,7 @@ class CheckinSession(SQLModel, table=True):
     project_id: int = Field(foreign_key="project.id", index=True)
     employee_external_id: str | None = None
     challenges: str  # comma separated, in order
+    flash_colors: str = ""  # comma separated hex, in order; empty = no flash step
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
     used: bool = False

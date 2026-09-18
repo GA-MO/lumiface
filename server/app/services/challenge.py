@@ -15,15 +15,19 @@ def new_challenges() -> list[str]:
     pool = [c for c in s.challenges if c in ALL_CHALLENGES]
     n = min(s.challenge_count, len(pool))
     picked: list[str] = []
+    # A rigid mask (latex/silicone) passes both passive gates; it cannot smile.
+    if s.required_challenge in pool and n > 0:
+        picked.append(s.required_challenge)
     while len(picked) < n:
         c = secrets.choice(pool)
         if c not in picked:
             picked.append(c)
+    secrets.SystemRandom().shuffle(picked)
     return picked
 
 
 class FrameMeta(BaseModel):
-    kind: str  # neutral_start | challenge_<i> | neutral_end
+    kind: str  # neutral_start | challenge_<i> | flash_<i> | neutral_end
     ts_ms: int
 
 
@@ -33,15 +37,16 @@ class VerifyMeta(BaseModel):
     client: dict = Field(default_factory=dict)
 
 
-def expected_frame_kinds(challenges: list[str]) -> list[str]:
-    return ["neutral_start", *[f"challenge_{i}" for i in range(len(challenges))], "neutral_end"]
+def expected_frame_kinds(challenges: list[str], flash_colors: list[str] | None = None) -> list[str]:
+    return ["neutral_start", *[f"challenge_{i}" for i in range(len(challenges))],
+            *[f"flash_{i}" for i in range(len(flash_colors or []))], "neutral_end"]
 
 
-def validate_timing(meta: VerifyMeta, challenges: list[str]) -> str | None:
+def validate_timing(meta: VerifyMeta, challenges: list[str], flash_colors: list[str] | None = None) -> str | None:
     """Return a reason code when the timings look scripted/replayed, else None."""
     s = get_settings()
     kinds = [f.kind for f in meta.frames]
-    if kinds != expected_frame_kinds(challenges):
+    if kinds != expected_frame_kinds(challenges, flash_colors):
         return "FRAME_KINDS"
     ts = [f.ts_ms for f in meta.frames]
     if any(b < a for a, b in zip(ts, ts[1:])):

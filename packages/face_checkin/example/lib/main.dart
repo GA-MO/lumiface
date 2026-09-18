@@ -1,6 +1,7 @@
 import 'package:face_checkin/face_checkin.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:screen_brightness/screen_brightness.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(const App());
@@ -107,9 +108,21 @@ class _CheckinTabState extends State<CheckinTab> {
         strings: LivenessStrings.th,
         showDebug: widget.settings.debug,
         onResult: (r) => result = r,
+        onFlashChanged: _setMaxBrightness,
       ),
     ));
     if (mounted) setState(() => _last = result);
+  }
+
+  Future<void> _setMaxBrightness(bool on) async {
+    try {
+      final sb = ScreenBrightness.instance;
+      if (on) {
+        await sb.setApplicationScreenBrightness(1.0);
+      } else {
+        await sb.resetApplicationScreenBrightness();
+      }
+    } catch (_) {}
   }
 
   @override

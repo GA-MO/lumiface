@@ -74,22 +74,37 @@ class SmileDetector extends ChallengeDetector {
   }
 }
 
-/// Yaw beyond turnMinYaw in the requested direction, held for turnHoldMs.
+/// Yaw beyond turnMinYaw in the requested direction, held for turnHoldMs,
+/// and (parallaxMinShift > 0) the nose must have moved relative to the eyes
+/// since the frontal baseline, which a rotated flat picture cannot do.
 /// Positive yaw == user's own left (signal sources normalise this).
 class TurnDetector extends ChallengeDetector {
   TurnDetector(super.config, {required this.left});
 
   final bool left;
   int? _since;
+  double? _baseline;
+
+  bool get _needParallax => config.parallaxMinShift > 0;
 
   @override
   bool feed(FaceSignal s) {
     final yaw = s.yaw;
     if (yaw == null) return false;
+    if (_needParallax && yaw.abs() <= config.neutralMaxYaw) {
+      _baseline = s.noseParallax ?? _baseline;
+    }
     final dirOk = left ? yaw >= config.turnMinYaw : yaw <= -config.turnMinYaw;
     if (!dirOk) {
       _since = null;
       return false;
+    }
+    if (_needParallax) {
+      final p = s.noseParallax;
+      if (_baseline == null || p == null || (p - _baseline!).abs() < config.parallaxMinShift) {
+        _since = null;
+        return false;
+      }
     }
     _since ??= s.tsMs;
     return s.tsMs - _since! >= config.turnHoldMs;

@@ -19,6 +19,7 @@ class FaceResult:
     yaw: float
     roll: float
     embedding: np.ndarray  # L2-normalised, 512-d float32
+    landmarks: np.ndarray | None = None  # 68 x 3 (iBUG order) when the landmark model ran
 
     @property
     def width(self) -> float:
@@ -64,6 +65,8 @@ class FaceEngine:
                     yaw=yaw,
                     roll=roll,
                     embedding=np.asarray(f.normed_embedding, dtype=np.float32),
+                    landmarks=None if getattr(f, "landmark_3d_68", None) is None
+                    else np.asarray(f.landmark_3d_68, dtype=np.float32),
                 )
             )
         out.sort(key=lambda r: r.area, reverse=True)

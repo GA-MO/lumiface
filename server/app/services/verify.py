@@ -8,7 +8,9 @@ import numpy as np
 from ..config import get_settings
 from .antispoof import get_antispoof
 from .challenge import VerifyMeta, validate_timing
+from .expression import mouth_metrics, smile_ok
 from .face import FaceResult, cosine, decode_image, get_face_engine
+from .flash import face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
 
 
 @dataclass
@@ -78,19 +80,51 @@ def _pose_ok(challenge: str, face: FaceResult) -> bool:
     return True
 
 
-def verify(frames: list[bytes], meta: VerifyMeta, challenges: list[str], enrolled: np.ndarray) -> VerifyResult:
+def _consistency(faces: list[FaceResult]) -> tuple[float, bool]:
+    """Same person in every frame. Frontal frames must agree closely; a frame taken
+    mid turn/nod only has to clear the looser pose threshold against each other frame."""
     s = get_settings()
+    frontal = [abs(f.yaw) <= s.pose_frame_max_angle and abs(f.pitch) <= s.pose_frame_max_angle for f in faces]
+    worst, ok = 1.0, True
+    for i, a in enumerate(faces):
+        for j, b in enumerate(faces):
+            if j <= i:
+                continue
+            sim = cosine(a.embedding, b.embedding)
+            worst = min(worst, sim)
+            bar = s.consistency_threshold if frontal[i] and frontal[j] else s.consistency_pose_threshold
+            if sim < bar:
+                ok = False
+    return float(worst), ok
+
+
+def verify(frames: list[bytes], meta: VerifyMeta, challenges: list[str], enrolled: np.ndarray,
+           flash_colors: list[str] | None = None) -> VerifyResult:
+    s = get_settings()
+    flash_colors = flash_colors or []
     if len(frames) != len(meta.frames):
         return VerifyResult(False, "FRAME_COUNT")
-    if reason := validate_timing(meta, challenges):
+    if reason := validate_timing(meta, challenges, flash_colors):
         return VerifyResult(False, reason)
 
     faces: list[FaceResult] = []
     spoof_scores: list[float] = []
     cvpr_scores: list[float] = []
     per_frame: list[dict] = []
+    flash_rgb: list[np.ndarray] = []
+    flash_bg_rgb: list[np.ndarray] = []
     for i, (data, fm) in enumerate(zip(frames, meta.frames)):
         img = decode_image(data)
+        if fm.kind.startswith("flash_"):
+            # Tinted frames only feed the reflection check. Detection may fail
+            # under a strong tint, so fall back to the last frontal box.
+            found = get_face_engine().analyze(img)
+            bbox = found[0].bbox if found else (faces[-1].bbox if faces else None)
+            if bbox is None:
+                return VerifyResult(False, "NO_FACE", details={"frame": fm.kind})
+            flash_rgb.append(face_patch_mean_rgb(img, bbox))
+            flash_bg_rgb.append(surroundings_mean_rgb(img, bbox))
+            continue
         face, err = _single_face(img)
         if err:
             return VerifyResult(False, err, details={"frame": fm.kind})
@@ -118,6 +152,21 @@ def verify(frames: list[bytes], meta: VerifyMeta, challenges: list[str], enrolle
         if not _pose_ok(ch, faces[i + 1]):
             return VerifyResult(False, "POSE_MISMATCH", spoof_score=spoof_mean,
                                 details={**details, "challenge": ch})
+        if ch == "smile":
+            ok, info = smile_ok(mouth_metrics(faces[0].landmarks), mouth_metrics(faces[i + 1].landmarks))
+            details["smile"] = {**info, "enforced": s.smile_enforce}
+            if s.smile_enforce and not ok:
+                return VerifyResult(False, "EXPRESSION_MISMATCH", spoof_score=spoof_mean,
+                                    details={**details, "challenge": ch})
+
+    if flash_colors:
+        fr = score_flash(flash_rgb, flash_colors, flash_bg_rgb)
+        details["flash"] = {"correlation": round(fr.correlation, 3), "response": round(fr.response, 2),
+                            "order_ok": fr.order_ok, "deltas": fr.per_frame,
+                            "background_ratio": None if fr.background_ratio is None else round(fr.background_ratio, 2),
+                            "enforced": s.flash_enforce}
+        if s.flash_enforce and not flash_passes(fr):
+            return VerifyResult(False, "FLASH_FAIL", spoof_score=spoof_mean, details=details)
 
     match_scores = [cosine(f.embedding, enrolled) for f in faces]
     match_min = float(min(match_scores))
@@ -125,9 +174,8 @@ def verify(frames: list[bytes], meta: VerifyMeta, challenges: list[str], enrolle
     if match_min < s.match_threshold:
         return VerifyResult(False, "NO_MATCH", match_score=match_min, spoof_score=spoof_mean, details=details)
 
-    pair = [cosine(a.embedding, b.embedding) for a in faces for b in faces if a is not b]
-    consistency = float(min(pair)) if pair else 1.0
-    if consistency < s.consistency_threshold:
+    consistency, consistent = _consistency(faces)
+    if not consistent:
         return VerifyResult(False, "INCONSISTENT", match_score=match_min, spoof_score=spoof_mean,
                             consistency_score=consistency, details=details)
 

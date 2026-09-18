@@ -13,7 +13,10 @@ docs/plans/face-check-in.md      plan + status (use /go phase N, /handoff, /ship
 
 1. App asks the server for a session; the server picks 2 random challenges (blink / smile / turn / nod).
 2. On device, ML Kit face detection drives the challenges with timing checks (a genuine blink lasts 40–600 ms,
-   the face must stay in frame, each challenge must take ≥ 300 ms) and captures 4 JPEG frames.
+   the face must stay in frame, each challenge must take ≥ 300 ms) and captures 4 JPEG frames. A head turn also
+   needs real nose parallax from ML Kit landmarks (a rotated flat photo has none); if the server picked no turn,
+   the app adds one locally. After the challenges the screen flashes 3 server-chosen colours and one frame per
+   colour is uploaded; the server checks the face reflected that sequence (shadow mode until calibrated).
 3. Server re-checks timing, runs MiniFASNet anti-spoof on every frame, verifies head pose for turn/nod frames,
    matches every frame against the enrolled ArcFace embedding, and requires the same identity across frames.
 

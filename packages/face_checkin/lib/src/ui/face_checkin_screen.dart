@@ -25,6 +25,7 @@ class FaceCheckinScreen extends StatefulWidget {
     this.lensDirection = CameraLensDirection.front,
     this.clientInfo = const {},
     this.showDebug = false,
+    this.onFlashChanged,
   });
 
   final CheckinApi api;
@@ -36,6 +37,11 @@ class FaceCheckinScreen extends StatefulWidget {
   final Map<String, dynamic> clientInfo;
   final bool showDebug;
 
+  /// Called with true when the screen-flash step starts and false when it ends.
+  /// Use it to push screen brightness to maximum so the face reflects more light
+  /// (the package adds no brightness plugin itself).
+  final void Function(bool flashing)? onFlashChanged;
+
   @override
   State<FaceCheckinScreen> createState() => _FaceCheckinScreenState();
 }
@@ -45,6 +51,7 @@ class _FaceCheckinScreenState extends State<FaceCheckinScreen> {
   LivenessController? _controller;
   String? _error;
   FaceSignal? _lastSignal;
+  bool _exposureLocked = false;
 
   @override
   void initState() {
@@ -88,6 +95,15 @@ class _FaceCheckinScreenState extends State<FaceCheckinScreen> {
       _source?.stopStream();
       widget.onResult(st.result!);
     }
+    // Auto-exposure would cancel the tint we are trying to measure.
+    final flashing = st.phase == LivenessPhase.flash;
+    if (flashing != _exposureLocked) {
+      _exposureLocked = flashing;
+      _source?.controller
+          ?.setExposureMode(flashing ? ExposureMode.locked : ExposureMode.auto)
+          .catchError((Object _) {});
+      widget.onFlashChanged?.call(flashing);
+    }
     if (mounted) setState(() {});
   }
 
@@ -126,6 +142,7 @@ class _FaceCheckinScreenState extends State<FaceCheckinScreen> {
             },
             box: widget.showDebug ? _lastSignal?.box : null,
           )),
+          if (st.phase == LivenessPhase.flash && st.flashColor != null) ColoredBox(color: st.flashColor!),
           SafeArea(
             child: Column(
               children: [
@@ -137,7 +154,7 @@ class _FaceCheckinScreenState extends State<FaceCheckinScreen> {
                       value: switch (st.phase) {
                         LivenessPhase.aligning => 0,
                         LivenessPhase.challenge => (st.challengeIndex + 0.5) / (st.challengeCount + 1),
-                        LivenessPhase.uploading => st.challengeCount / (st.challengeCount + 1),
+                        LivenessPhase.flash || LivenessPhase.uploading => st.challengeCount / (st.challengeCount + 1),
                         LivenessPhase.success => 1,
                         _ => null,
                       },
@@ -178,6 +195,7 @@ class _FaceCheckinScreenState extends State<FaceCheckinScreen> {
         LivenessPhase.aligning => s.hints[st.hint ?? AlignHint.noFace] ?? '',
         LivenessPhase.challenge =>
           st.hint != null ? (s.hints[st.hint!] ?? '') : (s.challenges[st.challenge!] ?? st.challenge!.wire),
+        LivenessPhase.flash => s.flashing,
         LivenessPhase.uploading => s.uploading,
         LivenessPhase.success => s.success,
         LivenessPhase.failed => s.reason(st.result?.reasonCode ?? ''),
@@ -256,7 +274,7 @@ class _DebugBar extends StatelessWidget {
         padding: const EdgeInsets.all(8),
         child: Text(
           'faces=${signal.faceCount} w=${_f(signal.box?.width)} eye=${_f(signal.eyeOpen)} '
-          'smile=${_f(signal.smile)} yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} '
+          'smile=${_f(signal.smile)} yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} px=${_f(signal.noseParallax)} '
           'cx=${_f(signal.box?.center.dx)} cy=${_f(signal.box?.center.dy)} '
           'min(w,h)=${signal.box == null ? '-' : math.min(signal.box!.width, signal.box!.height).toStringAsFixed(2)}',
           style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace'),

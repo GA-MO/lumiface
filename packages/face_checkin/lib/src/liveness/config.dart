@@ -18,9 +18,12 @@ class LivenessConfig {
     this.smileHoldMs = 300,
     this.turnMinYaw = 25,
     this.turnHoldMs = 200,
+    this.parallaxMinShift = 0.08,
+    this.parallaxWhenNoTurn = true,
     this.nodMinPitch = 15,
     this.nodHoldMs = 200,
     this.settleAfterChallengeMs = 400,
+    this.settleAfterFlashMs = 800,
   });
 
   final int alignHoldMs;
@@ -40,7 +43,23 @@ class LivenessConfig {
   final int smileHoldMs;
   final double turnMinYaw;
   final int turnHoldMs;
+
+  /// Minimum change of [FaceSignal.noseParallax] between the frontal baseline
+  /// and the turned pose for a turn to count. A flat picture (print or screen)
+  /// rotated in front of the camera keeps the ratio ~constant; a real face at
+  /// 25° yaw shifts it by roughly 0.15. Set to 0 to disable.
+  final double parallaxMinShift;
+
+  /// When the server picked no turn challenge, append a client-only turn so
+  /// every session includes one parallax check. No frame is uploaded for it.
+  final bool parallaxWhenNoTurn;
   final double nodMinPitch;
   final int nodHoldMs;
   final int settleAfterChallengeMs;
+
+  /// Wait after the last flash colour before capturing neutral_end, so the
+  /// screen tint has left the face and auto-exposure has recovered (measured on
+  /// a Galaxy S25+: a frame taken 160-270 ms later was still tinted and scored
+  /// 0.2-0.7 on MiniFASNet).
+  final int settleAfterFlashMs;
 }

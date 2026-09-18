@@ -1,4 +1,4 @@
-import 'dart:ui' show Rect;
+import 'dart:ui' show Color, Offset, Rect;
 
 /// Active-liveness challenges. Names match the server's challenge pool.
 enum Challenge {
@@ -29,9 +29,10 @@ enum Challenge {
 /// One observation of the face in the camera stream. All fields except [tsMs]
 /// and [faceCount] are null when no face is present.
 ///
-/// [box] is normalised to the *upright* image (0..1 on both axes).
-/// Angles are degrees; [yaw] positive = the user's own left (mirror-corrected
-/// by the signal source so the controller never cares about camera facing).
+/// [box], [nose], [leftEye] and [rightEye] are normalised to the *upright*
+/// image (0..1 on both axes). Angles are degrees; [yaw] positive = the user's
+/// own left (mirror-corrected by the signal source so the controller never
+/// cares about camera facing).
 class FaceSignal {
   const FaceSignal({
     required this.tsMs,
@@ -42,6 +43,9 @@ class FaceSignal {
     this.smile,
     this.yaw,
     this.pitch,
+    this.nose,
+    this.leftEye,
+    this.rightEye,
   });
 
   const FaceSignal.none(this.tsMs)
@@ -51,7 +55,10 @@ class FaceSignal {
         eyeOpenRight = null,
         smile = null,
         yaw = null,
-        pitch = null;
+        pitch = null,
+        nose = null,
+        leftEye = null,
+        rightEye = null;
 
   final int tsMs;
   final int faceCount;
@@ -61,12 +68,25 @@ class FaceSignal {
   final double? smile;
   final double? yaw;
   final double? pitch;
+  final Offset? nose;
+  final Offset? leftEye;
+  final Offset? rightEye;
 
   bool get present => faceCount == 1 && box != null;
 
   double? get eyeOpen => (eyeOpenLeft == null || eyeOpenRight == null)
       ? null
       : (eyeOpenLeft! + eyeOpenRight!) / 2;
+
+  /// Horizontal offset of the nose base from the eye midpoint, in units of
+  /// inter-eye distance. Stays constant when a flat picture is rotated; shifts
+  /// with yaw on a real (3D) face because the nose sits in front of the eyes.
+  double? get noseParallax {
+    if (nose == null || leftEye == null || rightEye == null) return null;
+    final dist = (rightEye!.dx - leftEye!.dx).abs();
+    if (dist < 1e-4) return null;
+    return (nose!.dx - (leftEye!.dx + rightEye!.dx) / 2) / dist;
+  }
 }
 
 class CheckinSession {
@@ -75,6 +95,8 @@ class CheckinSession {
     required this.challenges,
     required this.frameKinds,
     required this.ttlSeconds,
+    this.flashColors = const [],
+    this.flashHoldMs = 450,
   });
 
   final String id;
@@ -82,11 +104,21 @@ class CheckinSession {
   final List<String> frameKinds;
   final int ttlSeconds;
 
+  /// Screen-flash sequence: the screen is filled with each colour in turn and one
+  /// frame is uploaded per colour (`flash_<i>`). Empty when the server disabled it.
+  final List<Color> flashColors;
+  final int flashHoldMs;
+
   factory CheckinSession.fromJson(Map<String, dynamic> j) => CheckinSession(
         id: j['session_id'] as String,
         challenges: (j['challenges'] as List).map((e) => Challenge.fromWire(e as String)).toList(),
         frameKinds: (j['frame_kinds'] as List).cast<String>(),
         ttlSeconds: j['ttl_seconds'] as int,
+        flashColors: [
+          for (final h in (j['flash_colors'] as List?)?.cast<String>() ?? const <String>[])
+            Color(0xFF000000 | int.parse(h, radix: 16)),
+        ],
+        flashHoldMs: (j['flash_hold_ms'] as int?) ?? 450,
       );
 }
 

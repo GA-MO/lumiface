@@ -31,6 +31,7 @@ class MlKitCameraSource implements CameraFaceSource {
   late final FaceDetector _detector = FaceDetector(
     options: FaceDetectorOptions(
       enableClassification: true,
+      enableLandmarks: true,
       enableTracking: true,
       performanceMode: FaceDetectorMode.fast,
       minFaceSize: 0.15,
@@ -155,6 +156,10 @@ class MlKitCameraSource implements CameraFaceSource {
     // right. Front-camera frames are un-mirrored, so that equals the user's
     // own left; back camera is the opposite. FaceSignal wants +yaw == user's left.
     final yawSign = _camera!.lensDirection == CameraLensDirection.front ? 1.0 : -1.0;
+    Offset? mark(FaceLandmarkType t) {
+      final p = f.landmarks[t]?.position;
+      return p == null ? null : Offset(p.x / normW, p.y / normH);
+    }
     _signals.add(FaceSignal(
       tsMs: ts,
       faceCount: faces.length,
@@ -164,6 +169,9 @@ class MlKitCameraSource implements CameraFaceSource {
       smile: f.smilingProbability,
       yaw: f.headEulerAngleY == null ? null : f.headEulerAngleY! * yawSign,
       pitch: f.headEulerAngleX,
+      nose: mark(FaceLandmarkType.noseBase),
+      leftEye: mark(FaceLandmarkType.leftEye),
+      rightEye: mark(FaceLandmarkType.rightEye),
     ));
   }
 

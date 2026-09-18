@@ -13,6 +13,7 @@ from ..db import get_db
 from ..deps import current_project
 from ..models import Checkin, CheckinSession, Employee, Project, utcnow
 from ..services.challenge import VerifyMeta, expected_frame_kinds, new_challenges
+from ..services.flash import new_flash_colors
 from ..services.verify import verify
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -25,9 +26,11 @@ class SessionCreate(BaseModel):
 class SessionOut(BaseModel):
     session_id: str
     challenges: list[str]
+    flash_colors: list[str]
     frame_kinds: list[str]
     expires_at: str
     ttl_seconds: int
+    flash_hold_ms: int
 
 
 class Scores(BaseModel):
@@ -49,17 +52,21 @@ def create_session(body: SessionCreate | None = None, project: Project = Depends
                    db: Session = Depends(get_db)):
     s = get_settings()
     challenges = new_challenges()
+    flash_colors = new_flash_colors()
     sess = CheckinSession(
         id=uuid.uuid4().hex,
         project_id=project.id,
         employee_external_id=body.employee_id if body else None,
         challenges=",".join(challenges),
+        flash_colors=",".join(flash_colors),
         expires_at=utcnow() + timedelta(seconds=s.session_ttl_seconds),
     )
     db.add(sess)
     db.commit()
-    return SessionOut(session_id=sess.id, challenges=challenges, frame_kinds=expected_frame_kinds(challenges),
-                      expires_at=sess.expires_at.isoformat() + "Z", ttl_seconds=s.session_ttl_seconds)
+    return SessionOut(session_id=sess.id, challenges=challenges, flash_colors=flash_colors,
+                      frame_kinds=expected_frame_kinds(challenges, flash_colors),
+                      expires_at=sess.expires_at.isoformat() + "Z", ttl_seconds=s.session_ttl_seconds,
+                      flash_hold_ms=s.flash_hold_ms)
 
 
 def _store_frames(session_id: str, frames: list[bytes], kinds: list[str]) -> None:
@@ -103,8 +110,9 @@ async def verify_session(
 
     data = [await f.read() for f in frames]
     challenges = sess.challenges.split(",")
+    flash_colors = [c for c in sess.flash_colors.split(",") if c]
     enrolled = np.frombuffer(emp.embedding, dtype=np.float32)
-    result = verify(data, vmeta, challenges, enrolled)
+    result = verify(data, vmeta, challenges, enrolled, flash_colors)
 
     if s.store_frames and (s.debug or not result.ok):
         _store_frames(session_id, data, [m.kind for m in vmeta.frames][: len(data)])
@@ -113,7 +121,8 @@ async def verify_session(
                   session_id=session_id, ok=result.ok, reason_code=result.reason_code,
                   match_score=result.match_score, spoof_score=result.spoof_score,
                   consistency_score=result.consistency_score,
-                  details=json.dumps({**result.details, "challenges": challenges, "client": vmeta.client,
+                  details=json.dumps({**result.details, "challenges": challenges, "flash_colors": flash_colors,
+                                      "client": vmeta.client,
                                       "challenge_durations_ms": vmeta.challenge_durations_ms,
                                       "frame_ts_ms": [m.ts_ms for m in vmeta.frames]}))
     db.add(row)

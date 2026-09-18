@@ -8,6 +8,8 @@ os.environ.update({
     "MIN_FACE_SIZE": "60",
     "ENROLL_MAX_PITCH": "35",
     "CHALLENGE_POOL": "blink,smile",
+    "SMILE_ENFORCE": "0",  # API tests upload the same still for every frame; see test_smile_enforced_rejects_static_face
+    "FLASH_ENFORCE": "0",  # same reason; see test_flash_enforced_rejects_unlit_frames
     "DEBUG": "1",
     "WEIGHTS_DIR": str(Path(__file__).resolve().parents[1] / "weights"),
 })
@@ -53,8 +55,9 @@ def person_crops():
     return crops
 
 
-def make_meta(challenges, start=0, step=800, challenge_ms=400):
-    kinds = ["neutral_start", *[f"challenge_{i}" for i in range(len(challenges))], "neutral_end"]
+def make_meta(challenges, start=0, step=800, challenge_ms=400, flash_colors=()):
+    kinds = ["neutral_start", *[f"challenge_{i}" for i in range(len(challenges))],
+             *[f"flash_{i}" for i in range(len(flash_colors))], "neutral_end"]
     return {
         "frames": [{"kind": k, "ts_ms": start + i * step} for i, k in enumerate(kinds)],
         "challenge_durations_ms": [challenge_ms] * len(challenges),

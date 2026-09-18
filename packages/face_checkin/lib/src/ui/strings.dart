@@ -12,11 +12,13 @@ class LivenessStrings {
     required this.reasons,
     required this.retry,
     required this.done,
+    this.flashing = 'Hold still…',
   });
 
   final String starting;
   final String uploading;
   final String success;
+  final String flashing;
   final Map<AlignHint, String> hints;
   final Map<Challenge, String> challenges;
   final Map<String, String> reasons;
@@ -58,6 +60,8 @@ class LivenessStrings {
       'MULTIPLE_FACES': 'More than one face detected',
       'FACE_TOO_SMALL': 'Move closer to the camera',
       'TIMING_TOO_FAST': 'Please try again more slowly',
+      'FLASH_FAIL': 'Could not confirm a live person (screen reflection)',
+      'EXPRESSION_MISMATCH': 'Smile not detected, please try again',
       'CANCELLED': 'Cancelled',
     },
     retry: 'Try again',
@@ -97,9 +101,12 @@ class LivenessStrings {
       'MULTIPLE_FACES': 'พบใบหน้ามากกว่าหนึ่งคน',
       'FACE_TOO_SMALL': 'ขยับเข้าใกล้กล้องอีก',
       'TIMING_TOO_FAST': 'กรุณาทำช้าลงแล้วลองใหม่',
+      'FLASH_FAIL': 'ไม่สามารถยืนยันบุคคลจริงได้ (แสงสะท้อนจากหน้าจอ)',
+      'EXPRESSION_MISMATCH': 'ตรวจไม่พบรอยยิ้ม กรุณาลองใหม่',
       'CANCELLED': 'ยกเลิก',
     },
     retry: 'ลองใหม่',
+    flashing: 'มองจอ อยู่นิ่งๆ…',
     done: 'เสร็จสิ้น',
   );
 }
