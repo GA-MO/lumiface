@@ -1,13 +1,13 @@
 ---
-title: Facegate documentation
+title: Lumiface documentation
 description: Self-hosted face verification with active liveness, a policy per project, and camera SDKs for Flutter and React.
 ---
 
-Facegate has three parts:
+Lumiface has three parts:
 
 - **Server** (`server/`): FastAPI, InsightFace ArcFace for matching, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof, a screen-flash reflection check and a smile re-check. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy.
-- **Flutter package** (`packages/facegate`): `FaceVerifyView` plus the headless `FaceVerifyController`. ML Kit on iOS and Android, MediaPipe on the web.
-- **React SDK** (`packages/facegate-react`): `FacegateView`, `useFacegate` and the same headless controller, MediaPipe in the browser.
+- **Flutter package** (`packages/lumiface`): `FaceVerifyView` plus the headless `FaceVerifyController`. ML Kit on iOS and Android, MediaPipe on the web.
+- **React SDK** (`packages/lumiface-react`): `LumifaceView`, `useLumiface` and the same headless controller, MediaPipe in the browser.
 
 Pick a door:
 

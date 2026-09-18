@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    database_url: str = "sqlite:///./data/facegate.db"
+    database_url: str = "sqlite:///./data/lumiface.db"
     bootstrap_project_name: str = "default"
     bootstrap_api_key: str | None = None
     bootstrap_preset: str = "balanced"

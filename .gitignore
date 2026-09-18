@@ -22,7 +22,7 @@ node_modules/
 website/.react-router/
 website/.source/
 pages-site/
-packages/facegate-react/demo/dist/
+packages/lumiface-react/demo/dist/
 # misc
 .claude/ui-shots/
 .DS_Store

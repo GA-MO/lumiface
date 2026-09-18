@@ -2,7 +2,7 @@ import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
 import { GITHUB_URL } from "./site";
 
 function Wordmark() {
-  return <span className="text-lg font-semibold tracking-tight text-brand dark:text-teal-300">Facegate</span>;
+  return <span className="text-lg font-semibold tracking-tight text-brand dark:text-teal-300">Lumiface</span>;
 }
 
 export function baseOptions(): BaseLayoutProps {

@@ -27,7 +27,7 @@ function ContentPage({ path, slug }: { path: string; slug: string }) {
   const markdownPath = slug ? `${DOCS_BASE_URL}/${slug}.md` : undefined;
   return (
     <DocsPage toc={page.toc} tableOfContent={{ style: "clerk" }} breadcrumb={{ includeRoot: { url: DOCS_BASE_URL }, includePage: true }}>
-      <title>{`${page.title} | Facegate`}</title>
+      <title>{`${page.title} | Lumiface`}</title>
       <meta name="description" content={page.description} />
       {markdownPath && <link rel="alternate" type="text/markdown" href={markdownPath} />}
       <DocsTitle>{page.title}</DocsTitle>

@@ -11,6 +11,6 @@ async function pageBlock(summary: DocsPageSummary) {
 export async function loader() {
   const summaries = docsPageGroups().flatMap((g) => g.pages);
   const blocks = await Promise.all(summaries.map(pageBlock));
-  const intro = ["# Facegate — full documentation", "", SITE_SUMMARY, "", `Index: ${absoluteUrl("/llms.txt")}.`].join("\n");
+  const intro = ["# Lumiface — full documentation", "", SITE_SUMMARY, "", `Index: ${absoluteUrl("/llms.txt")}.`].join("\n");
   return new Response(`${[intro, ...blocks].join("\n\n---\n\n")}\n`, { headers: TEXT_HEADERS });
 }

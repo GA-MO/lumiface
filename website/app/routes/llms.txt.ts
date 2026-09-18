@@ -14,6 +14,6 @@ function groupBlock(group: DocsPageGroup) {
 }
 
 export function loader() {
-  const intro = ["# Facegate", "", SITE_SUMMARY, "", `Every page links to its Markdown source; the HTML version drops the \`.md\` suffix. Whole documentation in one file: ${absoluteUrl("/llms-full.txt")}`].join("\n");
+  const intro = ["# Lumiface", "", SITE_SUMMARY, "", `Every page links to its Markdown source; the HTML version drops the \`.md\` suffix. Whole documentation in one file: ${absoluteUrl("/llms-full.txt")}`].join("\n");
   return new Response(`${[intro, ...docsPageGroups().map(groupBlock)].join("\n\n")}\n`, { headers: TEXT_HEADERS });
 }

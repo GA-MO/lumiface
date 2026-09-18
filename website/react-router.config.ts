@@ -5,8 +5,8 @@ import { glob } from "node:fs/promises";
 const DOCS_BASE_URL = "/docs";
 const DOCS_CONTENT_DIR = "content/docs";
 const AGENT_SURFACE_PATHS = ["/api/search", "/llms.txt", "/llms-full.txt", "/sitemap.xml", "/robots.txt", "/404.html"];
-const STATIC_BUILD = process.env.VITE_FACEGATE_STATIC === "1";
-const BASENAME = process.env.VITE_FACEGATE_BASE_PATH ?? "/";
+const STATIC_BUILD = process.env.VITE_LUMIFACE_STATIC === "1";
+const BASENAME = process.env.VITE_LUMIFACE_BASE_PATH ?? "/";
 
 const getDocsUrl = createGetUrl(DOCS_BASE_URL);
 

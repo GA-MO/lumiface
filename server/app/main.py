@@ -14,7 +14,7 @@ from .routers import debug, policy, projects, sessions, subjects, verifications
 from .services.antispoof import get_antispoof
 from .services.face import get_face_engine
 
-log = logging.getLogger("facegate")
+log = logging.getLogger("lumiface")
 
 
 def bootstrap_project() -> None:
@@ -40,7 +40,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     s = get_settings()
-    app = FastAPI(title="Facegate Server", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Lumiface Server", version="0.2.0", lifespan=lifespan)
     app.add_middleware(PolicyScopeMiddleware)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                        allow_headers=["*"], expose_headers=["*"])

@@ -171,7 +171,7 @@ class _RequestPolicy:
         self.policy: Policy | None = None
 
 
-_current: ContextVar[_RequestPolicy | None] = ContextVar("facegate_policy", default=None)
+_current: ContextVar[_RequestPolicy | None] = ContextVar("lumiface_policy", default=None)
 
 
 def get_policy() -> Policy:

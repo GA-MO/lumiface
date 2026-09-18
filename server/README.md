@@ -1,6 +1,6 @@
-# Facegate Server
+# Lumiface Server
 
-Self-hosted face verification (1:1) + passive liveness for the `facegate` Flutter package and the `@facegate/react` SDK. Multi-tenant: every project has an API key and a policy (preset + overrides) changed through `PUT /v1/policy`; the session carries the client tunables. Full docs in `website/content/docs/server`.
+Self-hosted face verification (1:1) + passive liveness for the `lumiface` Flutter package and the `@lumiface/react` SDK. Multi-tenant: every project has an API key and a policy (preset + overrides) changed through `PUT /v1/policy`; the session carries the client tunables. Full docs in `website/content/docs/server`.
 
 - Detection / pose / embedding: InsightFace **buffalo_l** (ArcFace r50). *Non-commercial licence on the weights.*
 - Passive anti-spoof, two gates: **MiniFASNet V2 + V1SE** ensemble (Apache-2.0, ONNX committed in `weights/`) and the

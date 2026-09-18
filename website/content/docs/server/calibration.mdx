@@ -3,7 +3,7 @@ title: Calibration
 description: Measure your own people and your own attack material before trusting a preset.
 ---
 
-Thresholds were calibrated on one team, a Galaxy S25+, an Android emulator with a Mac webcam, the AxonData sample set and a MacBook in Chrome. Your cameras, lighting and screens differ. Two scripts and one flag help.
+Thresholds were calibrated on one team, a Galaxy S25+, an Android emulator with a Mac webcam, the AxonData sample set and a MacBook in Chrome. Your cameras, lighting and screens differ. Three scripts and one flag help.
 
 ## scripts/calibrate.py
 
@@ -22,6 +22,35 @@ Prints the distribution of match cosine (genuine vs cross-person) and of the Min
 ## scripts/eval_videos.py
 
 Runs whole recorded sessions (folders of frames per attempt) through the verify pipeline and reports the reason codes. Used with the AxonData set (genuine, replay, cut-out, paper mask, latex, silicone).
+
+## scripts/eval_lfw.py
+
+Scores the matcher alone on the public [LFW](http://vis-www.cs.umass.edu/lfw/) protocol: 6,000 pairs (3,000 same person, 3,000 different) over 7,701 photos, embedded with the same `buffalo_l` engine the server uses. First run downloads 233 MB into `data/lfw/` and embeds every photo once (about 30 minutes on a laptop CPU, cached afterwards).
+
+```bash
+cd server && uv run python scripts/eval_lfw.py --at 0.30 0.35
+```
+
+Results on 2026-09-18:
+
+| | |
+|---|---|
+| 10-fold accuracy | **99.52% ± 0.34** (insightface reports 99.83 with its own crops) |
+| EER | 0.83% at cosine 0.147 |
+| TAR at FAR 0.1% | 99.07% (threshold 0.212) |
+| Genuine cosine | p1 0.28 · p5 0.48 · median 0.68 · p95 0.82 |
+| Impostor cosine | median 0.00 · p99 0.14 · **max 0.23** |
+| No face at 250 px | 27 photos, 43 pairs counted as rejects |
+
+| `match_threshold` | FAR | FRR (single frame) |
+|---|---|---|
+| 0.30 | 0.00% | 1.07% |
+| 0.35 | 0.00% | 1.27% |
+| 0.40 `relaxed` | 0.00% | 1.93% |
+| 0.45 `balanced` | 0.00% | 3.20% |
+| 0.55 `strict` | 0.00% | 10.67% |
+
+How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over seven frames**, so the per-session FRR is higher than the single-frame column (turned and nodding frames score lower). Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
 
 ## STORE_FRAMES and DEBUG
 

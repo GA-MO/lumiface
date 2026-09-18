@@ -1,7 +1,7 @@
 [project]
-name = "facegate-server"
+name = "lumiface-server"
 version = "0.2.0"
-description = "Self-hosted face verification + liveness server for Facegate"
+description = "Self-hosted face verification + liveness server for Lumiface"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi>=0.115",

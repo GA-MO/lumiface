@@ -1,5 +1,5 @@
 {
-  "name": "facegate-website",
+  "name": "lumiface-website",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "start": "bun --bun react-router-serve ./build/server/index.js",
     "typecheck": "react-router typegen && tsc --noEmit",
     "generate:policy": "bun scripts/generate-policy-reference.ts",
-    "build:static": "bun scripts/generate-policy-reference.ts && VITE_FACEGATE_STATIC=1 react-router build && bun scripts/assemble-static.ts"
+    "build:static": "bun scripts/generate-policy-reference.ts && VITE_LUMIFACE_STATIC=1 react-router build && bun scripts/assemble-static.ts"
   },
   "dependencies": {
     "@react-router/node": "8.3.1",
@@ -22,7 +22,7 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "8.3.1",
-    "@facegate/react": "workspace:*",
+    "@lumiface/react": "workspace:*",
     "@mediapipe/tasks-vision": "^1.0.1"
   },
   "devDependencies": {

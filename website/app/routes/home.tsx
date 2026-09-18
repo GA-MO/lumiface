@@ -38,8 +38,8 @@ uv run uvicorn app.main:app --port 8000
 curl -X POST localhost:8000/v1/subjects -H "X-API-Key: change-me" \\
   -F external_id=E001 -F photo=@me.jpg
 
-flutter run -d chrome      # packages/facegate/example
-bun run dev:react          # packages/facegate-react/demo`;
+flutter run -d chrome      # packages/lumiface/example
+bun run dev:react          # packages/lumiface-react/demo`;
 
 export async function loader() {
   const [terminal, snippets, presetEntries] = await Promise.all([
@@ -52,7 +52,7 @@ export async function loader() {
 
 export function meta() {
   return [
-    { title: "Facegate" },
+    { title: "Lumiface" },
     { name: "description", content: "Self-hosted face verification with active liveness for Flutter, React and any HTTP client." },
   ];
 }
@@ -92,7 +92,7 @@ const POLICY_POINTS: readonly [LucideIcon, string][] = [
 
 const PLATFORMS: readonly [LucideIcon, string, string, string][] = [
   [Smartphone, "Flutter", "iOS and Android with ML Kit, the web with MediaPipe, from one package.", "/docs/flutter"],
-  [Code2, "React", "FacegateView and useFacegate on React 18 and 19, MediaPipe in the browser.", "/docs/react"],
+  [Code2, "React", "LumifaceView and useLumiface on React 18 and 19, MediaPipe in the browser.", "/docs/react"],
   [Globe, "HTTP", "Any client that can open a camera talks to the same five endpoints.", "/docs/api"],
 ];
 
@@ -157,7 +157,7 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
                 Is a real person there, and is it them?
               </h1>
               <p className="mt-6 max-w-lg text-lg leading-relaxed text-fd-muted-foreground">
-                Facegate answers both from your own server. Random challenges and a screen flash on the device, two anti-spoof
+                Lumiface answers both from your own server. Random challenges and a screen flash on the device, two anti-spoof
                 models and face matching behind an API key, and a policy per project that you tune without shipping an update.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
@@ -319,7 +319,7 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
                 <div>
                   <h2 className="font-display text-2xl font-bold tracking-tight">What it does not stop</h2>
                   <p className="mt-3 max-w-3xl leading-relaxed text-fd-muted-foreground">
-                    Facegate is not certified liveness. It stops prints, screen replays, cut-outs and paper masks; it stops latex
+                    Lumiface is not certified liveness. It stops prints, screen replays, cut-outs and paper masks; it stops latex
                     and silicone masks only through the smile challenge; it does not stop a real-time deepfake injected as a
                     virtual camera. The measured numbers behind every threshold are on the security page.
                   </p>

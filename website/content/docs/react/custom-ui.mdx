@@ -1,14 +1,14 @@
 ---
 title: Custom UI (React)
-description: Render props for single parts, a full custom overlay, or your own markup around useFacegate.
+description: Render props for single parts, a full custom overlay, or your own markup around useLumiface.
 ---
 
 ## Render props
 
-Every render prop receives a `FacegateScope`: the hook's handle (`state`, `signal`, `flow`, `controller`, `source`, `cancel`) plus `strings`, `theme`, `message`, `result`, `isDone` and `displayBox` (the face box flipped for the mirrored preview).
+Every render prop receives a `LumifaceScope`: the hook's handle (`state`, `signal`, `flow`, `controller`, `source`, `cancel`) plus `strings`, `theme`, `message`, `result`, `isDone` and `displayBox` (the face box flipped for the mirrored preview).
 
 ```tsx
-<FacegateView
+<LumifaceView
   client={client}
   subjectId={id}
   renderPrompt={(s) => <h2 className="prompt">{s.message}</h2>}
@@ -21,7 +21,7 @@ Every render prop receives a `FacegateScope`: the hook's handle (`state`, `signa
 ## Whole overlay
 
 ```tsx
-<FacegateView
+<LumifaceView
   client={client}
   subjectId={id}
   renderOverlay={(s) => (
@@ -39,7 +39,7 @@ Every render prop receives a `FacegateScope`: the hook's handle (`state`, `signa
 ## Your own markup
 
 ```tsx
-const fg = useFacegate({ client, purpose: "kiosk", onResult });
+const fg = useLumiface({ client, purpose: "kiosk", onResult });
 const scope = { message: messageFor(TH, fg.state, fg.flow), progress: progressOf(fg.state) };
 ```
 

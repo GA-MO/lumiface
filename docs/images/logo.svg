@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 72" width="340" height="72" role="img" aria-label="Lumiface">
+  <rect width="64" height="64" x="4" y="4" rx="14" fill="#0d9488"/>
+  <ellipse cx="36" cy="34" rx="13" ry="16" fill="none" stroke="#fff" stroke-width="4"/>
+  <path d="M18 58c4-8 10-11 18-11s14 3 18 11" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="52" cy="20" r="6" fill="#2dd4bf"/>
+  <text x="84" y="49" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="40" font-weight="700" letter-spacing="-1.5" fill="#0f172a">Lumi<tspan fill="#0d9488">face</tspan></text>
+</svg>

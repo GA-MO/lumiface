@@ -1,5 +1,5 @@
 import { useMemo, useRef } from "react";
-import { FacegateClient, FacegateView, type CapturedFrame, type Challenge, type FaceSession, type LivenessState, type VerifyResult } from "@facegate/react";
+import { LumifaceClient, LumifaceView, type CapturedFrame, type Challenge, type FaceSession, type LivenessState, type VerifyResult } from "@lumiface/react";
 import type { DemoLine } from "./live-demo";
 
 const POOL: Challenge[] = ["blink", "smile", "turn_left", "turn_right", "nod"];
@@ -13,7 +13,7 @@ function pick<T>(items: T[], n: number): T[] {
 }
 
 /** Plays the server's part in the browser: random challenges and colours, then an OK. */
-class StandInClient extends FacegateClient {
+class StandInClient extends LumifaceClient {
   constructor() {
     super({ baseUrl: "stand-in", apiKey: "none" });
   }
@@ -66,7 +66,7 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
   };
 
   return (
-    <FacegateView
+    <LumifaceView
       client={client}
       purpose="demo"
       theme={landscape ? { guideWidthFraction: 0.34, guideCenterY: 0.48 } : {}}

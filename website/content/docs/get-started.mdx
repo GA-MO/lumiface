@@ -46,7 +46,7 @@ curl -X PUT localhost:8000/v1/policy -H "X-API-Key: change-me" \
 <Tabs items={["Flutter", "React", "curl"]}>
 <Tab value="Flutter">
 ```dart
-final client = FacegateClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');
+final client = LumifaceClient(baseUrl: 'http://<lan-ip>:8000', apiKey: 'change-me');
 
 FaceVerifyView(
   client: client,
@@ -57,16 +57,16 @@ FaceVerifyView(
 );
 ```
 
-The example app (`packages/facegate/example`) has every use case on its first tab and a preset picker on the Settings tab. On a phone, use the Mac's LAN IP; on the Android emulator, `http://10.0.2.2:8000`.
+The example app (`packages/lumiface/example`) has every use case on its first tab and a preset picker on the Settings tab. On a phone, use the Mac's LAN IP; on the Android emulator, `http://10.0.2.2:8000`.
 </Tab>
 <Tab value="React">
 ```tsx
-import { FacegateClient, FacegateView } from "@facegate/react";
+import { LumifaceClient, LumifaceView } from "@lumiface/react";
 
-const client = new FacegateClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" });
+const client = new LumifaceClient({ baseUrl: "http://localhost:8000", apiKey: "change-me" });
 
 <div style={{ height: "70vh" }}>
-  <FacegateView client={client} subjectId="E001" purpose="login" onResult={(r) => console.log(r)} />
+  <LumifaceView client={client} subjectId="E001" purpose="login" onResult={(r) => console.log(r)} />
 </div>
 ```
 

@@ -56,7 +56,7 @@ export function LiveDemo() {
           <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
           <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
-          <span className="ml-3 font-mono text-[11px] text-white/50">facegate · live demo · stand-in server</span>
+          <span className="ml-3 font-mono text-[11px] text-white/50">lumiface · live demo · stand-in server</span>
         </div>
         <div className="aspect-[9/16] w-full overflow-hidden rounded-[1.8rem] bg-[#0f141c] sm:aspect-[4/3] sm:rounded-none">
           {mounted && running ? (

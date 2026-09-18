@@ -1,8 +1,8 @@
-import { DEFAULT_THEME, FaceGuide, type FacegateTheme } from "@facegate/react";
+import { DEFAULT_THEME, FaceGuide, type LumifaceTheme } from "@lumiface/react";
 import { Code } from "@/components/code";
 import type { HastNode } from "@/lib/code.server";
 
-const BRAND: FacegateTheme = {
+const BRAND: LumifaceTheme = {
   ...DEFAULT_THEME,
   guideShape: "roundedRect",
   guide: "#a7f3d0",
@@ -101,19 +101,19 @@ function CustomOverlay() {
 }
 
 export const OVERLAY_SNIPPETS = [
-  `<FacegateView
+  `<LumifaceView
   client={client}
   subjectId={id}
   strings={TH}
 />`,
-  `<FacegateView
+  `<LumifaceView
   theme={{
     guideShape: "roundedRect",
     guideActive: "#2dd4bf",
     guideSuccess: "#2dd4bf",
   }}
 />`,
-  `<FacegateView
+  `<LumifaceView
   renderOverlay={(s) => (
     <MyOverlay
       box={s.displayBox}

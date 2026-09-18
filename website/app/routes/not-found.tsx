@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { baseOptions } from "@/lib/layout.shared";
 
 export function meta() {
-  return [{ title: "Not found | Facegate" }];
+  return [{ title: "Not found | Lumiface" }];
 }
 
 export default function NotFoundRoute() {

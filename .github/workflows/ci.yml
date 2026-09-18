@@ -21,7 +21,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - run: cd packages/facegate && flutter pub get && flutter analyze && flutter test
+      - run: cd packages/lumiface && flutter pub get && flutter analyze && flutter test
   react:
     runs-on: ubuntu-latest
     steps:

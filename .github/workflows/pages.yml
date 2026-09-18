@@ -33,8 +33,8 @@ jobs:
       - run: bun run typecheck
       - run: bun run build:pages
         env:
-          FACEGATE_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-          VITE_FACEGATE_BASE_PATH: /${{ github.event.repository.name }}/
+          LUMIFACE_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+          VITE_LUMIFACE_BASE_PATH: /${{ github.event.repository.name }}/
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

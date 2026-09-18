@@ -51,7 +51,7 @@ Unknown fields and wrong types answer `422` with `reason_code: POLICY_INVALID` a
 
 ## How the app follows the policy
 
-Every session response carries `client_config`, the `client.*` fields. `FaceVerifyView` (Flutter) and `FacegateView` (React) apply it unless you pass an explicit `config`, so raising `client.challenge_timeout_ms` for a project takes effect on the next check-in without shipping an app update.
+Every session response carries `client_config`, the `client.*` fields. `FaceVerifyView` (Flutter) and `LumifaceView` (React) apply it unless you pass an explicit `config`, so raising `client.challenge_timeout_ms` for a project takes effect on the next check-in without shipping an app update.
 
 ## Which knobs matter
 

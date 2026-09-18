@@ -1,6 +1,6 @@
 ---
 title: React SDK
-description: FacegateView and useFacegate for React 18 and 19, MediaPipe in the browser, the same server and policy as Flutter.
+description: LumifaceView and useLumiface for React 18 and 19, MediaPipe in the browser, the same server and policy as Flutter.
 ---
 
 ## Install
@@ -8,25 +8,25 @@ description: FacegateView and useFacegate for React 18 and 19, MediaPipe in the 
 ```json
 {
   "dependencies": {
-    "@facegate/react": "github:your-org/facegate#path:packages/facegate-react",
+    "@lumiface/react": "github:GA-MO/lumiface#path:packages/lumiface-react",
     "@mediapipe/tasks-vision": "^1.0.1"
   }
 }
 ```
 
-The package ships TypeScript source (`src/`), so Next.js needs `transpilePackages: ["@facegate/react"]`; Vite needs nothing. `@facegate/react/core` is the browser-free part (client, controller, detectors, strings) for tests and workers.
+The package ships TypeScript source (`src/`), so Next.js needs `transpilePackages: ["@lumiface/react"]`; Vite needs nothing. `@lumiface/react/core` is the browser-free part (client, controller, detectors, strings) for tests and workers.
 
 ## The view
 
 ```tsx
-import { FacegateClient, FacegateView, TH } from "@facegate/react";
+import { LumifaceClient, LumifaceView, TH } from "@lumiface/react";
 
-const client = new FacegateClient({ baseUrl: "https://faces.example.com", apiKey: key });
+const client = new LumifaceClient({ baseUrl: "https://faces.example.com", apiKey: key });
 
 export function LoginWithFace({ userId }: { userId: string }) {
   return (
     <div style={{ height: "70vh" }}>
-      <FacegateView
+      <LumifaceView
         client={client}
         subjectId={userId}
         purpose="login"
@@ -44,16 +44,16 @@ It fills its parent, so size the parent. Props mirror the Flutter view:
 
 <TypeTable
   type={{
-    client: { type: "FacegateClient", required: true, description: "Server URL plus project API key." },
+    client: { type: "LumifaceClient", required: true, description: "Server URL plus project API key." },
     flow: { type: '"verify" | "liveness" | "enroll"', description: "Defaults to verify with a subjectId, liveness without." },
     subjectId: { type: "string | null", description: "Who to match against, or the id to enrol." },
     purpose: { type: "string", description: "Label stored with the verification." },
     config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
     strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
-    theme: { type: "Partial<FacegateTheme>", description: "Colours, guide shape and geometry, message style, progress." },
+    theme: { type: "Partial<LumifaceTheme>", description: "Colours, guide shape and geometry, message style, progress." },
     camera: { type: "MediaPipeSourceOptions", description: "facing, wasmUrl, modelUrl, delegate, yawSign, detectIntervalMs." },
     showDebug: { type: "boolean", description: "Face box and a line of raw signals." },
-    autoStart: { type: "boolean", description: "false: call start() from useFacegate yourself." },
+    autoStart: { type: "boolean", description: "false: call start() from useLumiface yourself." },
     renderOverlay: { type: "(scope) => ReactNode", description: "Replaces the whole overlay." },
     renderPrompt: { type: "(scope) => ReactNode", description: "Replaces the message line." },
     renderProgress: { type: "(scope) => ReactNode", description: "Replaces the progress bar." },
@@ -67,10 +67,10 @@ It fills its parent, so size the parent. Props mirror the Flutter view:
 
 ## The hook
 
-`useFacegate(options)` runs the camera and the controller without any markup:
+`useLumiface(options)` runs the camera and the controller without any markup:
 
 ```tsx
-const fg = useFacegate({ client, subjectId, purpose: "checkin" });
+const fg = useLumiface({ client, subjectId, purpose: "checkin" });
 return (
   <div ref={fg.mountVideo} style={{ position: "relative", height: 480 }}>
     <p>{messageFor(EN, fg.state, fg.flow)}</p>
