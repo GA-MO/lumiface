@@ -25,7 +25,7 @@ A session is one attempt. It holds the oval, the flash colours, a TTL and the cl
 
 ## Stream
 
-The app opens a WebSocket for the session, receives the plan (the `face_move` challenge, its oval, the flash colours) and then records the camera and streams the recording up in chunks (VP8 or H.264 video; a plain client may send JPEG frames instead) while it runs the plan. The server decodes the video into frames, at the camera's rate. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own face detector inside the challenge window to confirm the face grew into the oval, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof, identity and consistency on the key frames it picked. The device's detector exists to guide the person; it decides nothing.
+The app opens a WebSocket for the session, receives the plan (the `face_move` challenge, its oval, the flash colours) and then records the camera and streams the recording up in chunks (VP8 or H.264 video; a plain client may send JPEG frames instead) while it runs the plan. The server decodes the video into frames, at the camera's rate. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own face detector inside the challenge window to confirm the face grew into the oval, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof, identity and consistency on the key frames it picked. The device's detector exists to guide the person; it decides nothing. The wire format is the [stream protocol](/docs/protocol).
 
 ## The challenge
 

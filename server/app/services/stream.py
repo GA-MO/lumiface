@@ -12,6 +12,9 @@ about its timestamps.
     challenge 0    (aligned, challenge_done_0]          -> the face box grew from far into the oval
     flash i        [flash_i, flash_i+1 or flash_end)    -> face-patch colour under colour i
     end window     after flash_end (or last challenge)  -> neutral again, spoof, embedding, consistency
+
+Every gate runs whatever the ones before it found (`details["gates"]` holds each verdict in
+pipeline order); the reason code is the first gate that failed and counts.
 """
 from __future__ import annotations
 
@@ -177,37 +180,61 @@ def _with_face(analyser: _Analyser, frames: list[StreamFrame]) -> list[Analysed]
     return [a for a in (analyser(f) for f in frames) if a.face is not None]
 
 
+class _Gates:
+    """The verdict of every gate in pipeline order. Each gate runs whatever the ones before it said,
+    so a session refused at the flash still carries its spoof and match scores for the backend; the
+    first gate that failed and counts gives the reason code, and only its extras land in `details`."""
+
+    def __init__(self, details: dict) -> None:
+        self.details = details
+        self.table: dict[str, str] = details.setdefault("gates", {})
+        self.reason: str | None = None
+
+    def record(self, name: str, reason: str | None = None, counts: bool = True, **extra) -> None:
+        self.table[name] = reason or "pass"
+        if reason and counts and self.reason is None:
+            self.reason = reason
+            self.details.update(extra)
+
+    def skip(self, name: str) -> None:
+        self.table[name] = "skipped"
+
+
 def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challenges: list[str],
                    flash_colors: list[str], enrolled: np.ndarray | None) -> VerifyResult:
     s = get_policy()
     if not frames:
-        return VerifyResult(False, "FRAME_COUNT")
+        return VerifyResult(False, "FRAME_COUNT", details={"gates": {"frames": "FRAME_COUNT"}})
     frames = sorted(frames, key=lambda f: f.recv_ms)
     windows = build_windows(events, frames[0].recv_ms, challenges, flash_colors)
     if isinstance(windows, str):
-        return VerifyResult(False, windows)
+        return VerifyResult(False, windows, details={"frames": len(frames), "gates": {"frames": "pass", "order": windows}})
 
-    # Server-clock timing: the session and every challenge took a plausible amount of real time.
-    details: dict = {"frames": len(frames), "windows": {
+    details: dict = {"gates": {"frames": "pass", "order": "pass"}, "frames": len(frames), "windows": {
         "align_ms": windows.align[1] - windows.align[0],
         "challenges_ms": [b - a for a, b in windows.challenges],
         "flash_ms": [b - a for a, b in windows.flashes],
         "end_ms": windows.end[1] - windows.end[0],
     }}
+    g = _Gates(details)
+
+    # Server-clock timing: the session and every challenge took a plausible amount of real time.
+    timing = None
     total = windows.end[1] - windows.align[1]
     if total < s.min_session_ms:
-        return VerifyResult(False, "TIMING_TOO_FAST", details=details)
+        timing = "TIMING_TOO_FAST"
     for a, b in windows.challenges:
-        if b - a < s.min_challenge_ms:
-            return VerifyResult(False, "TIMING_TOO_FAST", details=details)
-        if b - a > s.max_challenge_ms:
-            return VerifyResult(False, "TIMING_TOO_SLOW", details=details)
+        if timing is None and b - a < s.min_challenge_ms:
+            timing = "TIMING_TOO_FAST"
+        if timing is None and b - a > s.max_challenge_ms:
+            timing = "TIMING_TOO_SLOW"
+    g.record("timing", timing)
 
     # A replayed still or a frozen feed sends the same bytes again and again.
     digests = {hashlib.blake2b(f.data, digest_size=8).digest() for f in frames}
     details["unique_frames"] = len(digests)
-    if len(frames) >= 8 and len(digests) < max(4, len(frames) // 2):
-        return VerifyResult(False, "FRAMES_STATIC", details=details)
+    static = len(frames) >= 8 and len(digests) < max(4, len(frames) // 2)
+    g.record("static", "FRAMES_STATIC" if static else None)
 
     place = placement_windows(frames, events, challenges, flash_colors, windows)
     by_client = place is not windows
@@ -215,46 +242,45 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
 
     analyser = _Analyser()
     per_frame: list[dict] = []
+    key_faces: list[Analysed] = []
 
     def note(kind: str, a: Analysed) -> None:
         per_frame.append({"kind": kind, "t": a.frame.recv_ms - frames[0].recv_ms, "yaw": round(a.face.yaw, 1),
                           "pitch": round(a.face.pitch, 1), "det": round(a.face.det_score, 3)})
+        key_faces.append(a)
 
     # Neutral baseline: the last frames of the align window, when the device said the face was set.
     baseline = _with_face(analyser, _sample(_in(frames, place.align, by_client))[-3:])
-    if not baseline:
-        return VerifyResult(False, "NO_FACE", details={**details, "window": "align"})
-    neutral = baseline[-1]
-    note("neutral_start", neutral)
+    if baseline:
+        note("neutral_start", baseline[-1])
+    g.record("neutral_start", None if baseline else "NO_FACE", window="align")
 
     # The challenge: the face box read off the server's own detector inside the window.
-    key_faces: list[Analysed] = [neutral]
     for i, (ch, window) in enumerate(zip(challenges, place.challenges)):
+        name = f"challenge_{i}"
         seen = _with_face(analyser, _sample(_in(frames, window, by_client), MAX_FRAMES_PER_WINDOW))
         if not seen:
-            return VerifyResult(False, "NO_FACE", details={**details, "window": f"challenge_{i}"})
+            g.record(name, "NO_FACE", window=name)
+            continue
         ok, info, peak = movement_observed(seen, s)
-        details[f"challenge_{i}"] = {"name": ch, "frames": len(seen), **info}
-        if not ok:
-            return VerifyResult(False, "MOVEMENT_MISMATCH", details={**details, "challenge": ch})
-        note(f"challenge_{i}", peak)
-        key_faces.append(peak)
+        details[name] = {"name": ch, "frames": len(seen), **info}
+        g.record(name, None if ok else "MOVEMENT_MISMATCH", challenge=ch)
+        note(name, peak)
 
     # Flash: the colour on the face during each colour's window, with the box from a frame in it.
     if flash_colors:
         observed, background = [], []
-        last_box = key_faces[-1].face.bbox
+        last_box = key_faces[-1].face.bbox if key_faces else None
         for i, window in enumerate(place.flashes):
             fw = _in(frames, window, by_client)
-            if not fw:
-                details["flash"] = {"window": f"flash_{i}", "reason": "no frames", "enforced": s.flash_enforce}
-                if s.flash_enforce:
-                    return VerifyResult(False, "FLASH_FAIL", details=details)
+            mid = analyser(fw[len(fw) // 2]) if fw else None
+            if mid is not None and mid.face is not None:
+                last_box = mid.face.bbox
+            if not fw or last_box is None:
+                details["flash"] = {"window": f"flash_{i}", "reason": "no frames" if not fw else "no face",
+                                    "enforced": s.flash_enforce}
                 observed = []
                 break
-            mid = analyser(fw[len(fw) // 2])
-            if mid.face is not None:
-                last_box = mid.face.bbox
             patches, rings = [], []
             for f in fw:
                 cached = analyser.cache.get(id(f))
@@ -268,54 +294,63 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
                 rings.append(surroundings_mean_rgb(img, last_box))
             observed.append(np.mean(patches, axis=0))
             background.append(np.mean(rings, axis=0))
+        passed = False
         if observed:
             fr = score_flash(observed, flash_colors, background)
             details["flash"] = {"correlation": round(fr.correlation, 3), "response": round(fr.response, 2),
                                 "order_ok": fr.order_ok, "deltas": fr.per_frame,
                                 "background_ratio": None if fr.background_ratio is None else round(fr.background_ratio, 2),
                                 "enforced": s.flash_enforce}
-            if s.flash_enforce and not flash_passes(fr):
-                return VerifyResult(False, "FLASH_FAIL", details=details)
+            passed = flash_passes(fr)
+        g.record("flash", None if passed else "FLASH_FAIL", counts=s.flash_enforce)
 
     # Neutral again at the end.
     ending = _with_face(analyser, _sample(_in(frames, place.end, by_client))[-3:])
-    if not ending:
-        return VerifyResult(False, "NO_FACE", details={**details, "window": "end"})
-    note("neutral_end", ending[-1])
-    key_faces.append(ending[-1])
+    if ending:
+        note("neutral_end", ending[-1])
+    g.record("neutral_end", None if ending else "NO_FACE", window="end")
 
     # Passive anti-spoof on the key frames, then identity and consistency, as before.
-    spoof_scores, cvpr_scores = [], []
-    for a in key_faces:
-        sp = get_antispoof().score(a.img, a.face.bbox)
-        spoof_scores.append(sp.real)
-        if sp.cvpr is not None:
-            cvpr_scores.append(sp.cvpr)
-    for row, sp in zip(per_frame, spoof_scores):
-        row["spoof"] = round(sp, 4)
+    spoof_mean = match_min = consistency = None
+    if key_faces:
+        spoof_scores, cvpr_scores = [], []
+        for row, a in zip(per_frame, key_faces):
+            sp = get_antispoof().score(a.img, a.face.bbox)
+            spoof_scores.append(sp.real)
+            row["spoof"] = round(sp.real, 4)
+            if sp.cvpr is not None:
+                cvpr_scores.append(sp.cvpr)
+                row["cvpr"] = round(sp.cvpr, 4)
+        spoof_mean = float(np.mean(spoof_scores))
+        low = spoof_mean < s.spoof_threshold or min(spoof_scores) < s.spoof_hard_floor
+        g.record("minifasnet", "SPOOF" if low else None, gate="minifasnet")
+        if cvpr_scores:
+            cvpr_mean = float(np.mean(cvpr_scores))
+            details["cvpr_mean"] = round(cvpr_mean, 4)
+            low = cvpr_mean < s.cvpr_threshold or min(cvpr_scores) < s.cvpr_hard_floor
+            g.record("cvpr2024", "SPOOF" if low else None, gate="cvpr2024")
+        else:
+            g.skip("cvpr2024")
+    else:
+        g.skip("minifasnet")
+        g.skip("cvpr2024")
     details["key_frames"] = per_frame
-    spoof_mean = float(np.mean(spoof_scores))
-    if spoof_mean < s.spoof_threshold or min(spoof_scores) < s.spoof_hard_floor:
-        return VerifyResult(False, "SPOOF", spoof_score=spoof_mean, details={**details, "gate": "minifasnet"})
-    if cvpr_scores:
-        cvpr_mean = float(np.mean(cvpr_scores))
-        details["cvpr_mean"] = round(cvpr_mean, 4)
-        if cvpr_mean < s.cvpr_threshold or min(cvpr_scores) < s.cvpr_hard_floor:
-            return VerifyResult(False, "SPOOF", spoof_score=spoof_mean, details={**details, "gate": "cvpr2024"})
 
     faces = [a.face for a in key_faces]
-    match_min = None
-    if enrolled is not None:
+    if enrolled is not None and faces:
         match_scores = [cosine(f.embedding, enrolled) for f in faces]
         match_min = float(min(match_scores))
         details["match"] = [round(m, 4) for m in match_scores]
-        if match_min < s.match_threshold:
-            return VerifyResult(False, "NO_MATCH", match_score=match_min, spoof_score=spoof_mean, details=details)
+        g.record("match", "NO_MATCH" if match_min < s.match_threshold else None)
+    else:
+        g.skip("match")
 
-    consistency, consistent = _consistency(faces)
-    if not consistent:
-        return VerifyResult(False, "INCONSISTENT", match_score=match_min, spoof_score=spoof_mean,
-                            consistency_score=consistency, details=details)
-    return VerifyResult(True, "OK", match_score=match_min, spoof_score=spoof_mean,
+    if faces:
+        consistency, consistent = _consistency(faces)
+        details["consistency"] = round(consistency, 4)
+        g.record("consistency", None if consistent else "INCONSISTENT")
+    else:
+        g.skip("consistency")
+
+    return VerifyResult(g.reason is None, g.reason or "OK", match_score=match_min, spoof_score=spoof_mean,
                         consistency_score=consistency, details=details)
-

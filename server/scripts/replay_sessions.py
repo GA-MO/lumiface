@@ -9,7 +9,8 @@ The pipeline runs exactly as in the WebSocket handler, with the policy from the 
 (`FLASH_ENFORCE=0 uv run python scripts/replay_sessions.py …` to try a change), and the subject's
 embedding from the database (or `--enrol photo.jpg`). The last column compares with the verdict the
 session got when it was live, so a pipeline change shows up as a diff instead of another round in
-front of a camera. Folders without `session.json` (older stores) are replayed on the server clock.
+front of a camera; the line under it is every gate's own verdict, since each gate runs whatever the
+ones before it said. Folders without `session.json` (older stores) are replayed on the server clock.
 """
 from __future__ import annotations
 
@@ -67,6 +68,17 @@ def enrolled_embedding(subject_id: str | None, photo: Path | None, session_dir: 
         return np.frombuffer(row.embedding, dtype=np.float32) if row else None
 
 
+def gate_line(details: dict) -> str:
+    """One word per gate: `ok`, `-` (skipped) or the reason code; a flash that was not enforced is `(shadow)`."""
+    words = []
+    for name, verdict in details.get("gates", {}).items():
+        word = {"pass": "ok", "skipped": "-"}.get(verdict, verdict)
+        if name == "flash" and verdict != "pass" and not details.get("flash", {}).get("enforced", True):
+            word += "(shadow)"
+        words.append(f"{name}={word}")
+    return " ".join(words)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", type=Path, help="session folders, or a folder of them")
@@ -102,6 +114,7 @@ def main() -> int:
         client = meta.get("client", {})
         print(f"{folder.name[:8]}  {client.get('platform', '?'):7} {','.join(meta['challenges']):22} "
               f"now {result.reason_code:20} was {was or '-':20} {mark}")
+        print("    " + gate_line(result.details))
         if args.details:
             print("   ", json.dumps({k: v for k, v in result.details.items() if k != "key_frames"})[:600])
     print(f"{len(folders)} sessions, {changed} changed verdict")

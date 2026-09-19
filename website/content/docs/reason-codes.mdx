@@ -22,6 +22,42 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 | `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
 | `INCONSISTENT` | frames not the same person | one person for the whole session |
 
+## The `details` object
+
+The verdict the device gets is just `ok`, `reason_code` and the three headline `scores`; the full
+`details` object lives in the verification row (`GET /v1/verifications` is the summary, the row's
+`details` column the record) and in a stored session's `session.json`. It is where a backend reads
+*why*, and where a change to the pipeline is checked without another live round
+(`scripts/replay_sessions.py`).
+
+**Every gate runs, whatever an earlier one found.** A session refused at the flash still carries its
+MiniFASNet, CVPR and match scores; the `reason_code` is the first gate that failed *and counts* (a
+flash failure counts only when `flash_enforce` is on). So the fields below are present regardless of
+the verdict, and `details.gates` names each gate's own outcome. This is deliberate: gates can be
+added, reordered or retired, so read `details.gates` for what ran rather than assuming a fixed set.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `gates` | `{name: "pass" \| "skipped" \| <reason_code>}` | every gate in pipeline order with its own verdict; `skipped` when it had nothing to score (e.g. `match` with no enrolled subject, a gate after a window that found no face) |
+| `frames` | int | frames the pipeline judged after decoding |
+| `unique_frames` | int | distinct frame bytes (a replayed still repeats; drives `FRAMES_STATIC`) |
+| `placement` | `"client" \| "server"` | which clock placed frames into windows (client stamps when every event carried a `ts`, else server arrival) |
+| `windows` | `{align_ms, challenges_ms[], flash_ms[], end_ms}` | each window's duration on the server clock |
+| `challenge_<i>` | `{name, frames, start_width, end_width, growth, fill, centred}` | the `face_move` reading; `growth`/`fill` against `move_min_growth`/`move_min_fill` |
+| `flash` | `{correlation, response, order_ok, deltas, background_ratio, enforced}` | the flash score; `enforced` is `flash_enforce`, `background_ratio` the surroundings/face ratio |
+| `key_frames` | `[{kind, t, yaw, pitch, det, spoof, cvpr}]` | the frames every passive gate scored (`neutral_start`, `challenge_<i>`, `neutral_end`), each with its MiniFASNet `spoof` and CVPR `cvpr` |
+| `cvpr_mean` | float | mean CVPR live score over the key frames (absent when CVPR is off) |
+| `match` | `[float]` | per-key-frame cosine against the enrolled subject (absent for a liveness session) |
+| `consistency` | float | worst cross-frame cosine (drives `INCONSISTENT`) |
+| `gate` | `"minifasnet" \| "cvpr2024"` | which passive gate a `SPOOF` verdict came from |
+| `window` | `"align" \| "challenge_<i>" \| "end"` | which window a `NO_FACE` verdict came from |
+| `challenge` | str | the challenge a `MOVEMENT_MISMATCH` came from |
+
+`scripts/replay_sessions.py` prints `details.gates` as a line per session; add `--details` for the
+rest of the object. With `flash_enforce` off, a gate the flash would have stopped shows as
+`flash=FLASH_FAIL(shadow)` — scored, not counted — so a passive-only run shows what each later gate
+would have said.
+
 ## Enrolment (server)
 
 `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL`, `SPOOF`, `SUBJECT_EXISTS`.

@@ -64,3 +64,5 @@ The flash step **must** fill the whole screen with `flashColor` for at least the
 ## Your own camera or detector
 
 Implement `CameraFaceSource` (`initialize`, `startStream` / `stopStream`, `dispose`, `signals`, `format` + `startRecording` / `stopRecording` (the `VideoRecorder`; `StreamFormat.jpeg` with one JPEG per chunk is the simplest), `captureJpeg` (the enrolment photo), `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`, `isInitialized`) and pass it through `sourceFactory`. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (normalised to the upright frame) and, if your detector has them, `yaw` and `pitch` in degrees (null otherwise; they only drive the "look straight" hint). Any detector that finds a face box will do; the server judges from its own detector. The widget tests do this with a fake camera to run the whole overlay without a device.
+
+To run the flow from a client neither SDK covers, the WebSocket it speaks is the [stream protocol](/docs/protocol).

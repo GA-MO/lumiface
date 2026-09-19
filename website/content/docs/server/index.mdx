@@ -40,7 +40,7 @@ Policy fields in the environment (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are t
 
 ## Database
 
-SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`, `enroltoken`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `expires_at`). The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames) live in `verification.details` for your backend; the device only ever gets the verdict.
+SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`, `enroltoken`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `expires_at`). The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames, and every gate's own verdict) live in `verification.details` for your backend; the device only ever gets the verdict. See [the `details` object](/docs/reason-codes#the-details-object).
 
 ## Health and versions
 

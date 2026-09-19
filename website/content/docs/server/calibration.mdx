@@ -70,7 +70,7 @@ genuine must pass, attack must be refused, under the balanced preset.
 
 ## STORE_FRAMES and DEBUG
 
-`STORE_FRAMES=1` keeps every decoded frame of a failed verification under `data/frames/<project>/<session_id>/` (with `session.json` for both clocks, the events and the plan, and the raw `stream.webm` / `.mp4` / `.h264` the device sent); with `DEBUG=1` every verification is kept. The verdict's `details` — the server's windows, the `face_move` readings, flash scores and key frames — are in the verification row's `details` column. `POST /v1/debug/score` scores a single photo.
+`STORE_FRAMES=1` keeps every decoded frame of a failed verification under `data/frames/<project>/<session_id>/` (with `session.json` for both clocks, the events and the plan, and the raw `stream.webm` / `.mp4` / `.h264` the device sent); with `DEBUG=1` every verification is kept. The verdict's [`details`](/docs/reason-codes#the-details-object) — the server's windows, the `face_move` readings, flash scores, key frames and every gate's verdict — are in the verification row's `details` column, whatever the session was refused for. `POST /v1/debug/score` scores a single photo.
 
 ## Numbers from the reference devices
 

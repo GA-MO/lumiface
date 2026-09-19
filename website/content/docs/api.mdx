@@ -67,7 +67,7 @@ stream, and the server judges them from what it receives, not from what the devi
 
 ### The stream
 
-`WS /sessions/{id}/stream`. The device speaks first, the server answers with the plan, then the recording flows up
+`WS /sessions/{id}/stream`. The full wire protocol — for porting to React Native, native or a kiosk — is on [Stream protocol](/docs/protocol); the essentials here. The device speaks first, the server answers with the plan, then the recording flows up
 in chunks until the device says it is done and the server sends the verdict. The session is spent as soon as the
 hello is accepted.
 
@@ -122,7 +122,7 @@ Answer:
 }
 ```
 
-`details` is empty for the device; the backend sees the server's windows, the `face_move` readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
+`details` is empty for the device; the backend sees the server's windows, the `face_move` readings, flash scores and key frames in the audit log — every gate's score is there whatever the verdict (`GET /verifications` is the summary, the row's `details` the full record; see [the `details` object](/docs/reason-codes#the-details-object)). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
 
 `GET /sessions/{id}` (project key) is how the backend learns the outcome; `result` is the verify answer above, or `null` while nothing was uploaded:
 

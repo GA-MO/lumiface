@@ -184,10 +184,27 @@ def test_flash_shadow_mode_reports_scores(client, person_crops, enrolled):
 def test_flash_enforced_rejects_unlit_frames(client, person_crops, enrolled):
     client.put("/v1/policy", headers=HEADERS, json={"overrides": {"flash_enforce": True}})
     try:
-        _, _, body = _run_session(client, person_crops[0])
+        s, _, body = _run_session(client, person_crops[0])
         assert body["reason_code"] == "FLASH_FAIL"
     finally:
         client.delete("/v1/policy", headers=HEADERS)
+    # The gates after the one that refused still ran: the backend sees every score without a replay.
+    d = _details(client, s["session_id"])
+    assert d["gates"] == {"frames": "pass", "order": "pass", "timing": "pass", "static": "pass",
+                          "neutral_start": "pass", "challenge_0": "pass", "flash": "FLASH_FAIL", "neutral_end": "pass",
+                          "minifasnet": "pass", "cvpr2024": "pass", "match": "pass", "consistency": "pass"}
+    assert d["flash"]["enforced"] is True and len(d["match"]) == 3 and 0 < d["consistency"] <= 1
+    assert all(0 <= f["spoof"] <= 1 and 0 <= f["cvpr"] <= 1 for f in d["key_frames"])
+    row = client.get("/v1/verifications", headers=HEADERS).json()[0]
+    assert row["reason_code"] == "FLASH_FAIL" and row["match_score"] and row["spoof_score"]
+
+
+def test_still_face_is_judged_by_every_gate(client, person_crops, enrolled):
+    s, _, body = _run_session(client, person_crops[0], move=False)
+    assert body["reason_code"] == "MOVEMENT_MISMATCH"
+    d = _details(client, s["session_id"])
+    assert d["gates"]["challenge_0"] == "MOVEMENT_MISMATCH" and d["gates"]["match"] == "pass"
+    assert d["challenge"] == "face_move" and "gate" not in d and "window" not in d
 
 
 def test_session_single_use(client, person_crops, enrolled):

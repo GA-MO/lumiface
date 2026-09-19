@@ -1,0 +1,141 @@
+---
+title: Stream protocol
+description: The WebSocket a client speaks to run one verification — messages, the four video formats, the clocks, the flash and the close codes — for porting to React Native, native or a kiosk.
+---
+
+The Flutter and React SDKs both talk to the server over one WebSocket, `WS /v1/sessions/{id}/stream`.
+This page is that wire protocol on its own, so a client the SDKs do not cover — React Native, a native
+app, a kiosk, a browser without the React package — can run the same flow. Everything the server
+decides, it decides from the frames and the clocks described here; the client only records, shows the
+flash and marks the boundaries. The [security model](/docs/security) is why each rule is here.
+
+## The exchange
+
+The client speaks first, the server answers with the plan, the recording flows up in chunks while
+the client runs the plan, and the server sends the verdict and closes. The session is spent the
+moment the hello is accepted, whatever happens after.
+
+```
+client                                             server
+──────                                             ──────
+{"type":"hello","token":"kQx7…","client":{…},
+ "format":"h264"}                                 ▶  webm | mp4 | h264 | jpeg (default)
+                                                 ◀ {"type":"plan","challenges":["face_move"],
+                                                    "oval":{"cx":0.5,"cy":0.45,"width":0.62,"height_ratio":1.35},
+                                                    "flash_colors":["ff0000","00ff00","0000ff"],
+                                                    "flash_hold_ms":450,"client_config":{…}}
+<binary: 8-byte device ms + chunk>               ▶  …continuously, from the plan to the end
+{"type":"event","name":"aligned","ts":6134}       ▶  face held in place; align window closes
+{"type":"event","name":"challenge_done","index":0,"ts":8003} ▶  face filled the oval
+{"type":"event","name":"flash","index":0,"ts":8003} ▶  colour 0 now full-screen
+{"type":"event","name":"flash","index":1,"ts":8466} ▶  colour 1
+{"type":"event","name":"flash","index":2,"ts":8934} ▶  colour 2
+{"type":"event","name":"flash_end","ts":9403}     ▶  flash over
+{"type":"end"}                                    ▶
+                                                 ◀ {"type":"result", …verdict…}   then close 1000
+                                                 ◀ {"type":"error","reason_code":"SESSION_USED"}  on refusal
+```
+
+### 1. hello
+
+`{"type":"hello","token":<session_token>,"client":{…},"format":<format>}`, the first message, within
+10 s of connecting or the server closes `HELLO_INVALID`. `token` is the `session_token` from
+`POST /v1/sessions` (the backend's, see [API auth](/docs/api#authentication)); a wrong or spent one
+ends the stream `SESSION_NOT_FOUND` / `SESSION_USED`. `client` is a free object kept in the audit log
+(`platform`, `sdk`, …); the server adds the connection's `user_agent`. `format` must be one of the
+four below or the server closes `HELLO_INVALID`; omitted it is `jpeg`.
+
+### 2. plan
+
+`{"type":"plan", …}`, the server's answer. `challenges` is always `["face_move"]`. `oval` is where the
+face must end up — `cx`, `cy` fractions of the frame, `width` a fraction of the frame's **shorter**
+side (so it holds in portrait and landscape), `height_ratio` the oval's height over its width — or
+`null` when there is no `face_move`. `flash_colors` is the random sequence of hex colours to show
+(empty when the flash is off); `flash_hold_ms` how long to hold each. `client_config` is the project's
+[client tunables](/docs/policy-reference) (`align_hold_ms`, `oval_min_fill`, …) — apply them, but the
+server judges by its own thresholds regardless.
+
+### 3. binary messages: the recording
+
+Each binary message is **8 bytes of big-endian unsigned device milliseconds, then the payload**. The
+payload depends on `format`:
+
+| `format` | Each message carries | Frame time | Source |
+|---|---|---|---|
+| `jpeg` | one JPEG still | the header's device ms | any client that can capture stills |
+| `h264` | one Annex-B access unit (SPS/PPS before every keyframe, no B-frames) | the header's device ms | phone encoders (MediaCodec, VideoToolbox) |
+| `webm` | a MediaRecorder chunk (VP8) | first chunk's device ms + the frame's offset in the stream | MediaRecorder on Chrome, Firefox, Edge |
+| `mp4` | a MediaRecorder chunk (H.264) | first chunk's device ms + the frame's offset in the stream | MediaRecorder on Safari |
+
+The server decodes video into JPEG frames with both clocks before anything else runs
+(`services/video.py`), so the pipeline sees what a `jpeg` client would have sent, at the camera's rate.
+Send the frames **upright and un-mirrored** — the face the way a photo shows it — because the server's
+detector and the enrolled embedding are. A 640 px long side is enough. Stream continuously from the
+plan to `end`, in every phase including the flash; do not pause between phases.
+
+### 4. text events: the boundaries
+
+`{"type":"event","name":<name>,"ts":<device ms>,"index":<i>}`. Events only tell the server **where to
+look** in the recording; they must arrive in the plan's order or the stream ends `TIMING_ORDER`:
+
+| Event | `index` | Marks |
+|---|---|---|
+| `aligned` | — | the face has held aligned; the align window (baseline, spoof, embedding) is the frames before this |
+| `challenge_done` | the challenge's, `0` | the face has filled and held in the oval; the `face_move` window is `aligned`→ here |
+| `flash` | the colour's, `0…n-1` | colour `index` is now full-screen; one per colour, in order |
+| `flash_end` | — | the flash is over; the frames after this are the end window (neutral, spoof, embedding, consistency) |
+
+Send `flash` / `flash_end` only when `flash_colors` is non-empty. `end` is the terminator, not in this
+table (`{"type":"end"}`); a value outside this set ends the stream `EVENT_INVALID`.
+
+### 5. end and the verdict
+
+`{"type":"end"}`, then the server sends `{"type":"result", …}` and closes with code 1000. The result
+is the [verify answer](/docs/api#the-stream): `ok`, `reason_code`, `scores`, `verification_id`, and
+`details: {}` — the device never sees the per-gate detail, only the [backend](/docs/reason-codes#the-details-object) does.
+
+## The clocks
+
+Two clocks matter, and they must be **the same monotonic clock** on the client. The server stamps
+every frame and event with **its own** clock on arrival and measures all durations
+(`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) from those, so forging `ts` gains nothing.
+
+The `ts` values — every binary message's 8-byte header and every event's `ts` — decide only **which
+window a frame falls into**. A phone uploads a chunk a few hundred ms after the camera took it, while
+an event is a few bytes that arrive at once, so placing frames by arrival would drop a colour's
+reflection into the next colour's window. So a frame's device time (header, or first-chunk time plus
+its offset for video) and the events' `ts` must come from one clock, counting from any fixed origin.
+A client that sends no `ts` on its events is placed by arrival instead — correct only if upload lag is
+negligible.
+
+## The flash
+
+While `flash_colors` is non-empty, for each colour in turn: fill the **whole screen** with
+`#<color>`, raise brightness to maximum, keep frames streaming, hold for at least `flash_hold_ms`,
+send the `flash` event as the colour goes up and `flash_end` after the last. The server reads the hue
+shift on the cheeks across each colour's window and checks it follows the commanded sequence and that
+the surroundings do not reflect as much as the face (a phone screen replaying a video reflects the
+whole sheet). Lock exposure while the flash is up so auto-exposure does not cancel the colour shift.
+A partial fill, low brightness or auto-exposure will read as `FLASH_FAIL`.
+
+## Close and error codes
+
+A refusal arrives as `{"type":"error","reason_code":<code>}` and the socket closes; a
+[verify verdict](/docs/reason-codes) (including a failing one like `FLASH_FAIL`) arrives as a `result`
+and closes 1000. The stream-level codes:
+
+| `reason_code` | Close | When |
+|---|---|---|
+| `HELLO_INVALID` | 1008 | no hello in 10 s, not an object, or an unknown `format` |
+| `SESSION_NOT_FOUND` | 1008 | the token does not match a live session |
+| `SESSION_USED` | 1008 | the session was already spent |
+| `SESSION_EXPIRED` | 1008 | the session TTL passed, before or during the stream |
+| `EVENT_INVALID` | 1008 | a text message is not valid JSON, not an object, or an unknown event name |
+| `PAYLOAD_TOO_LARGE` | 1009 | a message over `MAX_FRAME_BYTES`, or the session over `MAX_UPLOAD_BYTES` / `MAX_STREAM_CHUNKS` |
+
+Limits (policy / config): `MAX_FRAME_BYTES` per message (4 MB), `MAX_UPLOAD_BYTES` per session
+(32 MB), `MAX_STREAM_CHUNKS` messages (1800), `MAX_STREAM_FRAMES` decoded frames kept (900, a longer
+video thinned evenly), `MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). A frame that does not decode is
+skipped; a window left with no usable frame ends `NO_FACE`, no frames at all `FRAME_COUNT`. Drop
+frames rather than queue them when the link is full — the SDKs stop sending once the socket's buffer
+passes a threshold.
