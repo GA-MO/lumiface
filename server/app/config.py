@@ -34,12 +34,10 @@ class Settings(BaseSettings):
     cvpr_threshold: float = 0.30
     cvpr_hard_floor: float = 0.05
     min_face_size: int = 112
-    enroll_max_yaw: float = 20.0
-    enroll_max_pitch: float = 20.0
+    reference_max_yaw: float = 20.0
+    reference_max_pitch: float = 20.0
 
     session_ttl_seconds: int = 60
-    enrol_token_ttl_seconds: int = 300
-    subject_ttl_seconds: int = 0
     allow_browser_api_key: bool = False
     retention_interval_seconds: int = 300
     session_purge_grace_seconds: int = 3600

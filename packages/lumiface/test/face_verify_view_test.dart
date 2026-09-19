@@ -96,7 +96,7 @@ void main() {
     LivenessState? seen;
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
-      sessionProvider: () => api.createSession(subjectId: null),
+      sessionProvider: () => api.createSession(reference: false),
       sourceFactory: () => cam,
       strings: LivenessStrings.th,
       theme: const FaceVerifyTheme(guideShape: FaceGuideShape.none, showProgress: false),
@@ -113,7 +113,7 @@ void main() {
   });
 
   testWidgets('overlayBuilder replaces everything, autoStart false hands out the controller', (tester) async {
-    FaceFlowController? ctrl;
+    FaceVerifyController? ctrl;
     await tester.pumpWidget(app(FaceVerifyView(
       client: api,
       sessionProvider: api.createSession,
@@ -129,24 +129,6 @@ void main() {
     unawaited(ctrl!.start());
     await settle(tester);
     expect(find.text('phase:aligning'), findsOneWidget);
-  });
-
-  testWidgets('enroll flow captures once and reports the subject', (tester) async {
-    VerifyResult? result;
-    await tester.pumpWidget(app(FaceVerifyView(
-      client: api,
-      flow: FaceFlow.enroll,
-      enrolTokenProvider: () async => 'tok:E7:Seven',
-      sourceFactory: () => cam,
-      onResult: (r) => result = r,
-    )));
-    await settle(tester);
-    await emit(tester, neutral(0));
-    await emit(tester, neutral(700));
-    await settle(tester);
-    expect(result!.subject!.externalId, 'E7');
-    expect(find.text('Photo enrolled'), findsOneWidget);
-    expect(cam.captures, 1);
   });
 
   testWidgets('camera failure renders the error builder', (tester) async {

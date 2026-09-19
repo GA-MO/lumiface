@@ -1,11 +1,10 @@
 import { LumifaceClient } from "../src/client.ts";
 import { LumifaceError } from "../src/types.ts";
-import type { FaceSignalSource, FrameCapturer, VideoRecorder } from "../src/controller.ts";
-import type { Challenge, FaceSession, FaceSignal, OvalTarget, StreamEventName, StreamFormat, Subject, VerifyResult, VerifyStream } from "../src/types.ts";
+import type { FaceSignalSource, VideoRecorder } from "../src/controller.ts";
+import type { Challenge, FaceSession, FaceSignal, OvalTarget, StreamEventName, StreamFormat, VerifyResult, VerifyStream } from "../src/types.ts";
 
-export class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
+export class FakeSource implements FaceSignalSource, VideoRecorder {
   private listeners = new Set<(s: FaceSignal) => void>();
-  captures = 0;
   readonly format: StreamFormat = "webm";
   /** The recorder's state as the controller drove it: started, then stopped. */
   recording = false;
@@ -38,11 +37,6 @@ export class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorde
   chunk(tsMs: number) {
     this.onChunk?.(new Blob([new Uint8Array([0x1a, 0x45, tsMs & 0xff])]), tsMs);
   }
-
-  async captureJpeg(): Promise<Blob> {
-    this.captures++;
-    return new Blob([new Uint8Array([0xff, 0xd8, this.captures])], { type: "image/jpeg" });
-  }
 }
 
 export class FakeClient extends LumifaceClient {
@@ -54,10 +48,9 @@ export class FakeClient extends LumifaceClient {
   ended = false;
   closed = false;
   planError: string | null = null;
-  lastSubjectId: string | null | undefined;
+  lastReference: boolean | undefined;
   lastPurpose = "";
   sessionConfig: Record<string, unknown> | null = null;
-  enrollCalls = 0;
 
   constructor(
     readonly challenges: Challenge[],
@@ -67,14 +60,15 @@ export class FakeClient extends LumifaceClient {
     super({ baseUrl: "http://x" });
   }
 
-  /** Stands in for the app's backend call; `subjectId: null` = liveness session. */
-  createSession = async (options: { subjectId?: string | null; purpose?: string } = { subjectId: "E001" }): Promise<FaceSession> => {
-    this.lastSubjectId = options.subjectId;
+  /** Stands in for the app's backend call; `reference: false` = a session without a reference photo (liveness). */
+  createSession = async (options: { reference?: boolean; purpose?: string } = {}): Promise<FaceSession> => {
+    const reference = options.reference ?? true;
+    this.lastReference = reference;
     this.lastPurpose = options.purpose ?? "";
     return {
       id: "s1",
       token: "tok",
-      mode: options.subjectId ? "verify" : "liveness",
+      mode: reference ? "verify" : "liveness",
       purpose: this.lastPurpose,
       ttlSeconds: 60,
       clientConfig: null,
@@ -103,14 +97,6 @@ export class FakeClient extends LumifaceClient {
         this.closed = true;
       },
     };
-  }
-
-  /** The fake token names the subject, like the real one does server-side: `tok:<id>:<name>`. */
-  override async enroll(options: { photo: Blob; enrolToken: string }): Promise<Subject> {
-    this.enrollCalls++;
-    const [, externalId = "", name = ""] = options.enrolToken.split(":");
-    if (externalId === "REJECT") throw new LumifaceError("POSE_NOT_FRONTAL");
-    return { externalId, name, enrollSpoofScore: 0.9, expiresAt: null };
   }
 }
 

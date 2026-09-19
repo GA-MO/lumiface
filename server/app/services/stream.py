@@ -10,8 +10,13 @@ about its timestamps.
 
     align window   frames before `aligned`             -> neutral baseline, spoof, embedding
     challenge 0    (aligned, challenge_done_0]          -> the face box grew from far into the oval
-    flash i        [flash_i, flash_i+1 or flash_end)    -> face-patch colour under colour i
+    flash i        [flash_i, flash_i+1 or flash_end)    -> face-patch colour under colour i, embedding
     end window     after flash_end (or last challenge)  -> neutral again, spoof, embedding, consistency
+
+Identity is read at every one of those points: the three key frames (which also carry the passive
+anti-spoof) and the middle frame of every flash window, so the face that reflects the colours has
+to be the same person as the one who aligned, filled the oval and stayed to the end — a swap for
+the flash alone is caught. The tinted flash frames are kept out of anti-spoof, which they would bias.
 
 Every gate runs whatever the ones before it found (`details["gates"]` holds each verdict in
 pipeline order); the reason code is the first gate that failed and counts.
@@ -201,7 +206,7 @@ class _Gates:
 
 
 def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challenges: list[str],
-                   flash_colors: list[str], enrolled: np.ndarray | None) -> VerifyResult:
+                   flash_colors: list[str], reference: np.ndarray | None) -> VerifyResult:
     s = get_policy()
     if not frames:
         return VerifyResult(False, "FRAME_COUNT", details={"gates": {"frames": "FRAME_COUNT"}})
@@ -268,6 +273,8 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
         note(name, peak)
 
     # Flash: the colour on the face during each colour's window, with the box from a frame in it.
+    # That middle frame's face also goes into the identity checks (not anti-spoof: it is tinted).
+    flash_faces: list[Analysed] = []
     if flash_colors:
         observed, background = [], []
         last_box = key_faces[-1].face.bbox if key_faces else None
@@ -276,6 +283,7 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
             mid = analyser(fw[len(fw) // 2]) if fw else None
             if mid is not None and mid.face is not None:
                 last_box = mid.face.bbox
+                flash_faces.append(mid)
             if not fw or last_box is None:
                 details["flash"] = {"window": f"flash_{i}", "reason": "no frames" if not fw else "no face",
                                     "enforced": s.flash_enforce}
@@ -334,11 +342,15 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
     else:
         g.skip("minifasnet")
         g.skip("cvpr2024")
+    for i, a in enumerate(flash_faces):
+        per_frame.append({"kind": f"flash_{i}", "t": a.frame.recv_ms - frames[0].recv_ms, "yaw": round(a.face.yaw, 1),
+                          "pitch": round(a.face.pitch, 1), "det": round(a.face.det_score, 3)})
     details["key_frames"] = per_frame
 
-    faces = [a.face for a in key_faces]
-    if enrolled is not None and faces:
-        match_scores = [cosine(f.embedding, enrolled) for f in faces]
+    # Identity on the key frames and the flash frames alike, in the order of `key_frames`.
+    faces = [a.face for a in key_faces] + [a.face for a in flash_faces]
+    if reference is not None and faces:
+        match_scores = [cosine(f.embedding, reference) for f in faces]
         match_min = float(min(match_scores))
         details["match"] = [round(m, 4) for m in match_scores]
         g.record("match", "NO_MATCH" if match_min < s.match_threshold else None)

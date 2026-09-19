@@ -7,7 +7,7 @@ os.environ.update({
     "BOOTSTRAP_API_KEY": "test-key",
     "ADMIN_API_KEY": "admin-key",
     "MIN_FACE_SIZE": "60",
-    "ENROLL_MAX_PITCH": "35",
+    "REFERENCE_MAX_PITCH": "35",
     "OVAL_WIDTH_FRACTION": "0.35",  # the person crops carry a margin of one face width; see run_stream
     "FLASH_ENFORCE": "0",  # API tests stream the same still for every frame; see test_flash_enforced_rejects_unlit_frames
     "MIN_SESSION_MS": "0",  # the server clocks the stream itself; see test_too_fast_on_the_server_clock
@@ -58,6 +58,11 @@ def person_crops():
     return crops
 
 
+def blank_jpeg() -> bytes:
+    """A grey frame with nobody in it."""
+    return _jpeg(np.full((240, 320, 3), 128, np.uint8))
+
+
 def far_frame(jpeg: bytes) -> bytes:
     """The same still seen from twice the distance: padded to twice its size, so the face box halves."""
     img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
@@ -68,7 +73,7 @@ def far_frame(jpeg: bytes) -> bytes:
 
 
 def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, order=None, pause=0.0, move=True,
-               fmt="jpeg"):
+               fmt="jpeg", flash_jpeg=None):
     """Drive a session's WebSocket the way a device does: hello, frames, events, end.
 
     Every frame gets a distinct tail so it hashes differently (a real camera never repeats bytes);
@@ -78,7 +83,8 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
     event sequence; `pause` sleeps before the end so server-clock tests can make the session take real
     time. `fmt="h264"` sends each frame as one encoded access unit the way the phone plugins do;
     `fmt="webm"` records the whole session as one VP8 stream and sends it in chunks the way
-    MediaRecorder does. Returns (plan, last message).
+    MediaRecorder does. `flash_jpeg` streams another still during the flash windows only (a face swapped
+    in for the flash). Returns (plan, last message).
     """
     import time
 
@@ -138,7 +144,7 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
             for i in range(len(plan["flash_colors"])):
                 event("flash", i)
                 time.sleep(sleep)  # past FLASH_LATENCY_MS, so these frames land inside the colour's window
-                frames()
+                frames(data=flash_jpeg or jpeg)
             if plan["flash_colors"]:
                 event("flash_end")
             frames()

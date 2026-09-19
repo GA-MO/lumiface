@@ -1,6 +1,6 @@
 ---
 title: Reason codes
-description: Every code a verification, an enrolment or the SDK can end with, who raises it, and what the user should do.
+description: Every code a verification, a reference photo or the SDK can end with, who raises it, and what the user should do.
 ---
 
 ## Verify pipeline (server)
@@ -19,7 +19,7 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 | `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
 | `MOVEMENT_MISMATCH` | in the `face_move` window the face did not grow from far into the oval (`details.challenge_<i>`: `start_width`, `end_width`, `growth`, `fill`, `centred`) | start further away, then move in until the oval is filled |
 | `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
-| `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
+| `NO_MATCH` | a frame below `match_threshold` against the reference photo | wrong person or a poor reference photo |
 | `INCONSISTENT` | frames not the same person | one person for the whole session |
 
 ## The `details` object
@@ -38,16 +38,16 @@ added, reordered or retired, so read `details.gates` for what ran rather than as
 
 | Field | Shape | Meaning |
 |---|---|---|
-| `gates` | `{name: "pass" \| "skipped" \| <reason_code>}` | every gate in pipeline order with its own verdict; `skipped` when it had nothing to score (e.g. `match` with no enrolled subject, a gate after a window that found no face) |
+| `gates` | `{name: "pass" \| "skipped" \| <reason_code>}` | every gate in pipeline order with its own verdict; `skipped` when it had nothing to score (e.g. `match` on a liveness session, a gate after a window that found no face) |
 | `frames` | int | frames the pipeline judged after decoding |
 | `unique_frames` | int | distinct frame bytes (a replayed still repeats; drives `FRAMES_STATIC`) |
 | `placement` | `"client" \| "server"` | which clock placed frames into windows (client stamps when every event carried a `ts`, else server arrival) |
 | `windows` | `{align_ms, challenges_ms[], flash_ms[], end_ms}` | each window's duration on the server clock |
 | `challenge_<i>` | `{name, frames, start_width, end_width, growth, fill, centred}` | the `face_move` reading; `growth`/`fill` against `move_min_growth`/`move_min_fill` |
 | `flash` | `{correlation, response, order_ok, deltas, background_ratio, enforced}` | the flash score; `enforced` is `flash_enforce`, `background_ratio` the surroundings/face ratio |
-| `key_frames` | `[{kind, t, yaw, pitch, det, spoof, cvpr}]` | the frames every passive gate scored (`neutral_start`, `challenge_<i>`, `neutral_end`), each with its MiniFASNet `spoof` and CVPR `cvpr` |
+| `key_frames` | `[{kind, t, yaw, pitch, det, spoof?, cvpr?}]` | the frames identity was read on: the passive gates' key frames (`neutral_start`, `challenge_<i>`, `neutral_end`, each with its MiniFASNet `spoof` and CVPR `cvpr`) followed by the middle frame of each flash window (`flash_<i>`, identity only) |
 | `cvpr_mean` | float | mean CVPR live score over the key frames (absent when CVPR is off) |
-| `match` | `[float]` | per-key-frame cosine against the enrolled subject (absent for a liveness session) |
+| `match` | `[float]` | cosine against the reference photo per entry of `key_frames`, in the same order (absent for a liveness session) |
 | `consistency` | float | worst cross-frame cosine (drives `INCONSISTENT`) |
 | `gate` | `"minifasnet" \| "cvpr2024"` | which passive gate a `SPOOF` verdict came from |
 | `window` | `"align" \| "challenge_<i>" \| "end"` | which window a `NO_FACE` verdict came from |
@@ -58,13 +58,14 @@ rest of the object. With `flash_enforce` off, a gate the flash would have stoppe
 `flash=FLASH_FAIL(shadow)` — scored, not counted — so a passive-only run shows what each later gate
 would have said.
 
-## Enrolment (server)
+## Reference photo (server, at `POST /v1/sessions`)
 
-`NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL`, `SPOOF`, `SUBJECT_EXISTS`.
+`BAD_IMAGE`, `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL` (422) and `PAYLOAD_TOO_LARGE` (413): the
+backend's photo could not be used, answered before any session exists. It is not anti-spoof checked.
 
 ## HTTP level
 
-`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `SUBJECT_NOT_FOUND`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE`, `ENROL_TOKEN_INVALID`, `ENROL_TOKEN_MISMATCH`, `EXTERNAL_ID_REQUIRED`, `TTL_INVALID`, `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, `API_KEY_FROM_BROWSER` (a project key sent from a browser page other than localhost), and `HTTP_<status>` when the server answered without a code. `BAD_IMAGE` is a verify/enrol verdict for a frame that does not decode.
+`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE`, `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, `API_KEY_FROM_BROWSER` (a project key sent from a browser page other than localhost), and `HTTP_<status>` when the server answered without a code. `BAD_IMAGE` is the reference photo's verdict when it does not decode (a streamed frame that does not decode is skipped).
 
 ## SDK (device)
 

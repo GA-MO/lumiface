@@ -15,7 +15,6 @@ class LivenessStrings {
     required this.done,
     this.flashing = 'Hold still…',
     this.liveSuccess = 'Live person confirmed',
-    this.enrollSuccess = 'Photo enrolled',
     this.cameraError = 'Camera unavailable',
   });
 
@@ -23,7 +22,6 @@ class LivenessStrings {
   final String uploading;
   final String success;
   final String liveSuccess;
-  final String enrollSuccess;
   final String flashing;
   final String cameraError;
   final Map<AlignHint, String> hints;
@@ -37,7 +35,6 @@ class LivenessStrings {
   String successFor(FaceFlow flow) => switch (flow) {
         FaceFlow.verify => success,
         FaceFlow.liveness => liveSuccess,
-        FaceFlow.enroll => enrollSuccess,
       };
 
   /// Resolves the line to show for [state] in [flow].
@@ -58,7 +55,6 @@ class LivenessStrings {
     String? uploading,
     String? success,
     String? liveSuccess,
-    String? enrollSuccess,
     String? flashing,
     String? cameraError,
     Map<AlignHint, String>? hints,
@@ -72,7 +68,6 @@ class LivenessStrings {
         uploading: uploading ?? this.uploading,
         success: success ?? this.success,
         liveSuccess: liveSuccess ?? this.liveSuccess,
-        enrollSuccess: enrollSuccess ?? this.enrollSuccess,
         flashing: flashing ?? this.flashing,
         cameraError: cameraError ?? this.cameraError,
         hints: hints ?? this.hints,
@@ -108,8 +103,6 @@ class LivenessStrings {
       'FACE_LOST': 'Face left the frame',
       'NETWORK_ERROR': 'Cannot reach the server',
       'SESSION_EXPIRED': 'Session expired, please try again',
-      'SUBJECT_NOT_FOUND': 'This person is not enrolled',
-      'SUBJECT_EXISTS': 'This person is already enrolled',
       'NO_FACE': 'No face detected',
       'MULTIPLE_FACES': 'More than one face detected',
       'FACE_TOO_SMALL': 'Move closer to the camera',
@@ -128,7 +121,6 @@ class LivenessStrings {
     uploading: 'กำลังตรวจสอบ…',
     success: 'ยืนยันตัวตนสำเร็จ',
     liveSuccess: 'ยืนยันว่าเป็นบุคคลจริง',
-    enrollSuccess: 'ลงทะเบียนใบหน้าแล้ว',
     cameraError: 'ใช้กล้องไม่ได้',
     hints: {
       AlignHint.noFace: 'วางใบหน้าให้อยู่ในกรอบ',
@@ -152,8 +144,6 @@ class LivenessStrings {
       'FACE_LOST': 'ใบหน้าหลุดออกจากกรอบ',
       'NETWORK_ERROR': 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้',
       'SESSION_EXPIRED': 'หมดเวลา session กรุณาลองใหม่',
-      'SUBJECT_NOT_FOUND': 'ยังไม่ได้ลงทะเบียนใบหน้า',
-      'SUBJECT_EXISTS': 'ลงทะเบียนไว้แล้ว',
       'NO_FACE': 'ไม่พบใบหน้า',
       'MULTIPLE_FACES': 'พบใบหน้ามากกว่าหนึ่งคน',
       'FACE_TOO_SMALL': 'ขยับเข้าใกล้กล้องอีก',

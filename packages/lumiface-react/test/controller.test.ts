@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { configFromJson, configToJson, DEFAULT_CONFIG } from "../src/config.ts";
-import { alignHint, FaceEnrollController, FaceVerifyController, progressOf, visibleRegionFor } from "../src/controller.ts";
+import { alignHint, FaceVerifyController, progressOf, visibleRegionFor } from "../src/controller.ts";
 import { EN, messageFor, mergeStrings } from "../src/strings.ts";
 import { noFace, type Box, type Challenge, type OvalTarget, type VerifyResult } from "../src/types.ts";
 import { FakeClient, FakeSource, neutral, pump } from "./fakes.ts";
@@ -12,7 +12,7 @@ let c: FaceVerifyController;
 
 async function boot(
   challenges: Challenge[],
-  o: { response?: VerifyResult; config?: Partial<typeof DEFAULT_CONFIG>; flashColors?: string[]; subjectId?: string | null; oval?: OvalTarget } = {},
+  o: { response?: VerifyResult; config?: Partial<typeof DEFAULT_CONFIG>; flashColors?: string[]; reference?: boolean; oval?: OvalTarget } = {},
 ) {
   src = new FakeSource();
   api = new FakeClient(challenges, o.flashColors ?? [], o.oval ?? null);
@@ -21,7 +21,7 @@ async function boot(
     source: src,
     recorder: src,
     client: api,
-    sessionProvider: () => api.createSession({ subjectId: o.subjectId === undefined ? "E001" : o.subjectId }),
+    sessionProvider: () => api.createSession({ reference: o.reference }),
     config: o.config ? { ...DEFAULT_CONFIG, ...o.config } : undefined,
   });
   await c.start();
@@ -238,7 +238,7 @@ describe("FaceVerifyController", () => {
       source: src,
       recorder: src,
       client: api,
-      sessionProvider: () => api.createSession({ subjectId: null, purpose: "kiosk" }),
+      sessionProvider: () => api.createSession({ reference: false, purpose: "kiosk" }),
     });
     expect(c.flow).toBe("verify");
     await c.start();
@@ -246,7 +246,7 @@ describe("FaceVerifyController", () => {
     expect(c.flow).toBe("liveness");
     expect(c.config.alignHoldMs).toBe(2000);
     expect(c.state.challengeCount).toBe(1);
-    expect(api.lastSubjectId).toBeNull();
+    expect(api.lastReference).toBe(false);
     expect(api.lastPurpose).toBe("kiosk");
     await emit(neutral(0));
     await emit(neutral(700));
@@ -299,38 +299,6 @@ describe("FaceVerifyController", () => {
     await pump();
     expect(c.state.phase).toBe("failed");
     expect(c.state.result!.reasonCode).toBe("NETWORK_ERROR");
-  });
-});
-
-describe("FaceEnrollController", () => {
-  it("aligns, captures one frame and enrols", async () => {
-    const s = new FakeSource();
-    const client = new FakeClient([]);
-    const e = new FaceEnrollController({ source: s, capturer: s, client, enrolTokenProvider: async () => "tok:E9:Nine" });
-    await e.start();
-    s.emit(noFace(0));
-    expect(e.state.hint).toBe("noFace");
-    s.emit(neutral(100));
-    s.emit(neutral(800));
-    await pump();
-    await pump();
-    expect(e.state.phase).toBe("success");
-    expect(e.state.result!.subject!.externalId).toBe("E9");
-    expect(s.captures).toBe(1);
-    e.dispose();
-  });
-
-  it("server rejection becomes a failed result with the reason code", async () => {
-    const s = new FakeSource();
-    const e = new FaceEnrollController({ source: s, capturer: s, client: new FakeClient([]), enrolTokenProvider: async () => "tok:REJECT" });
-    await e.start();
-    s.emit(neutral(0));
-    s.emit(neutral(700));
-    await pump();
-    await pump();
-    expect(e.state.phase).toBe("failed");
-    expect(e.state.result!.reasonCode).toBe("POSE_NOT_FRONTAL");
-    e.dispose();
   });
 });
 

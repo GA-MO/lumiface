@@ -27,8 +27,8 @@ and `tcp:8010`; release builds only (debug hides R8 problems).
 ## Live tests are a dataset, not a ritual
 Run the server with `STORE_FRAMES=1 DEBUG=1` whenever the user is about to test in front of a camera; every
 session lands in `server/data/frames/<project>/<session>/` with a replayable `session.json`. After the round,
-copy the sessions into `server/data/sessions/genuine/` or `attack/` (the user says which was which) and keep
-`server/data/sessions/subjects/<id>.npy` for the enrolled face. `uv run python scripts/replay_sessions.py <folder>`
+copy the sessions into `server/data/sessions/genuine/` or `attack/` (the user says which was which); each folder
+carries its `reference.npy` (older sessions name a `subject_id` and use `server/data/sessions/subjects/<id>.npy`). `uv run python scripts/replay_sessions.py <folder>`
 re-runs the pipeline on any session; `tests/test_replay.py` (in the pytest gate) requires every genuine session to
 pass and every attack to be refused. A server-side change (windows, thresholds, placement) is verified against the
 set first; the user is asked for a new live round only for what the set cannot show (a new device, a client change).

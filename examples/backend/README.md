@@ -1,9 +1,11 @@
 # Example backend
 
-The part of *your* system that holds the Lumiface project key. Lumiface never talks to an
-anonymous device about who it is; your application backend does, because it has the login. This
-~100-line FastAPI app stands in for it so the Flutter example and the React demo run the real
-flow on a laptop. It is not part of the Lumiface server and needs none of its models.
+The part of *your* system that holds the Lumiface project key and the users' photos. Lumiface
+never talks to an anonymous device about who it is and keeps no faces; your application backend
+does both, because it has the login and the user records. This ~100-line FastAPI app stands in
+for it so the Flutter example and the React demo run the real flow on a laptop: its users are an
+in-memory dict (id, name, registration photo) filled from the apps' Users tab. It is not part of
+the Lumiface server and needs none of its models.
 
 ```bash
 cd examples/backend
@@ -13,10 +15,11 @@ LUMIFACE_URL=http://localhost:8000 LUMIFACE_KEY=lf_sk_change-me uv run uvicorn m
 
 | Route | Does | Real backend |
 |---|---|---|
-| `POST /api/face/session` `{subject_id, purpose}` | `POST /v1/sessions` with the key, returns the JSON for the device | takes `subject_id` from its own login, never from the device |
-| `POST /api/face/enrol-token` `{subject_id, name}` | `POST /v1/subjects/tokens` | only for a user it has authenticated |
-| `POST /api/face/done` `{session_id}` | `GET /v1/sessions/{id}` — the verdict | acts on `result.ok`, ignores what the device says |
-| `GET/POST/DELETE /api/face/subjects…`, `GET /api/face/verifications`, `GET/PUT /api/face/policy…` | admin helpers for the example apps' other tabs | |
+| `POST /api/users` multipart `{user_id, name, photo}` | keeps the photo in memory | your registration: the photo is already in your users table |
+| `POST /api/face/session` `{user_id?, purpose}` | reads that user's photo, `POST /v1/sessions` with the key and `reference_photo`, returns the JSON for the device; no `user_id` = liveness only | takes the user from its own login, never from the device |
+| `POST /api/face/done` `{session_id}` | `GET /v1/sessions/{id}` with the key, joined with its own `session_id → user`, answers `{…status, user_id, verified}` | grants what the session was for when `verified`; ignores what the device says |
+| `GET /api/users`, `DELETE /api/users/{id}`, `GET /api/face/verifications`, `GET/PUT /api/face/policy…` | helpers for the example apps' other tabs | |
 
-Copy the first three routes into your backend and replace the `subject_id` handling with your
-session's user. The device-side code in the examples then works unchanged.
+Copy `/api/face/session` and `/api/face/done` into your backend and replace the `user_id` handling
+with your session's user and your own photo store. The device-side code in the examples then
+works unchanged.

@@ -3,7 +3,7 @@ title: HTTP API
 description: Every endpoint of the Lumiface server with its headers, bodies and answers.
 ---
 
-Base path `/v1`. Project endpoints authenticate with `X-API-Key` from a backend, or a device token as `Authorization: Bearer` on the two device-facing calls (see below); admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
+Base path `/v1`. Project endpoints authenticate with `X-API-Key` from a backend; the one device-facing call, the session stream, with the session token (see below); admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
 
 ## Authentication
 
@@ -13,57 +13,67 @@ Two credentials, two audiences:
 |---|---|---|---|
 | Project API key (`lf_sk_…`) | `X-API-Key: <key>` | your backend | everything under `/v1` for the project |
 | Session token | `hello` message on the stream | the device, for one session | `WS /sessions/{id}/stream` of that session only |
-| Enrol token | `Authorization: Bearer <token>` | the device, once | `POST /subjects` for the subject fixed when the token was issued |
 
 Never ship the project key in an app or web bundle. The loop is:
 
-1. Backend: `POST /sessions` with the key, **with the `subject_id` it wants checked** (or none for liveness), and forwards the JSON to the device.
-2. Device: opens the stream with the session token, gets the plan, streams its recording while it runs it. The subject is fixed; the stream has no field to name one.
+1. Backend: `POST /sessions` with the key, **with the `reference_photo` of the person it wants checked** (from its own records; none for liveness), and forwards the JSON to the device.
+2. Device: opens the stream with the session token, gets the plan, streams its recording while it runs it. Who is matched is fixed; the stream has no field to name anyone.
 3. Device tells the backend it is done. **Do not trust that message.**
 4. Backend: `GET /sessions/{session_id}` with the key and acts on `result.ok` / `verification_id`.
 
-The server refuses `X-API-Key` on any request whose `Origin` is a browser page other than localhost (401 `API_KEY_FROM_BROWSER`; policy `allow_browser_api_key` lifts it for a development project), and the SDKs have no place to put a key at all: `LumifaceClient` takes a URL. The key's side of the API is REST from your backend; `examples/backend` in the repository is a complete one.
+The server refuses `X-API-Key` on any request whose `Origin` is a browser page other than localhost (401 `API_KEY_FROM_BROWSER`; policy `allow_browser_api_key` lifts it for a development project), and the SDKs have no place to put a key at all: `LumifaceClient` takes a URL. The key's side of the API is REST from your backend ([Your backend](/docs/backend)); `examples/backend` (Python) and `examples/backend-node` (TypeScript) in the repository are complete ones.
 
-A leaked session token is worth one attempt against the subject the backend chose, and it dies with the session (`ttl_seconds`). A leaked enrol token is worth one enrolment of the named subject *with whatever face the holder uploads*: only issue one to a user you have already authenticated by other means, and never for a subject that already has a face (re-enrolment needs the key; see `/subjects/tokens`).
+A leaked session token is worth one attempt against the photo the backend chose, and it dies with the session (`ttl_seconds`).
 
-## Subjects
-
-| Method | Path | Body | Answer |
-|---|---|---|---|
-| `POST` | `/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` — or just `photo` with `Authorization: Bearer <enrol token>` | 201 subject; 409 `SUBJECT_EXISTS`; 422 with the enrolment `reason_code` or `TTL_INVALID`; 401 `ENROL_TOKEN_INVALID`; 403 `ENROL_TOKEN_MISMATCH` |
-| `POST` | `/subjects/tokens` | json `{external_id, name?, ttl_seconds?, token_ttl_seconds?}` | 201 `{token, external_id, expires_at}` — single-use enrol token for a device (default life `ENROL_TOKEN_TTL_SECONDS` = 300, max one day). No `replace`: a token cannot overwrite an existing face, it gets 409; a rejected photo (422) hands the token back for a retry |
-| `GET` | `/subjects` | | list |
-| `GET` | `/subjects/{external_id}` | | subject or 404 `SUBJECT_NOT_FOUND` |
-| `DELETE` | `/subjects/{external_id}` | | 204 |
-
-Subject: `{external_id, name, enroll_spoof_score, created_at, expires_at}`.
-
-`ttl_seconds` sets when the embedding is dropped; omitted it takes the policy's `subject_ttl_seconds`, `0` keeps the
-subject until `DELETE`. Past `expires_at` the subject answers `SUBJECT_NOT_FOUND` on every route and the same
-`external_id` can be enrolled again without `replace`; the server's retention loop deletes the row shortly after.
-See [security](/docs/security#retention).
+There is no enrolment and no subject store: the server holds no face between sessions. The photo to match comes with each session and its embedding is dropped when the device opens the stream (see [security](/docs/security#retention)).
 
 ## Sessions
 
-`POST /sessions` with `{"subject_id": "E001" | null, "purpose": "checkin"}` (project key):
+`POST /sessions` (project key), body:
 
 ```json
 {
-  "session_id": "3f9c…",
-  "session_token": "kQx7…",
+  "reference_photo": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD…",
+  "purpose": "checkin"
+}
+```
+
+Answer, `201`:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "session_token": "kQx7pL2mN8vB4cD6fG1hJ3kL5nM7pQ9r",
   "mode": "verify",
   "purpose": "checkin",
-  "expires_at": "2026-09-18T09:01:00Z",
+  "expires_at": "2026-09-19T09:01:00Z",
   "ttl_seconds": 60,
   "client_config": {
     "align_hold_ms": 600,
-    "…": "…"
+    "min_face_width_fraction": 0.28,
+    "max_face_width_fraction": 0.48,
+    "center_tolerance": 0.18,
+    "neutral_max_yaw": 15,
+    "neutral_max_pitch": 15,
+    "challenge_timeout_ms": 10000,
+    "face_lost_grace_ms": 1500,
+    "oval_min_fill": 0.85,
+    "oval_hold_ms": 500,
+    "move_start_max_ratio": 0.8,
+    "settle_after_challenge_ms": 400,
+    "settle_after_flash_ms": 800
   }
 }
 ```
 
+`client_config` is the project policy's `client.*` block ([policy reference](/docs/policy-reference#client-fields)); the SDKs apply it, your backend passes it through.
+
 The challenge, the oval and the flash colours are **not** in this answer. They only reach the device once it has opened the
 stream, and the server judges them from what it receives, not from what the device reports.
+
+`mode` is `verify` with a `reference_photo`, `liveness` without one.
+
+**`reference_photo`** is the person to match: your own photo of them (a registration selfie, an ID scan) as base64 JPEG or PNG (a `data:` URL prefix is tolerated, `MAX_FRAME_BYTES` applies, 413 `PAYLOAD_TOO_LARGE`). The server requires one face, large enough (`min_face_size`) and frontal (`reference_max_yaw` / `reference_max_pitch`), and answers 422 with `BAD_IMAGE`, `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL` or `POSE_NOT_FRONTAL` when it cannot use it, so a bad photo fails at creation, not in front of the camera. It is not anti-spoof checked: it arrives with the project key from your backend, never from a device, so a photo of a printed ID is a valid reference where a streamed frame of one is `SPOOF`. The photo itself is never stored: only its embedding is kept on the session row, and it is deleted the moment the stream claims the session (an unused session loses it when the retention loop purges the session). The audit row records `reference: true`.
 
 ### The stream
 
@@ -100,8 +110,8 @@ verdict is judged the same way whatever the device sent.
 What the server does with it: every frame and event is stamped with the **server's** clock on receipt; the events
 only say where to look. Inside the challenge window it runs its own face detector on the frames it got and
 checks that the face moved from far into the oval (`face_move`: box growth and fit, centred); the colour on the
-face during each flash window is read from those frames; passive anti-spoof, identity and consistency run on the key frames it
-chose. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
+face during each flash window is read from those frames; passive anti-spoof runs on the key frames it chose, identity and
+consistency on those and on the middle frame of each flash window. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
 repeats the same bytes is refused (`FRAMES_STATIC`). The device's `ts` values (chunk header and event `ts`) decide only which window a frame falls into — a decoded frame's device time is the chunk's time plus its offset in the video, and a phone uploads a chunk a few hundred ms after the camera took it while its events arrive at once, so placing frames by arrival would put a colour's reflection in the next colour's window — and never a duration; a client that sends no `ts` is placed by arrival.
 
 Limits: `MAX_FRAME_BYTES` per message (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_CHUNKS`
@@ -128,26 +138,35 @@ Answer:
 
 ```json
 {
-  "session_id": "3f9c…",
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
   "mode": "verify",
-  "subject_id": "E001",
+  "reference": true,
   "purpose": "checkin",
   "used": true,
-  "expires_at": "2026-09-18T09:01:00Z",
-  "result": { "ok": true, "mode": "verify", "reason_code": "OK", "scores": { "…": "…" }, "verification_id": 42 }
+  "expires_at": "2026-09-19T09:01:00Z",
+  "result": {
+    "ok": true,
+    "mode": "verify",
+    "reason_code": "OK",
+    "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+    "verification_id": 42,
+    "details": {}
+  }
 }
 ```
 
+Field by field, with a refused example, on [Your backend](/docs/backend#2-read-the-verdict-and-decide).
+
 ## Verifications
 
-`GET /verifications?from&to&subject_id&session_id&purpose&ok&limit`, newest first:
+`GET /verifications?from&to&session_id&purpose&ok&limit`, newest first (`reference` true = verify, false = liveness only):
 
 ```json
 [
   {
     "id": 42,
-    "session_id": "3f9c…",
-    "subject_id": "E001",
+    "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+    "reference": true,
     "purpose": "checkin",
     "ok": true,
     "reason_code": "OK",

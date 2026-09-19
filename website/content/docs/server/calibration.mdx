@@ -9,7 +9,7 @@ Thresholds were calibrated on one team, a Galaxy S25+, an Android emulator with 
 
 ```
 server/data/samples/
-  real/<subject_id>/*.jpg     genuine photos, several per person, including the enrolled one
+  real/<person>/*.jpg         genuine photos, several per person, including the one used as the reference
   fake/*.jpg                  prints, screens, whatever you want to reject
 ```
 
@@ -64,8 +64,9 @@ cd server && uv run python scripts/replay_sessions.py data/frames/1            #
 FLASH_MIN_RESPONSE=4 uv run python scripts/replay_sessions.py data/frames/1    # the same under another policy
 ```
 
-Sort sessions you have labelled into `data/sessions/genuine/` and `data/sessions/attack/` (with the enrolled
-embedding as `data/sessions/subjects/<id>.npy`) and `tests/test_replay.py` turns them into a regression gate:
+Sort sessions you have labelled into `data/sessions/genuine/` and `data/sessions/attack/` (each folder carries its
+`reference.npy`; sessions from before reference photos name a `subject_id` and use `data/sessions/subjects/<id>.npy`)
+and `tests/test_replay.py` turns them into a regression gate:
 genuine must pass, attack must be refused, under the balanced preset.
 
 ## STORE_FRAMES and DEBUG

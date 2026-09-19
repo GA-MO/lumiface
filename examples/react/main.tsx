@@ -1,9 +1,10 @@
-import { StrictMode, useMemo, useState } from "react";
+import { StrictMode, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { LumifaceClient, LumifaceView, TH, sessionFromJson, type FaceFlow, type LumifaceScope, type VerifyResult } from "@lumiface/react";
 
-type Mode = "checkin" | "login" | "liveness" | "enroll" | "custom";
+type Mode = "checkin" | "login" | "liveness" | "custom";
+type User = { id: string; name: string };
 
 /** The browser's side of the example backend (examples/backend, proxied at /api). No key in here. */
 const backend = {
@@ -14,9 +15,20 @@ const backend = {
     return j as T;
   },
   // The backend forwards Lumiface's JSON as is; sessionFromJson turns it into the SDK's session.
-  session: (subjectId: string | null, purpose: string) => backend.post<Record<string, unknown>>("/api/face/session", { subject_id: subjectId, purpose }).then(sessionFromJson),
-  enrolToken: (subjectId: string) => backend.post<{ token: string }>("/api/face/enrol-token", { subject_id: subjectId }).then((j) => j.token),
-  done: (sessionId: string) => backend.post<{ used: boolean; result: { ok: boolean; reason_code: string; verification_id: number | null } | null }>("/api/face/done", { session_id: sessionId }),
+  // It picks the reference photo from its own user store; a null user is a liveness session.
+  session: (userId: string | null, purpose: string) => backend.post<Record<string, unknown>>("/api/face/session", { user_id: userId, purpose }).then(sessionFromJson),
+  done: (sessionId: string) => backend.post<{ used: boolean; reference: boolean; result: { ok: boolean; reason_code: string; verification_id: number | null } | null }>("/api/face/done", { session_id: sessionId }),
+  users: () => fetch("/api/users").then((r) => r.json() as Promise<User[]>),
+  // Registration: the photo goes to the example backend's own store, never to Lumiface.
+  register: async (id: string, name: string, photo: File) => {
+    const form = new FormData();
+    form.set("user_id", id);
+    form.set("name", name);
+    form.set("photo", photo);
+    const r = await fetch("/api/users", { method: "POST", body: form });
+    if (!r.ok) throw new Error(`HTTP_${r.status}`);
+  },
+  remove: (id: string) => fetch(`/api/users/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
 
 function CustomOverlay({ scope }: { scope: LumifaceScope }) {
@@ -37,7 +49,13 @@ function CustomOverlay({ scope }: { scope: LumifaceScope }) {
 
 function App() {
   const [serverUrl, setServerUrl] = useState(localStorage.getItem("fg.url") ?? "http://localhost:8000");
-  const [subjectId, setSubjectId] = useState(localStorage.getItem("fg.subject") ?? "");
+  const [userId, setUserId] = useState(localStorage.getItem("fg.user") ?? "");
+  const [users, setUsers] = useState<User[]>([]);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const refreshUsers = () => backend.users().then(setUsers).catch(() => setUsers([]));
+  useEffect(() => {
+    refreshUsers();
+  }, []);
   const [thai, setThai] = useState(false);
   const [debug, setDebug] = useState(false);
   const [mode, setMode] = useState<Mode | null>(null);
@@ -47,7 +65,7 @@ function App() {
 
   const open = (m: Mode) => {
     localStorage.setItem("fg.url", serverUrl);
-    localStorage.setItem("fg.subject", subjectId);
+    localStorage.setItem("fg.user", userId);
     setDevice(null);
     setVerdict(null);
     setMode(m);
@@ -65,7 +83,7 @@ function App() {
     }
   };
 
-  const flow: FaceFlow = mode === "enroll" ? "enroll" : mode === "liveness" ? "liveness" : "verify";
+  const flow: FaceFlow = mode === "liveness" ? "liveness" : "verify";
   const common = {
     client,
     strings: thai ? TH : undefined,
@@ -74,7 +92,17 @@ function App() {
     onDone: () => setMode(null),
     camera: { modelUrl: "/models/face_detection_short/model.json" },
   };
-  const session = (purpose: string, subject: string | null = subjectId || null) => () => backend.session(subject, purpose);
+  const session = (purpose: string, user: string | null = userId || null) => () => backend.session(user, purpose);
+  const register = async () => {
+    if (!userId || !photo) return;
+    try {
+      await backend.register(userId, userId, photo);
+      setPhoto(null);
+      await refreshUsers();
+    } catch (e) {
+      setVerdict(`register failed: ${e}`);
+    }
+  };
 
   return (
     <main>
@@ -83,20 +111,26 @@ function App() {
         <>
           <label>Lumiface server URL (the browser uploads here with a session token)</label>
           <input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} />
-          <label>Subject id</label>
-          <input value={subjectId} onChange={(e) => setSubjectId(e.target.value)} />
+          <label>User id (a user of the example backend; its photo is the reference)</label>
+          <input value={userId} onChange={(e) => setUserId(e.target.value)} list="users" />
+          <datalist id="users">{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</datalist>
+          <div>
+            <input type="file" accept="image/*" capture="user" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} style={{ width: "auto" }} />
+            <button onClick={register} disabled={!userId || !photo}>Register photo for this user</button>
+            {users.some((u) => u.id === userId) && <button onClick={() => backend.remove(userId).then(refreshUsers)}>Remove</button>}
+          </div>
           <label><input type="checkbox" checked={thai} onChange={(e) => setThai(e.target.checked)} style={{ width: "auto" }} /> Thai strings</label>
           <label><input type="checkbox" checked={debug} onChange={(e) => setDebug(e.target.checked)} style={{ width: "auto" }} /> Debug overlay (face box + signals)</label>
           <div>
             <button onClick={() => open("checkin")}>Check-in</button>
             <button onClick={() => open("login")}>Login (themed)</button>
             <button onClick={() => open("liveness")}>Liveness only</button>
-            <button onClick={() => open("enroll")} disabled={!subjectId}>Enrol from camera</button>
             <button onClick={() => open("custom")}>Custom overlay</button>
           </div>
           <p style={{ fontSize: 12, opacity: 0.7 }}>
-            Sessions and enrol tokens come from <code>/api/face/*</code>: the example backend (<code>examples/backend</code>,
-            <code>bun run dev:backend</code>) that holds the project key, the way your own backend would. This page never sees it.
+            Sessions come from <code>/api/face/session</code>: the example backend (<code>examples/backend</code>,
+            <code>bun run dev:backend</code>) holds the project key and the users' photos, the way your own backend would, and
+            sends the photo to Lumiface as the session's reference. This page never sees the key; Lumiface keeps no face.
           </p>
           {device && <pre>device: {JSON.stringify(device, null, 2)}</pre>}
           {verdict && <pre>{verdict}</pre>}
@@ -107,10 +141,8 @@ function App() {
             <LumifaceView {...common} sessionProvider={session("custom")} renderOverlay={(scope) => <CustomOverlay scope={scope} />} />
           ) : mode === "login" ? (
             <LumifaceView {...common} sessionProvider={session("login")} theme={{ guideShape: "roundedRect", guideActive: "#2dd4bf", guideSuccess: "#2dd4bf" }} />
-          ) : mode === "enroll" ? (
-            <LumifaceView {...common} flow="enroll" enrolTokenProvider={() => backend.enrolToken(subjectId)} />
           ) : (
-            <LumifaceView {...common} flow={flow} sessionProvider={session(mode, flow === "liveness" ? null : subjectId || null)} />
+            <LumifaceView {...common} flow={flow} sessionProvider={session(mode, flow === "liveness" ? null : userId || null)} />
           )}
         </div>
       )}

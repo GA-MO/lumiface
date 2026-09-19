@@ -47,7 +47,7 @@ class _HistoryPageState extends State<HistoryPage> {
                   for (final r in _rows!)
                     ListTile(
                       leading: Icon(r.ok ? Icons.check_circle : Icons.cancel, color: r.ok ? Colors.green : Colors.red),
-                      title: Text('${r.subjectId ?? '(liveness)'}  ${r.reasonCode}'),
+                      title: Text('${r.reference ? 'verify' : 'liveness'}  ${r.reasonCode}'),
                       subtitle: Text('${r.purpose.isEmpty ? '' : '${r.purpose} · '}${r.createdAt.toLocal()}  '
                           'match=${fmt(r.scores.match)} spoof=${fmt(r.scores.spoof)} cons=${fmt(r.scores.consistency)}'),
                     ),

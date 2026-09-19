@@ -14,9 +14,9 @@ class CustomUiPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) => FaceVerifyView(
         client: settings.client,
-        flow: settings.subjectId.isEmpty ? FaceFlow.liveness : FaceFlow.verify,
+        flow: settings.userId.isEmpty ? FaceFlow.liveness : FaceFlow.verify,
         sessionProvider: () => settings.backend.createSession(
-            subjectId: settings.subjectId.isEmpty ? null : settings.subjectId, purpose: 'custom'),
+            userId: settings.userId.isEmpty ? null : settings.userId, purpose: 'custom'),
         strings: settings.strings,
         onResult: onResult,
         onFlashChanged: setMaxBrightness,

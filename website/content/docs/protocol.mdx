@@ -38,8 +38,16 @@ client                                             server
 
 ### 1. hello
 
-`{"type":"hello","token":<session_token>,"client":{…},"format":<format>}`, the first message, within
-10 s of connecting or the server closes `HELLO_INVALID`. `token` is the `session_token` from
+```json
+{
+  "type": "hello",
+  "token": "kQx7pL2mN8vB4cD6fG1hJ3kL5nM7pQ9r",
+  "format": "webm",
+  "client": { "platform": "web", "sdk": "lumiface-react" }
+}
+```
+
+The first message, within 10 s of connecting or the server closes `HELLO_INVALID`. `token` is the `session_token` from
 `POST /v1/sessions` (the backend's, see [API auth](/docs/api#authentication)); a wrong or spent one
 ends the stream `SESSION_NOT_FOUND` / `SESSION_USED`. `client` is a free object kept in the audit log
 (`platform`, `sdk`, …); the server adds the connection's `user_agent`. `format` must be one of the
@@ -47,7 +55,32 @@ four below or the server closes `HELLO_INVALID`; omitted it is `jpeg`.
 
 ### 2. plan
 
-`{"type":"plan", …}`, the server's answer. `challenges` is always `["face_move"]`. `oval` is where the
+```json
+{
+  "type": "plan",
+  "challenges": ["face_move"],
+  "oval": { "cx": 0.5, "cy": 0.45, "width": 0.62, "height_ratio": 1.35 },
+  "flash_colors": ["ff0000", "00ff00", "0000ff"],
+  "flash_hold_ms": 450,
+  "client_config": {
+    "align_hold_ms": 600,
+    "min_face_width_fraction": 0.28,
+    "max_face_width_fraction": 0.48,
+    "center_tolerance": 0.18,
+    "neutral_max_yaw": 15,
+    "neutral_max_pitch": 15,
+    "challenge_timeout_ms": 10000,
+    "face_lost_grace_ms": 1500,
+    "oval_min_fill": 0.85,
+    "oval_hold_ms": 500,
+    "move_start_max_ratio": 0.8,
+    "settle_after_challenge_ms": 400,
+    "settle_after_flash_ms": 800
+  }
+}
+```
+
+The server's answer. `challenges` is always `["face_move"]`. `oval` is where the
 face must end up — `cx`, `cy` fractions of the frame, `width` a fraction of the frame's **shorter**
 side (so it holds in portrait and landscape), `height_ratio` the oval's height over its width — or
 `null` when there is no `face_move`. `flash_colors` is the random sequence of hex colours to show
@@ -70,13 +103,24 @@ payload depends on `format`:
 The server decodes video into JPEG frames with both clocks before anything else runs
 (`services/video.py`), so the pipeline sees what a `jpeg` client would have sent, at the camera's rate.
 Send the frames **upright and un-mirrored** — the face the way a photo shows it — because the server's
-detector and the enrolled embedding are. A 640 px long side is enough. Stream continuously from the
+detector and the reference photo's embedding are. A 640 px long side is enough. Stream continuously from the
 plan to `end`, in every phase including the flash; do not pause between phases.
 
 ### 4. text events: the boundaries
 
-`{"type":"event","name":<name>,"ts":<device ms>,"index":<i>}`. Events only tell the server **where to
-look** in the recording; they must arrive in the plan's order or the stream ends `TIMING_ORDER`:
+```json
+{ "type": "event", "name": "aligned", "ts": 1840 }
+{ "type": "event", "name": "challenge_done", "index": 0, "ts": 4310 }
+{ "type": "event", "name": "flash", "index": 0, "ts": 4720 }
+{ "type": "event", "name": "flash", "index": 1, "ts": 5170 }
+{ "type": "event", "name": "flash", "index": 2, "ts": 5620 }
+{ "type": "event", "name": "flash_end", "ts": 6070 }
+{ "type": "end" }
+```
+
+One session's events in order; `ts` is the device's milliseconds on the same clock as the frame headers.
+Events only tell the server **where to look** in the recording; they must arrive in the plan's order or the
+stream ends `TIMING_ORDER`:
 
 | Event | `index` | Marks |
 |---|---|---|
@@ -90,9 +134,27 @@ table (`{"type":"end"}`); a value outside this set ends the stream `EVENT_INVALI
 
 ### 5. end and the verdict
 
-`{"type":"end"}`, then the server sends `{"type":"result", …}` and closes with code 1000. The result
-is the [verify answer](/docs/api#the-stream): `ok`, `reason_code`, `scores`, `verification_id`, and
-`details: {}` — the device never sees the per-gate detail, only the [backend](/docs/reason-codes#the-details-object) does.
+`{"type":"end"}`, then the server sends the result and closes with code 1000:
+
+```json
+{
+  "type": "result",
+  "ok": true,
+  "mode": "verify",
+  "reason_code": "OK",
+  "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+  "verification_id": 42,
+  "details": {}
+}
+```
+
+The same fields as the [verify answer](/docs/api#the-stream). `details` is always `{}` here — the device never
+sees the per-gate detail, only the [backend](/docs/reason-codes#the-details-object) does. A refusal instead of a
+result:
+
+```json
+{ "type": "error", "reason_code": "SESSION_USED" }
+```
 
 ## The clocks
 

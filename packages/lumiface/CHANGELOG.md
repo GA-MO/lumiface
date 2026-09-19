@@ -1,3 +1,7 @@
+## 0.4.0
+
+- Enrolment is gone from the server and the SDK: `FaceFlow.enroll`, `FaceEnrollController`, `enrolTokenProvider`, `LumifaceClient.enroll`, `Subject`, `FrameCapturer` / `captureJpeg` and `rawFrameToJpeg` are removed, and `LumifaceClient` needs no HTTP client (the `dio` and `image` dependencies are dropped). Your backend sends the person's photo as `reference_photo` when it creates the session; the server keeps nothing between sessions. `FaceFlow` is `verify | liveness`, `sessionProvider` is required, `FaceVerifyView.onController` hands out a `FaceVerifyController` (the abstract `FaceFlowController` is folded into it), and `VerificationRecord.subjectId` became `reference`.
+
 ## 0.3.0
 
 - Box-only detectors: TensorFlow Lite BlazeFace in the Android plugin, Apple Vision in a new iOS plugin, TensorFlow.js BlazeFace on the web (`BlazeFaceCameraSource`). ML Kit and MediaPipe are gone.

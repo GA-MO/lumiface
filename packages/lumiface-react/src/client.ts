@@ -1,4 +1,4 @@
-import { Http, planFromJson, reasonCode, toSubject, toVerifyResult } from "./http.ts";
+import { planFromJson, toVerifyResult } from "./http.ts";
 import {
   LumifaceError,
   clientError,
@@ -6,7 +6,6 @@ import {
   type StreamEventName,
   type StreamFormat,
   type StreamPlan,
-  type Subject,
   type VerifyResult,
   type VerifyStream,
 } from "./types.ts";
@@ -15,7 +14,6 @@ export { planFromJson, sessionFromJson } from "./http.ts";
 
 export interface LumifaceClientOptions {
   baseUrl: string;
-  fetch?: typeof fetch;
   /** WebSocket constructor; defaults to the browser's. */
   WebSocket?: typeof WebSocket;
 }
@@ -23,19 +21,17 @@ export interface LumifaceClientOptions {
 const MAX_QUEUED_BYTES = 512 * 1024; // beyond this, drop frames instead of adding latency
 
 /**
- * The client a browser ships with. It holds no secret: every call carries a short-lived token
- * that your backend obtained with the project key (`POST /v1/sessions` → `session_token`,
- * `POST /v1/subjects/tokens` → enrol token). Everything the key can do — sessions, subjects,
- * the audit log, the policy — is plain REST for your backend; see `examples/backend`.
+ * The client a browser ships with. It holds no secret and can do exactly one thing: stream a
+ * session it was handed, with the short-lived `session_token` your backend obtained with the
+ * project key (`POST /v1/sessions`). Everything the key can do — sessions with the reference
+ * photo, the audit log, the policy — is plain REST for your backend; see `examples/backend`.
  */
 export class LumifaceClient {
-  private readonly http: Http;
   private readonly baseUrl: string;
   private readonly WebSocketImpl: typeof WebSocket | undefined;
 
   constructor(options: LumifaceClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/$/, "");
-    this.http = new Http(options.baseUrl, options.fetch);
     this.WebSocketImpl = options.WebSocket ?? (typeof WebSocket !== "undefined" ? WebSocket : undefined);
   }
 
@@ -105,14 +101,5 @@ export class LumifaceClient {
         if (ws.readyState === ws.OPEN || ws.readyState === ws.CONNECTING) ws.close();
       },
     };
-  }
-
-  /** Enrols one photo as the subject named in `enrolToken`. */
-  async enroll(options: { photo: Blob; enrolToken: string }): Promise<Subject> {
-    const form = new FormData();
-    form.set("photo", options.photo, "photo.jpg");
-    const { status, body } = await this.http.request("/v1/subjects", { method: "POST", body: form }, options.enrolToken);
-    if (status >= 400) throw new LumifaceError(reasonCode(body, status), body);
-    return toSubject(body as Record<string, unknown>);
   }
 }

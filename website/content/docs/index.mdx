@@ -5,14 +5,17 @@ description: Self-hosted face verification with active liveness, a policy per pr
 
 Lumiface has three parts, plus your backend:
 
-- **Server** (`server/`): FastAPI. Takes a WebSocket stream of frames per session, clocks it itself and reads the face's move into the oval and the flash reflection from its own detector; InsightFace ArcFace for matching, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy.
+- **Server** (`server/`): FastAPI. Takes a WebSocket stream of frames per session, clocks it itself and reads the face's move into the oval and the flash reflection from its own detector; InsightFace ArcFace for matching against the photo the session was created with, MiniFASNet and the CVPR-2024 ResNet50 gate for passive anti-spoof. SQLite by default, Postgres through `DATABASE_URL`. Multi-tenant: every project has an API key and its own policy. It keeps no face between sessions.
 - **Flutter package** (`packages/lumiface`): `FaceVerifyView` plus the headless `FaceVerifyController`. TensorFlow Lite BlazeFace on Android, Apple Vision on iOS, TensorFlow.js BlazeFace on the web.
 - **React SDK** (`packages/lumiface-react`): `LumifaceView`, `useLumiface` and the same headless controller, TensorFlow.js BlazeFace in the browser.
-- **Your backend** holds the project key: it creates sessions (`POST /v1/sessions`) and reads verdicts (`GET /v1/sessions/{id}`). `examples/backend` is a complete one in ~100 lines; the device SDKs cannot take a key.
+- **Your backend** holds the project key and the users' photos: it creates sessions with the photo (`POST /v1/sessions`) and reads verdicts (`GET /v1/sessions/{id}`). `examples/backend` (Python) and `examples/backend-node` (TypeScript) are complete ones in ~100 lines; the device SDKs cannot take a key.
 
-Pick a door:
+Three people usually share the work. Pick your door:
 
-- [Get started](/docs/get-started): run everything locally in ten minutes.
-- [Concepts](/docs/concepts): sessions, flows, frames, policies.
-- [Flutter](/docs/flutter), [React](/docs/react), [Server](/docs/server).
-- [Policy reference](/docs/policy-reference), [API](/docs/api), [Reason codes](/docs/reason-codes), [Security model](/docs/security).
+| You are | Read | You touch |
+|---|---|---|
+| **Front-end** (the app) | [Flutter](/docs/flutter) or [React](/docs/react), then [Reason codes](/docs/reason-codes) for the copy | one view, a `sessionProvider` that calls your backend, an `onResult` that tells it you are done |
+| **Back-end** (the key and the users) | [Your backend](/docs/backend), then [API](/docs/api) | two REST calls, `session_id → user` on your side, the decision |
+| **Installing the server** | [Get started](/docs/get-started), then [Server](/docs/server) and [Security](/docs/security) | `docker compose` or `uv run uvicorn`, the environment, one project per app, TLS in front |
+
+Then [Concepts](/docs/concepts) for the vocabulary the three of you share, and the [Policy reference](/docs/policy-reference) when a threshold needs tuning.

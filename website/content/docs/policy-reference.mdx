@@ -18,7 +18,7 @@ The same names, upper-cased, are the environment variables that set the defaults
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `match_threshold` | float | `0.45` | Min cosine similarity between every frame and the enrolled face. |
+| `match_threshold` | float | `0.45` | Min cosine similarity between every frame and the reference photo. |
 | `consistency_threshold` | float | `0.6` | Min cosine similarity between two frontal frames. |
 | `consistency_pose_threshold` | float | `0.4` | Min similarity when one frame is turned away. |
 | `pose_frame_max_angle` | float | `20` | |yaw| or |pitch| above this marks a pose frame. |
@@ -29,10 +29,9 @@ The same names, upper-cased, are the environment variables that set the defaults
 | `cvpr_threshold` | float | `0.3` | CVPR live probability, mean over frames. |
 | `cvpr_hard_floor` | float | `0.05` | CVPR live probability every frame must clear. |
 | `min_face_size` | int | `112` | Min face box side in pixels. |
-| `enroll_max_yaw` | float | `20` | Max |yaw| accepted for an enrolment photo. |
-| `enroll_max_pitch` | float | `20` | Max |pitch| accepted for an enrolment photo. |
+| `reference_max_yaw` | float | `20` | Max |yaw| accepted for a session's reference photo. |
+| `reference_max_pitch` | float | `20` | Max |pitch| accepted for a session's reference photo. |
 | `session_ttl_seconds` | int | `60` | A session must be verified within this time. |
-| `subject_ttl_seconds` | int | `0` | Default retention of an enrolled face in seconds; 0 keeps it until deleted. |
 | `allow_browser_api_key` | bool | `false` | Accept the project key from a browser origin other than localhost. Development only. |
 | `oval_width_fraction` | float | `0.62` | face_move: oval width as a fraction of the frame's shorter side; the face must fill it. |
 | `oval_center_y` | float | `0.45` | face_move: oval centre as a fraction of the frame height. |

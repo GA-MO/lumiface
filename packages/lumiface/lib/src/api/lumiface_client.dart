@@ -2,12 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:dio/dio.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import '../liveness/signal_source.dart';
 import '../models.dart';
-import '_http.dart';
 
 /// One verification in flight: video chunks go up as they are recorded, events tell the
 /// server where to look, [end] resolves with the verdict. The server decodes the video into
@@ -28,18 +26,15 @@ abstract class VerifyStream {
   void close();
 }
 
-/// The client an app ships with. It holds no secret: every call carries a
-/// short-lived token that your backend obtained with the project key
-/// (`POST /v1/sessions` → `session_token`, `POST /v1/subjects/tokens` → enrol
-/// token). Everything the key can do — sessions, subjects, the audit log, the
+/// The client an app ships with. It holds no secret and can do exactly one
+/// thing: stream a session it was handed, with the short-lived `session_token`
+/// your backend obtained with the project key (`POST /v1/sessions`). Everything
+/// the key can do — sessions with the reference photo, the audit log, the
 /// policy — is plain REST for your backend; see `examples/backend`.
 class LumifaceClient {
-  LumifaceClient({required String baseUrl, Dio? dio})
-    : _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), ''),
-      _dio = dio ?? newDio(baseUrl);
+  LumifaceClient({required String baseUrl}) : _baseUrl = baseUrl.replaceFirst(RegExp(r'/$'), '');
 
   final String _baseUrl;
-  final Dio _dio;
 
   /// Opens the session's stream. The server answers with the plan; the controller
   /// then sends chunks and events and finally [VerifyStream.end]s for the verdict.
@@ -47,14 +42,6 @@ class LumifaceClient {
       {Map<String, dynamic> clientInfo = const {}, StreamFormat format = StreamFormat.jpeg}) {
     final url = Uri.parse('${_baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/v1/sessions/${session.id}/stream');
     return _SocketStream(WebSocketChannel.connect(url), session, clientInfo, format);
-  }
-
-  /// Enrols one photo as the subject named in [enrolToken].
-  Future<Subject> enroll({required List<int> photoJpeg, required String enrolToken}) async {
-    final form = FormData.fromMap({'photo': MultipartFile.fromBytes(photoJpeg, filename: 'photo.jpg')});
-    final r = await _dio.post<Map<String, dynamic>>('/v1/subjects', data: form, options: bearer(enrolToken));
-    if (r.statusCode == 201) return Subject.fromJson(r.data!);
-    throwEnrolError(r);
   }
 }
 
@@ -104,7 +91,6 @@ class _SocketStream implements VerifyStream {
       scores: r.scores,
       verificationId: r.verificationId,
       sessionId: _session.id,
-      subject: r.subject,
       message: r.message,
     );
     _result.complete(result);

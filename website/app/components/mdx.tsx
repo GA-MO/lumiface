@@ -4,8 +4,10 @@ import { TypeTable } from "fumadocs-ui/components/type-table";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { MDXComponents } from "mdx/types";
 
+import { FlowSwimlane } from "./flow-swimlane";
+
 export function getMDXComponents(components?: MDXComponents) {
-  return { ...defaultMdxComponents, Step, Steps, Tab, Tabs, TypeTable, ...components } satisfies MDXComponents;
+  return { ...defaultMdxComponents, Step, Steps, Tab, Tabs, TypeTable, FlowSwimlane, ...components } satisfies MDXComponents;
 }
 
 export const useMDXComponents = getMDXComponents;

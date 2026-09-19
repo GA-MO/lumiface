@@ -37,8 +37,8 @@ const TERMINAL = `cd server && uv sync
 uv run python weights/download.py && cp .env.example .env
 uv run uvicorn app.main:app --port 8000
 
-curl -X POST localhost:8000/v1/subjects -H "X-API-Key: lf_sk_change-me" \\
-  -F external_id=E001 -F photo=@me.jpg
+curl -X POST localhost:8000/v1/sessions -H "X-API-Key: lf_sk_change-me" \\
+  -H "Content-Type: application/json" -d "{\\"reference_photo\\": \\"$(base64 -i me.jpg)\\"}"
 
 bun run dev:backend        # examples/backend holds the key
 flutter run --release      # examples/flutter, on a phone
@@ -63,13 +63,13 @@ export function meta() {
 const STATS = [
   ["2", "anti-spoof models", "MiniFASNet + CVPR-2024"],
   ["3", "device detectors", "BlazeFace on web and Android, Apple Vision on iOS"],
-  ["43", "policy fields", "tuned per project, no redeploy"],
+  ["42", "policy fields", "tuned per project, no redeploy"],
   ["1", "stream per session", "frames + events over WebSocket, server clock"],
 ] as const;
 
 const STEPS = [
-  { icon: KeyRound, title: "Enrol once", body: "POST a photo per subject from your backend. The key never reaches a device; the embedding never leaves your server." },
-  { icon: ScanFace, title: "Stream from the device", body: "Your backend mints a session; the SDK opens its stream, gets the plan and sends frames the whole time while it guides the person into the oval and through the flash." },
+  { icon: KeyRound, title: "Send the photo you have", body: "Your backend creates the session with the person's photo from its own records. The key never reaches a device; the server keeps no face — the photo lives for that one session." },
+  { icon: ScanFace, title: "Stream from the device", body: "The SDK opens the session's stream, gets the plan and sends frames the whole time while it guides the person into the oval and through the flash." },
   { icon: ShieldCheck, title: "Judge on the server", body: "The server clocks the stream itself, reads the move into the oval and the flash from its own detector, runs anti-spoof and identity, and your backend reads the verdict." },
 ] as const;
 
@@ -84,7 +84,7 @@ const SERVER_CHECKS: readonly [LucideIcon, string, string][] = [
   [ScanFace, "Reads the oval itself", "Its own face boxes on the streamed frames: the oval is a face that grew from far into it, centred, inside the window. A patched client cannot skip it."],
   [Timer, "Its own clock", "Every frame and event is stamped on arrival; durations, order and a repeated feed are judged server-side."],
   [Zap, "Flash reflection", "The cheeks must follow the colour sequence in each colour's window and reflect more than the wall behind."],
-  [ShieldCheck, "Anti-spoof and identity", "MiniFASNet and the CVPR-2024 ResNet50 on the key frames, then ArcFace against the enrolled face and across frames."],
+  [ShieldCheck, "Anti-spoof and identity", "MiniFASNet and the CVPR-2024 ResNet50 on the key frames, then ArcFace against the reference photo and across frames."],
 ];
 
 const POLICY_POINTS: readonly [LucideIcon, string][] = [
@@ -236,7 +236,7 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
             <SectionHeading
               eyebrow="Liveness"
               title="The device guides, the server decides"
-              body="Nothing the device reports counts as evidence. It shows the person what to do and streams the camera; the server proves from the stream that it happened, that the frames are real and that they belong to the enrolled subject."
+              body="Nothing the device reports counts as evidence. It shows the person what to do and streams the camera; the server proves from the stream that it happened, that the frames are real and that they belong to the person in the reference photo."
             />
             <div className="mt-12 grid gap-6 lg:grid-cols-2">
               <CheckList icon={Smartphone} title="On the device — guidance only" rows={DEVICE_CHECKS} />

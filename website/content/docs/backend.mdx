@@ -1,0 +1,200 @@
+---
+title: Your backend
+description: The two REST calls a backend makes, what it must keep on its own side, and two complete examples (Python, TypeScript).
+---
+
+Lumiface never talks to a device about *who* it is and keeps no face between sessions. Your backend does three
+things: it holds the project key, it holds the users and their photos, and it decides. The whole integration is
+two REST calls and one record of your own — steps 1–6 and 14–18 below; the SDK does the middle.
+
+<FlowSwimlane />
+
+## 1. Create the session with the person's photo
+
+When the logged-in user reaches the feature you are gating, your backend creates the session with the photo you
+already hold for that user (registration selfie, ID scan) and hands the JSON to the app as it is.
+
+Request:
+
+```http
+POST /v1/sessions HTTP/1.1
+Host: faces.example.com
+X-API-Key: lf_sk_change-me
+Content-Type: application/json
+
+{
+  "reference_photo": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/…",
+  "purpose": "login"
+}
+```
+
+`reference_photo` is the JPEG or PNG as base64 (a `data:image/jpeg;base64,` prefix is accepted). Leave it out and the
+session only proves a live person.
+
+Response, `201 Created`:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "session_token": "kQx7pL2mN8vB4cD6fG1hJ3kL5nM7pQ9r",
+  "mode": "verify",
+  "purpose": "login",
+  "expires_at": "2026-09-19T09:01:00Z",
+  "ttl_seconds": 60,
+  "client_config": {
+    "align_hold_ms": 600,
+    "min_face_width_fraction": 0.28,
+    "max_face_width_fraction": 0.48,
+    "center_tolerance": 0.18,
+    "neutral_max_yaw": 15,
+    "neutral_max_pitch": 15,
+    "challenge_timeout_ms": 10000,
+    "face_lost_grace_ms": 1500,
+    "oval_min_fill": 0.85,
+    "oval_hold_ms": 500,
+    "move_start_max_ratio": 0.8,
+    "settle_after_challenge_ms": 400,
+    "settle_after_flash_ms": 800
+  }
+}
+```
+
+| Field | What your backend does with it |
+|---|---|
+| `session_id` | **keep it with the user id** — the verdict you read later names no user |
+| `session_token` | goes to the app inside this JSON; it is the app's only credential, for this session only |
+| `mode` | `verify` (a photo was given) or `liveness` |
+| `expires_at`, `ttl_seconds` | the app must open the stream before then |
+| `client_config` | for the SDK; pass the JSON through untouched |
+
+Response, `422 Unprocessable Entity`, when the photo cannot serve as a reference — fix the user's record, not the session:
+
+```json
+{
+  "detail": {
+    "reason_code": "POSE_NOT_FRONTAL",
+    "details": { "yaw": -31.4, "pitch": 4.2 }
+  }
+}
+```
+
+`reason_code` is one of `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL`, `BAD_IMAGE`
+(`413` `PAYLOAD_TOO_LARGE` above `MAX_FRAME_BYTES`, 4 MB).
+
+The server turns the photo into an embedding at once, keeps it on the session row only until the device opens the
+stream, and never stores the photo ([retention](/docs/security#retention)).
+
+## 2. Read the verdict and decide
+
+The app tells you it is done (`onResult` in the SDKs carries `sessionId`). That report is bytes on a device; the
+answer comes from here:
+
+```http
+GET /v1/sessions/3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b HTTP/1.1
+Host: faces.example.com
+X-API-Key: lf_sk_change-me
+```
+
+Response, `200 OK`, after a successful verify:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "mode": "verify",
+  "reference": true,
+  "purpose": "login",
+  "used": true,
+  "expires_at": "2026-09-19T09:01:00Z",
+  "result": {
+    "ok": true,
+    "mode": "verify",
+    "reason_code": "OK",
+    "scores": {
+      "match": 0.71,
+      "spoof": 0.93,
+      "consistency": 0.88
+    },
+    "verification_id": 42,
+    "details": {}
+  }
+}
+```
+
+The same call after a refusal:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "mode": "verify",
+  "reference": true,
+  "purpose": "login",
+  "used": true,
+  "expires_at": "2026-09-19T09:01:00Z",
+  "result": {
+    "ok": false,
+    "mode": "verify",
+    "reason_code": "NO_MATCH",
+    "scores": {
+      "match": 0.22,
+      "spoof": 0.91,
+      "consistency": 0.86
+    },
+    "verification_id": null,
+    "details": {}
+  }
+}
+```
+
+And before the app has streamed anything (or after it gave up): `"used": false, "result": null`.
+
+| Field | Meaning |
+|---|---|
+| `used` | the device opened the stream; a session is single use |
+| `reference` | a photo was given at creation — `true` is the only kind that proves identity |
+| `result` | `null` until the stream ended; then the verdict |
+| `result.ok` | the whole pipeline passed |
+| `result.reason_code` | `OK`, or the first gate that refused ([reason codes](/docs/reason-codes)) |
+| `result.scores.match` | lowest cosine against the photo across the key frames and the flash frames; `null` in liveness |
+| `result.scores.spoof` | mean MiniFASNet real score over the key frames |
+| `result.scores.consistency` | lowest cosine between any two frames of the session |
+| `result.verification_id` | the audit row, set on success only |
+
+The decision, in one line:
+
+```ts
+const verified = status.result?.ok === true && status.reference === true && sessions.get(status.session_id) === req.user.id;
+```
+
+The full per-gate record (windows, oval readings, flash scores, every frame's spoof and match) is in
+`GET /v1/verifications?session_id=…` → `details`, for support and tuning; the device never gets it.
+
+## The examples
+
+Two complete stand-in backends, same routes, so the [Flutter example](/docs/flutter/use-cases) and the
+[React demo](/docs/react) run against either:
+
+| | Python | TypeScript |
+|---|---|---|
+| Source | `examples/backend/main.py` (FastAPI + httpx) | `examples/backend-node/main.ts` (Bun, no framework) |
+| Run | `bun run dev:backend` | `bun run dev:backend:node` |
+| Users | `USERS` dict, filled by `POST /api/users` (multipart photo) from the apps' Users tab | `USERS` map, same route |
+| Session | `POST /api/face/session {user_id?, purpose}` → reads the user's photo → `POST /v1/sessions` → remembers `session_id → user` | same |
+| Decision | `POST /api/face/done {session_id}` → `GET /v1/sessions/{id}` → `{…status, user_id, verified}` | same |
+
+Both listen on `:8010` and take `LUMIFACE_URL` and `LUMIFACE_KEY` from the environment. In a real backend the
+user comes from your login instead of the request body, the photo from your users table, and `SESSIONS` is a
+column on your side; the three face routes are what to copy.
+
+## What never goes to the device
+
+- The project key. `LumifaceClient` in both SDKs cannot take one, and the server refuses a key from any browser
+  origin but localhost (401 `API_KEY_FROM_BROWSER`).
+- The user's id or photo. The device receives the session JSON only; the stream has no field to name anyone.
+- The decision. `onResult` is a signal to call your `done` route, nothing more.
+
+## Checklist
+
+- Serve Lumiface privately (VPN, allow-list) with TLS in front; the browser reaches it directly for the stream.
+- One project (key) per app and per environment; rotate with `POST /v1/projects/{id}/rotate-key`.
+- Keep `session_id → user` for at least `ttl_seconds` + `SESSION_PURGE_GRACE_SECONDS`.
+- Your photo store is the biometric store now; retention is yours.

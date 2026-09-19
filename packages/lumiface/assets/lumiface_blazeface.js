@@ -160,17 +160,4 @@ function stopRecording() {
   if (r && r.state !== "inactive") r.stop();
 }
 
-function captureJpeg(video, quality) {
-  const canvas = document.createElement("canvas");
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  canvas.getContext("2d").drawImage(video, 0, 0);
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) return reject(new Error("toBlob failed"));
-      blob.arrayBuffer().then(resolve, reject);
-    }, "image/jpeg", quality);
-  });
-}
-
-window.lumifaceBlazeFace = { create, captureJpeg, recordingFormat, startRecording, stopRecording };
+window.lumifaceBlazeFace = { create, recordingFormat, startRecording, stopRecording };

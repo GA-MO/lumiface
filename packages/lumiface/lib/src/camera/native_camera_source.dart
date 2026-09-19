@@ -9,7 +9,6 @@ import 'package:flutter/widgets.dart';
 import '../liveness/signal_source.dart';
 import '../models.dart';
 import 'camera_source.dart';
-import 'image_convert.dart';
 
 CameraFaceSource createPlatformCameraFaceSource({CameraFacing facing = CameraFacing.front}) =>
     NativeCameraSource(lensDirection: facing == CameraFacing.front ? CameraLensDirection.front : CameraLensDirection.back);
@@ -21,27 +20,22 @@ CameraFaceSource createPlatformCameraFaceSource({CameraFacing facing = CameraFac
 /// (Vision adds yaw and pitch, BlazeFace reports none) plus, while recording, the H.264 access
 /// units the encoder has finished, each stamped with the frame time it was fed at.
 ///
-/// Produces [FaceSignal]s from the preview stream, records it for the server and can snapshot the
-/// latest frame as an upright JPEG for enrolment.
+/// Produces [FaceSignal]s from the preview stream and records it for the server.
 class NativeCameraSource implements CameraFaceSource {
   NativeCameraSource({
     this.lensDirection = CameraLensDirection.front,
     this.resolution = ResolutionPreset.high,
-    this.jpegQuality = 90,
   });
 
   static const channel = MethodChannel('ai.lumiface/detector');
 
   final CameraLensDirection lensDirection;
   final ResolutionPreset resolution;
-  final int jpegQuality;
 
   CameraController? controller;
   CameraDescription? _camera;
 
   final _signals = StreamController<FaceSignal>.broadcast();
-  CameraImage? _latest;
-  CameraImage? _signalImage;
   bool _detecting = false;
   bool _streaming = false;
   bool _recording = false;
@@ -130,7 +124,6 @@ class NativeCameraSource implements CameraFaceSource {
   }
 
   void _onImage(CameraImage image) {
-    _latest = image;
     if (_detecting) return;
     _detecting = true;
     _detect(image).whenComplete(() => _detecting = false);
@@ -154,7 +147,6 @@ class NativeCameraSource implements CameraFaceSource {
 
   Future<void> _detect(CameraImage image) async {
     final ts = _clock.elapsedMilliseconds;
-    _signalImage = image;
     if (image.planes.length != 1) {
       _signals.add(FaceSignal.none(ts));
       return;
@@ -213,33 +205,4 @@ class NativeCameraSource implements CameraFaceSource {
     );
   }
 
-  /// Encodes the frame the latest signal was read from, so the frame the server gets is the one
-  /// the device judged.
-  @override
-  Future<List<int>> captureJpeg() async {
-    final image = _signalImage ?? _latest;
-    if (image == null) throw StateError('no camera frame yet');
-    final format = switch (image.format.group) {
-      ImageFormatGroup.bgra8888 => 'bgra8888',
-      ImageFormatGroup.nv21 => 'nv21',
-      ImageFormatGroup.yuv420 => 'yuv420',
-      _ => throw UnsupportedError('format ${image.format.group}'),
-    };
-    final raw = RawFrame(
-      width: image.width,
-      height: image.height,
-      format: format,
-      planes: [for (final p in image.planes) p.bytes],
-      bytesPerRow: [for (final p in image.planes) p.bytesPerRow],
-      bytesPerPixel: [for (final p in image.planes) p.bytesPerPixel ?? 1],
-      // camera_avfoundation delivers iOS frames already upright (and mirrored for the front camera);
-      // Android delivers them in sensor orientation. Either way the server gets an upright,
-      // un-mirrored frame, the same as a photo of the person.
-      rotationDegrees: Platform.isIOS ? 0 : _rotationDegrees(),
-      mirror: Platform.isIOS && _camera!.lensDirection == CameraLensDirection.front,
-    );
-    return compute(_encode, (raw, jpegQuality));
-  }
-
-  static Uint8List _encode((RawFrame, int) args) => rawFrameToJpeg(args.$1, quality: args.$2);
 }

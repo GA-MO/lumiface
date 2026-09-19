@@ -43,8 +43,8 @@ It fills its parent, so size the parent. Props mirror the Flutter view.
 ## The browser holds no secret
 
 `LumifaceClient` takes a URL and nothing else — there is no option for the project key — and it can do exactly
-two things: stream the recording of a session it was handed, and upload one enrolment photo with a token it was
-handed. `/api/face/session` above is your backend route that produces the session, with two REST calls:
+one thing: stream the recording of a session it was handed. `/api/face/session` above is your backend route that
+produces the session, from the photo you already hold for the user, with two REST calls:
 
 ```ts
 // your backend (Node shown; any language — see examples/backend for a complete one in Python)
@@ -52,33 +52,37 @@ const LUMIFACE = "https://faces.example.com";
 const KEY = { "X-API-Key": process.env.LUMIFACE_KEY! };
 
 app.post("/api/face/session", auth, async (req, res) => {
+  const photo = (await readUserPhoto(req.user)).toString("base64");   // your record of this user; Lumiface keeps none
   const r = await fetch(`${LUMIFACE}/v1/sessions`, { method: "POST", headers: { ...KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ subject_id: req.user.id, purpose: "login" }) });
-  res.json(await r.json());                                   // straight to the browser
+    body: JSON.stringify({ reference_photo: photo, purpose: "login" }) });
+  const session = await r.json();
+  await remember(session.session_id, req.user.id);           // which user this session was created for
+  res.json(session);                                         // straight to the browser
 });
 
 app.post("/api/face/done", auth, async (req, res) => {
   const status = await (await fetch(`${LUMIFACE}/v1/sessions/${req.body.sessionId}`, { headers: KEY })).json();
-  if (status.result?.ok && status.subject_id === req.user.id) await signIn(req.user);   // the decision is here
+  if (status.result?.ok && status.reference && (await userOf(req.body.sessionId)) === req.user.id) await signIn(req.user);   // the decision is here
   res.sendStatus(204);
 });
 ```
 
+The server matches the stream against that photo once and keeps nothing of it ([sessions](/docs/api#sessions)); who
+the session was for is your backend's own record, which is why `/api/face/done` looks it up rather than trusting the
+browser. [Your backend](/docs/backend) has the whole of it, with a complete example in TypeScript
+(`examples/backend-node`) and one in Python.
+
 There is no backend SDK on purpose: the key's side of the API is a handful of REST calls
 ([reference](/docs/api)), and `@lumiface/react` then contains nothing a key could leak through. The server
 also refuses the key from any browser origin but localhost, so a key that ends up in a bundle fails loudly.
-
-Enrolment from the camera is the same shape with `flow="enroll"` and an `enrolTokenProvider` that asks your
-backend for a single-use token (`POST /v1/subjects/tokens` there).
 
 Props:
 
 <TypeTable
   type={{
     client: { type: "LumifaceClient", required: true, description: "Server URL. Holds no secret." },
-    sessionProvider: { type: "() => Promise<FaceSession>", description: "Fetches the session your backend created (sessionFromJson of its JSON). Required for verify and liveness." },
-    enrolTokenProvider: { type: "() => Promise<string>", description: "Fetches a single-use enrol token from your backend. Required for enroll." },
-    flow: { type: '"verify" | "liveness" | "enroll"', description: "verify (default), liveness or enroll. The session decides between verify and liveness." },
+    sessionProvider: { type: "() => Promise<FaceSession>", required: true, description: "Fetches the session your backend created with the reference photo (sessionFromJson of its JSON)." },
+    flow: { type: '"verify" | "liveness"', description: "verify (default) or liveness: the copy shown until the session arrives; the session decides." },
     config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
     strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
     theme: { type: "Partial<LumifaceTheme>", description: "Colours, guide shape and geometry, message style, progress." },
@@ -115,11 +119,11 @@ return (
 );
 ```
 
-It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. Options: `client`, `flow`, `sessionProvider`, `enrolTokenProvider`, `config`, `clientInfo`, `camera`, `autoStart`, `onResult`, `onFlashChanged`. The effect re-runs when `client` or `flow` change. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (frame-normalised) and `yaw` / `pitch` (null from BlazeFace).
+It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. Options: `client`, `flow`, `sessionProvider`, `config`, `clientInfo`, `camera`, `autoStart`, `onResult`, `onFlashChanged`. The effect re-runs when `client` or `flow` change. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (frame-normalised) and `yaw` / `pitch` (null from BlazeFace).
 
 ## Headless
 
-`FaceVerifyController` takes a `FaceSignalSource` (`subscribe(listener)`) and a `VideoRecorder` (`format`, `start(onChunk)`, `stop()`), `FaceEnrollController` a `FaceSignalSource` and a `FrameCapturer` (`captureJpeg(): Promise<Blob>`); both expose `state`, `subscribe`, `start`, `cancel`, `dispose`. `BlazeFaceSource` implements all three over `getUserMedia` + the BlazeFace graph model (`BlazeFaceModel`, with the anchor decoding in `blazeface.ts`) + MediaRecorder, and owns a `<video>` you mount anywhere; its signals carry a box and no angles. The test suite (`test/controller.test.ts`) drives the controller with synthetic signals exactly like the Flutter tests.
+`FaceVerifyController` takes a `FaceSignalSource` (`subscribe(listener)`) and a `VideoRecorder` (`format`, `start(onChunk)`, `stop()`) and exposes `state`, `subscribe`, `start`, `cancel`, `dispose`. `BlazeFaceSource` implements both over `getUserMedia` + the BlazeFace graph model (`BlazeFaceModel`, with the anchor decoding in `blazeface.ts`) + MediaRecorder, and owns a `<video>` you mount anywhere; its signals carry a box and no angles. The test suite (`test/controller.test.ts`) drives the controller with synthetic signals exactly like the Flutter tests.
 
 ## Demo
 
@@ -127,4 +131,4 @@ It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, 
 bun install && bun run dev:react     # http://localhost:3010
 ```
 
-Check-in, login (themed), liveness only, enrol from camera, custom overlay; the server URL and subject id are remembered in `localStorage`. The key lives in `examples/backend`, which the page reaches through the `/api` proxy.
+Check-in, login (themed), liveness only, custom overlay, and a registration form that stores a user's photo on the example backend; the server URL and user id are remembered in `localStorage`. The key and the photos live in `examples/backend`, which the page reaches through the `/api` proxy.

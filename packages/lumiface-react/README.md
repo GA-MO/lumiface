@@ -18,9 +18,9 @@ const client = new LumifaceClient({ baseUrl: "https://faces.example.com" }); // 
 
 - `LumifaceView`: preview + flow + default overlay; `theme`, `strings`, `renderPrompt`, `renderProgress`, `renderResult`, `renderFlash`, `renderOverlay`.
 - `useLumiface`: camera and controller lifecycle without markup.
-- `FaceVerifyController`, `FaceEnrollController`, `BlazeFaceSource` (signals from BlazeFace, the recording from MediaRecorder: WebM/VP8, or MP4/H.264 on Safari), `LumifaceClient`, `EN` / `TH` strings; `@lumiface/react/core` has no browser code.
+- `FaceVerifyController`, `BlazeFaceSource` (signals from BlazeFace, the recording from MediaRecorder: WebM/VP8, or MP4/H.264 on Safari), `LumifaceClient`, `EN` / `TH` strings; `@lumiface/react/core` has no browser code.
 - The BlazeFace short-range model (`models/face_detection_short`, 280 KB) loads from this repository on jsDelivr by default; pass `camera={{ modelUrl }}` to self-host it. The tfjs WASM backend binaries come from jsDelivr too (`wasmUrl`).
-- The browser never holds the project key: `LumifaceClient` cannot take one. `sessionProvider` / `enrolTokenProvider` fetch what your backend minted with two REST calls (`POST /v1/sessions`, `GET /v1/sessions/{id}`); `examples/backend` in the repository is a complete one.
+- The browser never holds the project key: `LumifaceClient` cannot take one. `sessionProvider` fetches the session your backend created with two REST calls (`POST /v1/sessions` with the person's photo as `reference_photo`, `GET /v1/sessions/{id}` for the verdict); `examples/backend` in the repository is a complete one.
 
 ```bash
 bun run test && bun run typecheck   # from this package

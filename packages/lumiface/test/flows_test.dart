@@ -84,12 +84,12 @@ void main() {
     test('the session decides between verify and liveness', () async {
       final c = FaceVerifyController(
           source: src, recorder: src, client: api,
-          sessionProvider: () => api.createSession(subjectId: null, purpose: 'kiosk'));
+          sessionProvider: () => api.createSession(reference: false, purpose: 'kiosk'));
       expect(c.flow, FaceFlow.verify);
       await c.start();
       await pump();
       expect(c.flow, FaceFlow.liveness);
-      expect(api.lastSubjectId, isNull);
+      expect(api.lastReference, isFalse);
       expect(api.lastPurpose, 'kiosk');
       c.dispose();
     });
@@ -117,54 +117,11 @@ void main() {
     });
   });
 
-  group('FaceEnrollController', () {
-    test('aligns, captures one frame and enrols', () async {
-      final c = FaceEnrollController(
-          source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:E9:Nine');
-      expect(c.flow, FaceFlow.enroll);
-      await c.start();
-      expect(c.state.value.phase, LivenessPhase.aligning);
-      await emit(FaceSignal.none(0));
-      expect(c.state.value.hint, AlignHint.noFace);
-      await emit(neutral(100));
-      expect(c.state.value.hint, AlignHint.holdStill);
-      await emit(neutral(800));
-      await pump();
-      expect(c.state.value.phase, LivenessPhase.success);
-      expect(c.state.value.result!.subject!.externalId, 'E9');
-      expect(c.state.value.result!.subject!.name, 'Nine');
-      expect(src.captures, 1);
-      expect(api.enrollCalls, 1);
-      c.dispose();
-    });
-
-    test('server rejection becomes a failed result with the reason code', () async {
-      final c = FaceEnrollController(
-          source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:REJECT');
-      await c.start();
-      await emit(neutral(0));
-      await emit(neutral(700));
-      await pump();
-      expect(c.state.value.phase, LivenessPhase.failed);
-      expect(c.state.value.result!.reasonCode, 'POSE_NOT_FRONTAL');
-      c.dispose();
-    });
-
-    test('cancel', () async {
-      final c = FaceEnrollController(source: src, capturer: src, client: api, enrolTokenProvider: () async => 'tok:E9');
-      await c.start();
-      c.cancel();
-      expect(c.state.value.result!.reasonCode, 'CANCELLED');
-      c.dispose();
-    });
-  });
-
   group('LivenessStrings', () {
     test('messageFor picks the success line per flow and copyWith merges reasons', () {
       const done = LivenessState(phase: LivenessPhase.success);
       expect(LivenessStrings.en.messageFor(done, FaceFlow.verify), 'Verified');
       expect(LivenessStrings.en.messageFor(done, FaceFlow.liveness), 'Live person confirmed');
-      expect(LivenessStrings.en.messageFor(done, FaceFlow.enroll), 'Photo enrolled');
       final custom = LivenessStrings.en.copyWith(success: 'Door open', reasons: {'NO_MATCH': 'Nope'});
       expect(custom.messageFor(done, FaceFlow.verify), 'Door open');
       expect(custom.reason('NO_MATCH'), 'Nope');

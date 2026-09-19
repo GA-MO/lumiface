@@ -10,7 +10,7 @@ Self-hosted face verification (1:1) + passive liveness for the `lumiface` Flutte
 - Active liveness is guided by the client and judged here: the server clocks the
   session, reads the face's move into the oval (`face_move`, the only challenge: box growth and fit,
   `services/stream.py: movement_observed`) from its own detector inside the window the device's events mark, and
-  requires the same identity across the key frames. There is no gesture challenge: the device only sees a face box
+  requires the same identity across the key frames and the flash frames. There is no gesture challenge: the device only sees a face box
   (BlazeFace on the web and Android, Apple Vision on iOS), so a rigid mask is left to the passive gates.
 - **Screen-flash** (`services/flash.py`): the plan carries 3 random saturated colours; the app fills the
   screen with each one for `flash_hold_ms` while frames keep streaming. The server averages the cheeks over each
@@ -38,9 +38,8 @@ Docker: `docker compose up --build` (buffalo_l is downloaded into a volume on fi
 ## API (header `X-API-Key`; admin endpoints `X-Admin-Key`)
 
 The project key (`lf_sk_…`) belongs on your backend. A device gets the `session_token` returned by `POST /v1/sessions`
-(verify only, that session only) or an enrol token from `POST /v1/subjects/tokens` (one enrolment of a fixed subject)
-and sends it as `Authorization: Bearer …`. Session tokens die with the session; enrol tokens after
-`ENROL_TOKEN_TTL_SECONDS`. A key sent from a browser page other than localhost is refused (401 `API_KEY_FROM_BROWSER`)
+(that session only) and sends it in the stream's hello. Session tokens die with the session.
+A key sent from a browser page other than localhost is refused (401 `API_KEY_FROM_BROWSER`)
 unless the project's policy sets `allow_browser_api_key`.
 The backend then reads the outcome with `GET /v1/sessions/{id}` rather than trusting the device's report.
 
@@ -51,14 +50,10 @@ The backend then reads the outcome with `GET /v1/sessions/{id}` rather than trus
 | POST | `/v1/projects/{id}/rotate-key` | | admin |
 | DELETE | `/v1/projects/{id}` | | admin |
 | GET/PUT/DELETE | `/v1/policy` | `{preset?, overrides?, merge?}` | project policy; `/presets`, `/schema` |
-| POST | `/v1/subjects/tokens` | json `{external_id, name?, ttl_seconds?, token_ttl_seconds?}` | single-use enrol token for a device; cannot replace an existing face |
-| POST | `/v1/subjects` | multipart `external_id`, `name`, `photo`, `replace`, `ttl_seconds?` — or `photo` only with `Authorization: Bearer <enrol token>` | enrol; 422 with `reason_code` if rejected; `ttl_seconds` omitted = policy `subject_ttl_seconds`, 0 = keep |
-| GET | `/v1/subjects`, `/v1/subjects/{id}` | | |
-| DELETE | `/v1/subjects/{external_id}` | | |
-| POST | `/v1/sessions` | json `{subject_id?, purpose?}` | `subject_id` omitted = liveness only; returns `session_token`, `client_config` — not the plan |
+| POST | `/v1/sessions` | json `{reference_photo?, purpose?}` | `reference_photo` (base64; one frontal face or 422 with a `reason_code`; not anti-spoof checked; never stored: its embedding is dropped when the stream claims the session) = verify against that photo; omitted = liveness only. Returns `session_token`, `client_config` — not the plan |
 | WS | `/v1/sessions/{id}/stream` | `{"type":"hello","token","format"}` → plan; binary chunks (8-byte device ms + video chunk or JPEG) + events → `{"type":"end"}` → result | single use, spent on hello; the server clocks and judges everything itself |
 | GET | `/v1/sessions/{id}` | | backend reads `{used, result}` after the device is done |
-| GET | `/v1/verifications?from&to&subject_id&session_id&purpose&ok` | | history |
+| GET | `/v1/verifications?from&to&session_id&purpose&ok` | | history; `reference` true = verify |
 | POST | `/v1/debug/score` | multipart `photo` | only with `DEBUG=1` |
 
 The stream, from the device's side (`app/routers/sessions.py` has the exact messages):
@@ -75,14 +70,14 @@ end            ▶
 The server stamps frames and events with its own clock and, inside the challenge window, runs its own detector:
 face_move = the box grew from far (`move_min_growth`) into the oval (`move_min_fill`) and ended centred; the flash
 reflection is read from the frames of each colour window; anti-spoof, identity and
-consistency run on the key frames it picked (`app/services/stream.py`). Durations are measured on the server clock; the device's own stamps (frame header, event `ts`) only decide which window a frame belongs to, because a phone uploads a frame a few hundred ms after it was taken while its events arrive at once.
+consistency run on the key frames it picked, identity also on the middle frame of each flash window (`app/services/stream.py`). Durations are measured on the server clock; the device's own stamps (frame header, event `ts`) only decide which window a frame belongs to, because a phone uploads a frame a few hundred ms after it was taken while its events arrive at once.
 
 Verify response: `{ok, mode, reason_code, scores:{match, spoof, consistency}, verification_id}`.
 Reason codes: `OK, FRAME_COUNT, FRAMES_STATIC, TIMING_ORDER, TIMING_TOO_FAST, TIMING_TOO_SLOW,
 NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL, SPOOF, MOVEMENT_MISMATCH, FLASH_FAIL, NO_MATCH, INCONSISTENT`
-plus stream-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, SUBJECT_NOT_FOUND, HELLO_INVALID, EVENT_INVALID,
-ENROL_TOKEN_INVALID, ENROL_TOKEN_MISMATCH, EXTERNAL_ID_REQUIRED, PAYLOAD_TOO_LARGE, API_KEY_FROM_BROWSER`; `BAD_IMAGE` is the enrolment
-verdict for a photo that does not decode (a streamed frame that does not decode is skipped). Streams are capped by `MAX_UPLOAD_BYTES` (32 MB), `MAX_FRAME_BYTES` (4 MB), `MAX_STREAM_FRAMES` (900) and `MAX_IMAGE_PIXELS` (20 Mpx).
+plus stream-level `SESSION_NOT_FOUND, SESSION_USED, SESSION_EXPIRED, HELLO_INVALID, EVENT_INVALID, PAYLOAD_TOO_LARGE,
+API_KEY_FROM_BROWSER`; a `reference_photo` answers `BAD_IMAGE` (does not decode), `NO_FACE`, `MULTIPLE_FACES`,
+`FACE_TOO_SMALL` or `POSE_NOT_FRONTAL` at session creation (a streamed frame that does not decode is skipped). Streams are capped by `MAX_UPLOAD_BYTES` (32 MB), `MAX_FRAME_BYTES` (4 MB), `MAX_STREAM_FRAMES` (900) and `MAX_IMAGE_PIXELS` (20 Mpx).
 
 ## Policy
 
@@ -93,12 +88,13 @@ Environment variables (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are the defaults
 
 ## Retention
 
-Embeddings are biometric data, so every subject can carry an expiry. `subject_ttl_seconds` (env, preset or project
-override) is the default for `POST /v1/subjects`; `ttl_seconds` on the request wins, `0` keeps the subject until
-`DELETE`. An expired subject answers `SUBJECT_NOT_FOUND` at once and can be enrolled again without `replace`.
-A background loop (`app/services/retention.py`, every `RETENTION_INTERVAL_SECONDS`, default 300; `0` disables) deletes
-expired subjects and sessions older than `SESSION_PURGE_GRACE_SECONDS` (default 3600). Verifications are kept as the
-audit log with their `subject_id` link cleared.
+The server keeps no face between sessions: there is no subject store, and a session's `reference_photo` never reaches
+disk — its embedding is cleared from the session row in the statement that marks the session used, or purged with the
+session if it is never opened. A background loop (`app/services/retention.py`, every `RETENTION_INTERVAL_SECONDS`,
+default 300; `0` disables) deletes sessions older than `SESSION_PURGE_GRACE_SECONDS` (default 3600). Verifications are
+kept as the audit log (scores and `details`, no embedding). A database from before enrolment was removed has its
+`subject` and `enroltoken` tables dropped on start. `STORE_FRAMES=1` (development) writes each session's frames and
+`reference.npy` to `FRAMES_DIR` for `scripts/replay_sessions.py`.
 
 ## Tests
 

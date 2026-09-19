@@ -42,7 +42,7 @@ class Policy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    match_threshold: float = Field(description="Min cosine similarity between every frame and the enrolled face.")
+    match_threshold: float = Field(description="Min cosine similarity between every frame and the reference photo.")
     consistency_threshold: float = Field(description="Min cosine similarity between two frontal frames.")
     consistency_pose_threshold: float = Field(description="Min similarity when one frame is turned away.")
     pose_frame_max_angle: float = Field(description="|yaw| or |pitch| above this marks a pose frame.")
@@ -53,11 +53,10 @@ class Policy(BaseModel):
     cvpr_threshold: float = Field(description="CVPR live probability, mean over frames.")
     cvpr_hard_floor: float = Field(description="CVPR live probability every frame must clear.")
     min_face_size: int = Field(description="Min face box side in pixels.")
-    enroll_max_yaw: float = Field(description="Max |yaw| accepted for an enrolment photo.")
-    enroll_max_pitch: float = Field(description="Max |pitch| accepted for an enrolment photo.")
+    reference_max_yaw: float = Field(description="Max |yaw| accepted for a session's reference photo.")
+    reference_max_pitch: float = Field(description="Max |pitch| accepted for a session's reference photo.")
 
     session_ttl_seconds: int = Field(description="A session must be verified within this time.")
-    subject_ttl_seconds: int = Field(description="Default retention of an enrolled face in seconds; 0 keeps it until deleted.")
     allow_browser_api_key: bool = Field(description="Accept the project key from a browser origin other than localhost. Development only.")
     oval_width_fraction: float = Field(description="face_move: oval width as a fraction of the frame's shorter side; the face must fill it.")
     oval_center_y: float = Field(description="face_move: oval centre as a fraction of the frame height.")

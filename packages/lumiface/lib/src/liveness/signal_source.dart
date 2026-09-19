@@ -6,11 +6,6 @@ abstract class FaceSignalSource {
   Stream<FaceSignal> get signals;
 }
 
-/// Grabs the most recent camera frame as JPEG bytes (the enrolment photo).
-abstract class FrameCapturer {
-  Future<List<int>> captureJpeg();
-}
-
 /// What each binary message on the stream carries: a recorder's video chunk (`webm` from
 /// MediaRecorder, `mp4` from Safari's, `h264` one access unit per message) or a single JPEG frame.
 enum StreamFormat {

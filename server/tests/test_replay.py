@@ -18,7 +18,7 @@ def _folders(label: str) -> list[Path]:
 
 
 def _replay(folder: Path):
-    from replay_sessions import enrolled_embedding, load
+    from replay_sessions import load, reference_embedding
 
     from app.policy import _RequestPolicy, _current, resolve_policy, use_policy
     from app.services.stream import analyze_stream
@@ -27,10 +27,10 @@ def _replay(folder: Path):
     token = _current.set(_RequestPolicy())
     try:
         use_policy(resolve_policy("balanced", {"flash_enforce": True, "min_session_ms": 1500,
-                                               "min_challenge_ms": 300, "min_face_size": 112, "enroll_max_pitch": 20}))
+                                               "min_challenge_ms": 300, "min_face_size": 112, "reference_max_pitch": 20}))
         frames, events, meta = load(folder)
         return analyze_stream(frames, events, meta["challenges"], meta["flash_colors"],
-                              enrolled_embedding(meta.get("subject_id"), None, folder)), meta
+                              reference_embedding(meta, None, folder)), meta
     finally:
         _current.reset(token)
 

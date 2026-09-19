@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'example_backend.dart';
 import 'pages/history_page.dart';
 import 'pages/settings_page.dart';
-import 'pages/subjects_page.dart';
+import 'pages/users_page.dart';
 import 'pages/usecases_page.dart';
 
 void main() => runApp(const App());
@@ -19,16 +19,17 @@ class AppSettings extends ChangeNotifier {
 
   /// Your backend, which holds the key: examples/backend on a laptop.
   String get backendUrl => _prefs.getString('backendUrl') ?? 'http://localhost:8010';
-  String get subjectId => _prefs.getString('subjectId') ?? '';
+  /// Which user of the example backend to verify: its photo becomes the session's reference.
+  String get userId => _prefs.getString('userId') ?? '';
   bool get debug => _prefs.getBool('debug') ?? false;
   bool get thai => _prefs.getBool('thai') ?? false;
 
   LivenessStrings get strings => thai ? LivenessStrings.th : LivenessStrings.en;
 
-  Future<void> save({String? baseUrl, String? backendUrl, String? subjectId, bool? debug, bool? thai}) async {
+  Future<void> save({String? baseUrl, String? backendUrl, String? userId, bool? debug, bool? thai}) async {
     if (baseUrl != null) await _prefs.setString('baseUrl', baseUrl);
     if (backendUrl != null) await _prefs.setString('backendUrl', backendUrl);
-    if (subjectId != null) await _prefs.setString('subjectId', subjectId);
+    if (userId != null) await _prefs.setString('userId', userId);
     if (debug != null) await _prefs.setBool('debug', debug);
     if (thai != null) await _prefs.setBool('thai', thai);
     notifyListeners();
@@ -86,7 +87,7 @@ class _HomeState extends State<Home> {
   Widget build(BuildContext context) {
     final pages = [
       UseCasesPage(settings: widget.settings),
-      SubjectsPage(settings: widget.settings),
+      UsersPage(settings: widget.settings),
       HistoryPage(settings: widget.settings),
       SettingsPage(settings: widget.settings),
     ];
@@ -97,7 +98,7 @@ class _HomeState extends State<Home> {
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.face), label: 'Use cases'),
-          NavigationDestination(icon: Icon(Icons.people), label: 'Subjects'),
+          NavigationDestination(icon: Icon(Icons.people), label: 'Users'),
           NavigationDestination(icon: Icon(Icons.history), label: 'History'),
           NavigationDestination(icon: Icon(Icons.settings), label: 'Settings'),
         ],

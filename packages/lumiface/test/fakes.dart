@@ -3,9 +3,8 @@ import 'dart:ui';
 
 import 'package:lumiface/lumiface.dart';
 
-class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
+class FakeSource implements FaceSignalSource, VideoRecorder {
   final ctrl = StreamController<FaceSignal>.broadcast(sync: true);
-  int captures = 0;
 
   /// The recorder's state as the controller drove it: started, then stopped.
   bool recording = false;
@@ -17,12 +16,6 @@ class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
 
   @override
   StreamFormat get format => StreamFormat.h264;
-
-  @override
-  Future<List<int>> captureJpeg() async {
-    captures++;
-    return [0xFF, 0xD8, captures];
-  }
 
   @override
   void startRecording(void Function(List<int> data, int tsMs) onChunk) {
@@ -51,10 +44,9 @@ class FakeApi extends LumifaceClient {
   final OvalTarget? oval;
   VerifyResult? response;
   String? planError;
-  String? lastSubjectId;
+  bool? lastReference;
   String? lastPurpose;
   LivenessConfig? sessionConfig;
-  int enrollCalls = 0;
 
   /// What the controller streamed: chunk timestamps and events, in order, and the hello's format.
   final List<int> sentChunks = [];
@@ -63,11 +55,11 @@ class FakeApi extends LumifaceClient {
   bool ended = false;
   bool closed = false;
 
-  /// Stands in for the app's backend call; [subjectId] null = liveness session.
-  Future<FaceSession> createSession({String? subjectId = 'E001', String purpose = ''}) async {
-    lastSubjectId = subjectId;
+  /// Stands in for the app's backend call; [reference] false = a session without a reference photo (liveness).
+  Future<FaceSession> createSession({bool reference = true, String purpose = ''}) async {
+    lastReference = reference;
     lastPurpose = purpose;
-    return FaceSession(id: 's1', token: 'tok', mode: subjectId == null ? 'liveness' : 'verify', ttlSeconds: 60);
+    return FaceSession(id: 's1', token: 'tok', mode: reference ? 'verify' : 'liveness', ttlSeconds: 60);
   }
 
   @override
@@ -75,15 +67,6 @@ class FakeApi extends LumifaceClient {
       {Map<String, dynamic> clientInfo = const {}, StreamFormat format = StreamFormat.jpeg}) {
     this.format = format;
     return _FakeStream(this);
-  }
-
-  /// The fake token names the subject, like the real one does server-side: `tok:<id>:<name>`.
-  @override
-  Future<Subject> enroll({required List<int> photoJpeg, required String enrolToken}) async {
-    enrollCalls++;
-    final parts = enrolToken.split(':');
-    if (parts[1] == 'REJECT') throw LumifaceException('POSE_NOT_FRONTAL');
-    return Subject(externalId: parts[1], name: parts.length > 2 ? parts[2] : '', enrollSpoofScore: 0.9);
   }
 }
 

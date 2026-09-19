@@ -24,7 +24,7 @@ class FaceVerifyScope {
     required this.source,
   });
 
-  final FaceFlowController controller;
+  final FaceVerifyController controller;
   final LivenessState state;
 
   /// Latest raw face observation, for custom guides and debugging.
@@ -51,8 +51,8 @@ class FaceVerifyScope {
 
 typedef FaceScopeBuilder = Widget Function(BuildContext context, FaceVerifyScope scope);
 
-/// Camera preview plus a flow ([FaceFlow.verify], [FaceFlow.liveness] or
-/// [FaceFlow.enroll]) with a default overlay that every part can be replaced.
+/// Camera preview plus the verification flow ([FaceFlow.verify] or [FaceFlow.liveness],
+/// as the session the backend created decides) with a default overlay that every part can be replaced.
 ///
 /// Minimal use: `FaceVerifyView(client: c, sessionProvider: () => myApi.faceSession(), onResult: ...)`.
 /// Change colours and geometry with [theme], texts with [strings], single parts
@@ -65,9 +65,8 @@ class FaceVerifyView extends StatefulWidget {
     super.key,
     required this.client,
     required this.onResult,
+    required this.sessionProvider,
     this.flow = FaceFlow.verify,
-    this.sessionProvider,
-    this.enrolTokenProvider,
     this.config,
     this.strings = LivenessStrings.en,
     this.theme = const FaceVerifyTheme(),
@@ -91,17 +90,14 @@ class FaceVerifyView extends StatefulWidget {
   final LumifaceClient client;
   final void Function(VerifyResult result) onResult;
 
-  /// [FaceFlow.verify] (default) or [FaceFlow.liveness] need [sessionProvider];
-  /// [FaceFlow.enroll] needs [enrolTokenProvider]. The session the backend
+  /// What the copy assumes until the session arrives; the session the backend
   /// created decides between verify and liveness.
   final FaceFlow flow;
 
-  /// Your backend creates the session with the project key (fixing the subject)
-  /// and the app only holds its token. See [FaceVerifyController.sessionProvider].
-  final Future<FaceSession> Function()? sessionProvider;
-
-  /// For [FaceFlow.enroll]. See [FaceEnrollController.enrolTokenProvider].
-  final Future<String> Function()? enrolTokenProvider;
+  /// Your backend creates the session with the project key (and the reference photo
+  /// of the person to match, or none for liveness) and the app only holds its token.
+  /// See [FaceVerifyController.sessionProvider].
+  final Future<FaceSession> Function() sessionProvider;
 
   /// Overrides the project's `client_config`; null uses what the server sends.
   final LivenessConfig? config;
@@ -134,7 +130,7 @@ class FaceVerifyView extends StatefulWidget {
 
   /// Hands out the controller once the camera is ready (to call `start()` when
   /// [autoStart] is false, or `cancel()`).
-  final void Function(FaceFlowController controller)? onController;
+  final void Function(FaceVerifyController controller)? onController;
 
   @override
   State<FaceVerifyView> createState() => _FaceVerifyViewState();
@@ -142,7 +138,7 @@ class FaceVerifyView extends StatefulWidget {
 
 class _FaceVerifyViewState extends State<FaceVerifyView> {
   CameraFaceSource? _source;
-  FaceFlowController? _controller;
+  FaceVerifyController? _controller;
   Object? _error;
   FaceSignal? _lastSignal;
   bool _flashing = false;
@@ -153,28 +149,17 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
     _boot();
   }
 
-  FaceFlowController _createController(CameraFaceSource source) {
+  FaceVerifyController _createController(CameraFaceSource source) {
     final platform = kIsWeb ? 'web' : defaultTargetPlatform.name;
-    return switch (widget.flow) {
-      FaceFlow.enroll => FaceEnrollController(
-        source: source,
-        capturer: source,
-        client: widget.client,
-        enrolTokenProvider:
-            widget.enrolTokenProvider ?? (throw ArgumentError('FaceFlow.enroll needs enrolTokenProvider')),
-        config: widget.config ?? const LivenessConfig(),
-      ),
-      FaceFlow.verify || FaceFlow.liveness => FaceVerifyController(
-        source: source,
-        recorder: source,
-        client: widget.client,
-        sessionProvider:
-            widget.sessionProvider ?? (throw ArgumentError('FaceFlow.verify and liveness need sessionProvider')),
-        flow: widget.flow,
-        config: widget.config,
-        clientInfo: {'platform': platform, 'sdk': 'lumiface-flutter', ...widget.clientInfo},
-      ),
-    };
+    return FaceVerifyController(
+      source: source,
+      recorder: source,
+      client: widget.client,
+      sessionProvider: widget.sessionProvider,
+      flow: widget.flow,
+      config: widget.config,
+      clientInfo: {'platform': platform, 'sdk': 'lumiface-flutter', ...widget.clientInfo},
+    );
   }
 
   Future<void> _boot() async {

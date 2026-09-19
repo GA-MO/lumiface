@@ -72,11 +72,6 @@ export interface FaceSignalSource {
   subscribe(listener: (s: FaceSignal) => void): () => void;
 }
 
-/** Grabs the most recent camera frame as a JPEG blob (the enrolment photo). */
-export interface FrameCapturer {
-  captureJpeg(): Promise<Blob>;
-}
-
 /** Records the camera while a verification runs and hands out chunks as they are cut; `tsMs` is the
  *  device time (the signal clock) of the chunk's first frame. The server decodes the stream itself. */
 export interface VideoRecorder {
@@ -139,11 +134,37 @@ export function frontalHint(s: FaceSignal, config: LivenessConfig): AlignHint | 
 
 type Listener = (state: LivenessState) => void;
 
-/** Headless driver of one camera flow: observe `state`, feed it a source and a capturer. */
-export abstract class FaceFlowController {
+export interface FaceVerifyOptions {
+  source: FaceSignalSource;
+  /** Records the camera for the server; `BlazeFaceSource` is one. */
+  recorder: VideoRecorder;
+  client: LumifaceClient;
+  /**
+   * Fetches the session from your backend, which created it with the project key and fixed who is
+   * verified (the reference photo): return `sessionFromJson` of the server's `POST /v1/sessions`
+   * response. The browser only ever holds the session's token.
+   */
+  sessionProvider: () => Promise<FaceSession>;
+  /** "verify" (default) or "liveness"; the session decides once it arrives. */
+  flow?: FaceFlow;
+  /** Overrides the project's client_config; omit to use what the server sends. */
+  config?: LivenessConfig;
+  clientInfo?: Record<string, unknown>;
+}
+
+/**
+ * Headless driver of one verification, owning no DOM: observe `state`, feed it a source and a
+ * recorder. Session -> stream -> align -> the oval -> screen flash -> verdict.
+ * The recorder runs from the plan to the verdict and its chunks go to the server as they are cut;
+ * the events sent at each boundary only tell the server where to look, it decides from the frames
+ * it decodes and its own clock. A session the backend created without a reference photo only
+ * proves liveness. Timing comes from `FaceSignal.tsMs`, so the controller is deterministic under
+ * test; a wall-clock watchdog only guards a stalled stream.
+ */
+export class FaceVerifyController {
   private listeners = new Set<Listener>();
   private current: LivenessState = IDLE_STATE;
-  protected disposed = false;
+  private disposed = false;
 
   /** What the preview shows of the frame; the view keeps it in step with its layout. See `visibleRegionFor`. */
   visibleRegion: Box = FULL_FRAME;
@@ -151,61 +172,7 @@ export abstract class FaceFlowController {
   /** The camera frame's width over its height; the view keeps it in step with the source. */
   frameAspect = 4 / 3;
 
-  constructor(readonly source: FaceSignalSource) {}
-
-  abstract readonly flow: FaceFlow;
-  abstract get config(): LivenessConfig;
-  abstract start(): Promise<void>;
-  abstract cancel(): void;
-
-  get state(): LivenessState {
-    return this.current;
-  }
-
-  subscribe(listener: Listener): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  protected set(patch: Partial<LivenessState>) {
-    if (this.disposed) return;
-    this.current = { ...this.current, ...patch };
-    for (const l of this.listeners) l(this.current);
-  }
-
-  dispose() {
-    this.disposed = true;
-    this.listeners.clear();
-  }
-}
-
-export interface FaceVerifyOptions {
-  source: FaceSignalSource;
-  /** Records the camera for the server; `BlazeFaceSource` is one. */
-  recorder: VideoRecorder;
-  client: LumifaceClient;
-  /**
-   * Fetches the session from your backend, which created it with the project key and fixed the
-   * subject: return `sessionFromJson` of the server's `POST /v1/sessions` response. The browser
-   * only ever holds the session's token.
-   */
-  sessionProvider: () => Promise<FaceSession>;
-  /** "verify" (default) or "liveness"; the session decides once it arrives. */
-  flow?: Exclude<FaceFlow, "enroll">;
-  /** Overrides the project's client_config; omit to use what the server sends. */
-  config?: LivenessConfig;
-  clientInfo?: Record<string, unknown>;
-}
-
-/**
- * Drives one verification: session -> stream -> align -> the oval -> screen flash -> verdict.
- * The recorder runs from the plan to the verdict and its chunks go to the server as they are cut;
- * the events sent at each boundary only tell the server where to look, it decides from the frames
- * it decodes and its own clock. A session the backend created without a subject only proves
- * liveness. Timing comes from `FaceSignal.tsMs`, so the controller is deterministic under test; a
- * wall-clock watchdog only guards a stalled stream.
- */
-export class FaceVerifyController extends FaceFlowController {
+  readonly source: FaceSignalSource;
   readonly client: LumifaceClient;
   readonly recorder: VideoRecorder;
   readonly sessionProvider: () => Promise<FaceSession>;
@@ -232,7 +199,7 @@ export class FaceVerifyController extends FaceFlowController {
   private detector: ChallengeDetector | null = null;
 
   constructor(options: FaceVerifyOptions) {
-    super(options.source);
+    this.source = options.source;
     this.client = options.client;
     this.recorder = options.recorder;
     this.sessionProvider = options.sessionProvider;
@@ -243,6 +210,21 @@ export class FaceVerifyController extends FaceFlowController {
 
   get flow(): FaceFlow {
     return this.currentFlow;
+  }
+
+  get state(): LivenessState {
+    return this.current;
+  }
+
+  subscribe(listener: Listener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private set(patch: Partial<LivenessState>) {
+    if (this.disposed) return;
+    this.current = { ...this.current, ...patch };
+    for (const l of this.listeners) l(this.current);
   }
 
   get config(): LivenessConfig {
@@ -282,12 +264,13 @@ export class FaceVerifyController extends FaceFlowController {
     this.finish(clientError("CANCELLED"));
   }
 
-  override dispose() {
+  dispose() {
     this.unsubscribe?.();
     this.stopRecording();
     if (this.watchdog) clearTimeout(this.watchdog);
     this.stream?.close();
-    super.dispose();
+    this.disposed = true;
+    this.listeners.clear();
   }
 
   private stopRecording() {
@@ -455,91 +438,5 @@ export class FaceVerifyController extends FaceFlowController {
       .finally(() => {
         this.busy = false;
       });
-  }
-}
-
-export interface FaceEnrollOptions {
-  source: FaceSignalSource;
-  capturer: FrameCapturer;
-  client: LumifaceClient;
-  /**
-   * Fetches a single-use enrol token from your backend (`POST /v1/subjects/tokens` there); the
-   * token names the subject, so the browser sends only the photo.
-   */
-  enrolTokenProvider: () => Promise<string>;
-  config?: LivenessConfig;
-  timeoutMs?: number;
-}
-
-/** Aligns the face, captures one frontal frame and enrols it. */
-export class FaceEnrollController extends FaceFlowController {
-  readonly flow: FaceFlow = "enroll";
-  readonly config: LivenessConfig;
-  private readonly options: FaceEnrollOptions;
-  private unsubscribe: (() => void) | null = null;
-  private watchdog: ReturnType<typeof setTimeout> | null = null;
-  private busy = false;
-  private alignedSince: number | null = null;
-
-  readonly capturer: FrameCapturer;
-
-  constructor(options: FaceEnrollOptions) {
-    super(options.source);
-    this.options = options;
-    this.capturer = options.capturer;
-    this.config = options.config ?? DEFAULT_CONFIG;
-  }
-
-  async start(): Promise<void> {
-    if (this.state.phase !== "idle") return;
-    this.set({ phase: "aligning", hint: "noFace" });
-    this.watchdog = setTimeout(() => this.finish(clientError("TIMEOUT")), this.options.timeoutMs ?? 60000);
-    this.unsubscribe = this.source.subscribe((s) => this.onSignal(s));
-  }
-
-  cancel() {
-    this.finish(clientError("CANCELLED"));
-  }
-
-  override dispose() {
-    this.unsubscribe?.();
-    if (this.watchdog) clearTimeout(this.watchdog);
-    super.dispose();
-  }
-
-  private onSignal(s: FaceSignal) {
-    if (this.busy || this.disposed || this.state.phase !== "aligning") return;
-    const hint = alignHint(s, this.config, this.visibleRegion);
-    if (hint) {
-      this.alignedSince = null;
-      this.set({ hint });
-      return;
-    }
-    this.alignedSince ??= s.tsMs;
-    this.set({ hint: "holdStill" });
-    if (s.tsMs - this.alignedSince < this.config.alignHoldMs) return;
-    this.busy = true;
-    this.unsubscribe?.();
-    this.set({ phase: "uploading", hint: null });
-    void this.submit();
-  }
-
-  private async submit() {
-    try {
-      const photo = await this.capturer.captureJpeg();
-      const enrolToken = await this.options.enrolTokenProvider();
-      const subject = await this.options.client.enroll({ photo, enrolToken });
-      this.finish({ ...clientError("OK"), ok: true, mode: "enroll", subject });
-    } catch (e) {
-      const code = e instanceof Error && "reasonCode" in e ? (e as { reasonCode: string }).reasonCode : "NETWORK_ERROR";
-      this.finish({ ...clientError(code, String(e)), mode: "enroll" });
-    }
-  }
-
-  private finish(r: VerifyResult) {
-    if (this.disposed || isDone(this.state)) return;
-    this.unsubscribe?.();
-    if (this.watchdog) clearTimeout(this.watchdog);
-    this.set({ phase: r.ok ? "success" : "failed", result: r, hint: null });
   }
 }

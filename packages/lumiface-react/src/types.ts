@@ -1,7 +1,7 @@
 /** The one challenge: move closer until the face fills the oval the server chose . */
 export type Challenge = "face_move";
 
-export type FaceFlow = "verify" | "liveness" | "enroll";
+export type FaceFlow = "verify" | "liveness";
 
 /** Normalised (0..1) box in the upright, un-mirrored camera image. */
 export interface Box {
@@ -90,14 +90,6 @@ export interface VerifyScores {
   consistency: number | null;
 }
 
-export interface Subject {
-  externalId: string;
-  name: string;
-  enrollSpoofScore: number;
-  /** ISO time when the server drops the embedding; null keeps it until deleted. */
-  expiresAt: string | null;
-}
-
 export interface VerifyResult {
   ok: boolean;
   mode: string;
@@ -106,7 +98,6 @@ export interface VerifyResult {
   verificationId: number | null;
   /** The session this result belongs to; hand it to your backend, which reads the outcome with `GET /v1/sessions/{id}`. */
   sessionId?: string;
-  subject?: Subject;
   message?: string;
 }
 
@@ -124,7 +115,8 @@ export function clientError(code: string, message?: string): VerifyResult {
 export interface VerificationRecord {
   id: number;
   sessionId: string;
-  subjectId: string | null;
+  /** Verify against the session's reference photo (true) or liveness only (false). */
+  reference: boolean;
   purpose: string;
   ok: boolean;
   reasonCode: string;

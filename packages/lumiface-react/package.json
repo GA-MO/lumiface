@@ -1,6 +1,6 @@
 {
   "name": "@lumiface/react",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Face verification with active liveness for React: TensorFlow.js BlazeFace on the client, the Lumiface server behind it.",
   "type": "module",
   "license": "MIT",

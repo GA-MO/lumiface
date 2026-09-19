@@ -1,11 +1,11 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, col, delete, select
 
 from ..db import get_db
 from ..deps import admin_key, new_api_key
-from ..models import EnrolToken, Project, Subject, Verification, VerifySession
+from ..models import Project, Verification, VerifySession
 from ..policy import PRESETS
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"], dependencies=[Depends(admin_key)])
@@ -22,15 +22,13 @@ class ProjectOut(BaseModel):
     preset: str
     created_at: str
     api_key: str | None = None
-    subjects: int = 0
     verifications: int = 0
 
 
 def _out(p: Project, db: Session, api_key: str | None = None) -> ProjectOut:
-    subjects = len(db.exec(select(Subject.id).where(Subject.project_id == p.id)).all())
     verifications = len(db.exec(select(Verification.id).where(Verification.project_id == p.id)).all())
     return ProjectOut(id=p.id, name=p.name, preset=p.preset, created_at=p.created_at.isoformat() + "Z",
-                      api_key=api_key, subjects=subjects, verifications=verifications)
+                      api_key=api_key, verifications=verifications)
 
 
 @router.post("", response_model=ProjectOut, status_code=201)
@@ -69,9 +67,9 @@ def delete_project(project_id: int, db: Session = Depends(get_db)):
     p = db.get(Project, project_id)
     if not p:
         raise HTTPException(404, {"reason_code": "PROJECT_NOT_FOUND"})
-    # Sessions and enrol tokens go too: SQLite reuses ids, so a live token must not outlive its tenant.
-    for model in (Verification, VerifySession, EnrolToken, Subject):
-        for row in db.exec(select(model).where(model.project_id == p.id)).all():
-            db.delete(row)
+    # Sessions go too: SQLite reuses ids, so a live session token must not outlive its tenant.
+    # Bulk statements, so the children are gone before the project row (the ORM has no relationship to order by).
+    for model in (Verification, VerifySession):
+        db.exec(delete(model).where(col(model.project_id) == p.id))
     db.delete(p)
     db.commit()

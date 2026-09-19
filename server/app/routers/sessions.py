@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import json
 import time
 import uuid
@@ -20,7 +22,7 @@ from ..services.challenge import new_challenges, oval_for
 from ..services.video import FORMATS, VideoChunk, decode_chunks
 from ..services.flash import new_flash_colors
 from ..services.stream import StreamEvent, StreamFrame, VerifyResult, analyze_stream
-from .subjects import find_subject
+from ..services.verify import reference as check_reference
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
 
@@ -29,7 +31,9 @@ EVENT_NAMES = ("aligned", "challenge_done", "flash", "flash_end")
 
 
 class SessionCreate(BaseModel):
-    subject_id: str | None = None
+    # Base64 JPEG/PNG of the person to match (a `data:` URL prefix is tolerated); omitted = liveness only.
+    # Only its embedding reaches the session row, and only until the stream claims it.
+    reference_photo: str | None = None
     purpose: str = Field("", max_length=PURPOSE_MAX)
 
 
@@ -65,15 +69,32 @@ class SessionStatus(BaseModel):
 
     session_id: str
     mode: str
-    subject_id: str | None
+    reference: bool  # a reference photo was given at creation (verify) or not (liveness)
     purpose: str
     used: bool
     expires_at: str
     result: VerifyOut | None
 
 
-def _mode(subject_id: str | None) -> str:
-    return "verify" if subject_id else "liveness"
+def _mode(reference: bool) -> str:
+    return "verify" if reference else "liveness"
+
+
+def _reference_embedding(photo_b64: str) -> bytes:
+    """The photo becomes an embedding here and is dropped; one frontal face, no anti-spoof (see services.verify)."""
+    if "," in photo_b64[:64] and photo_b64.startswith("data:"):
+        photo_b64 = photo_b64.split(",", 1)[1]
+    try:
+        data = base64.b64decode(photo_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, {"reason_code": "BAD_IMAGE", "detail": "reference_photo is not base64"})
+    if len(data) > get_settings().max_frame_bytes:
+        raise HTTPException(413, {"reason_code": "PAYLOAD_TOO_LARGE"})
+    result = check_reference(data)
+    if not result.ok:
+        raise HTTPException(422, {"reason_code": result.reason_code, "details": result.details})
+    assert result.embedding is not None
+    return result.embedding.astype(np.float32).tobytes()
 
 
 @router.post("", response_model=SessionOut, status_code=201)
@@ -81,11 +102,13 @@ def create_session(body: SessionCreate | None = None, project: Project = Depends
                    db: Session = Depends(get_db)):
     p = get_policy()
     body = body or SessionCreate()
+    embedding = _reference_embedding(body.reference_photo) if body.reference_photo else None
     sess = VerifySession(
         id=uuid.uuid4().hex,
         project_id=project.id,
         token=new_token(),
-        subject_external_id=body.subject_id,
+        reference=embedding is not None,
+        reference_embedding=embedding,
         purpose=body.purpose,
         challenges=",".join(new_challenges()),
         flash_colors=",".join(new_flash_colors()),
@@ -93,13 +116,12 @@ def create_session(body: SessionCreate | None = None, project: Project = Depends
     )
     db.add(sess)
     db.commit()
-    return SessionOut(session_id=sess.id, session_token=sess.token, mode=_mode(body.subject_id), purpose=body.purpose,
-                      expires_at=sess.expires_at.isoformat() + "Z", ttl_seconds=p.session_ttl_seconds,
+    return SessionOut(session_id=sess.id, session_token=sess.token, mode=_mode(sess.reference), purpose=body.purpose, expires_at=sess.expires_at.isoformat() + "Z", ttl_seconds=p.session_ttl_seconds,
                       client_config=p.client)
 
 
 def _verify_out(row: Verification, details: dict | None = None) -> VerifyOut:
-    return VerifyOut(ok=row.ok, mode=_mode(row.subject_external_id), reason_code=row.reason_code,
+    return VerifyOut(ok=row.ok, mode=_mode(row.reference), reason_code=row.reason_code,
                      scores=Scores(match=row.match_score, spoof=row.spoof_score, consistency=row.consistency_score),
                      verification_id=row.id if row.ok else None, details=details or {})
 
@@ -111,29 +133,33 @@ def get_session(session_id: str, project: Project = Depends(current_project), db
     if not sess or sess.project_id != project.id:
         raise HTTPException(404, {"reason_code": "SESSION_NOT_FOUND"})
     row = db.exec(select(Verification).where(Verification.session_id == session_id)).first()
-    return SessionStatus(session_id=sess.id, mode=_mode(sess.subject_external_id), subject_id=sess.subject_external_id,
-                         purpose=sess.purpose, used=sess.used, expires_at=sess.expires_at.isoformat() + "Z",
+    return SessionStatus(session_id=sess.id, mode=_mode(sess.reference), reference=sess.reference, purpose=sess.purpose,
+                         used=sess.used, expires_at=sess.expires_at.isoformat() + "Z",
                          result=_verify_out(row) if row else None)
 
 
 def _store_frames(project_id: int, session_id: str, frames: list[StreamFrame], events: list[StreamEvent],
-                  challenges: list[str], flash_colors: list[str], subject_id: str | None,
-                  client_info: dict, result: VerifyResult, fmt: str = "jpeg", chunks: list[VideoChunk] | None = None) -> None:
+                  challenges: list[str], flash_colors: list[str], reference: np.ndarray | None, client_info: dict,
+                  result: VerifyResult, fmt: str = "jpeg", chunks: list[VideoChunk] | None = None) -> None:
     """The whole streamed session as the server saw it, replayable by `scripts/replay_sessions.py`
     against a changed pipeline without anyone in front of a camera again: every frame with both
     clocks, the events, the plan, and the verdict this run produced. A video stream is kept as the
-    device sent it too (`stream.<format>`, the raw chunks in order), the decoded frames are what replay."""
+    device sent it too (`stream.<format>`, the raw chunks in order), the decoded frames are what replay.
+    The reference embedding goes in as `reference.npy` so the match can be replayed: this store is the
+    development setting that already keeps every frame of the person, never the production one."""
     d = Path(get_settings().frames_dir).resolve() / str(project_id) / session_id
     d.mkdir(parents=True, exist_ok=True)
     if chunks:
         (d / f"stream.{fmt}").write_bytes(b"".join(c.data for c in chunks))
+    if reference is not None:
+        np.save(d / "reference.npy", reference)
     t0 = frames[0].recv_ms if frames else 0
     names = []
     for i, f in enumerate(frames):
         names.append(f"{i:04d}_{f.recv_ms - t0:06d}.jpg")
         (d / names[-1]).write_bytes(f.data)
     (d / "session.json").write_text(json.dumps({
-        "session_id": session_id, "subject_id": subject_id, "challenges": challenges, "flash_colors": flash_colors,
+        "session_id": session_id, "reference": reference is not None, "challenges": challenges, "flash_colors": flash_colors,
         "client": client_info, "format": fmt, "verdict": {"ok": result.ok, "reason_code": result.reason_code},
         "frames": [{"file": n, "recv_ms": f.recv_ms, "client_ms": f.client_ms} for n, f in zip(names, frames)],
         "events": [{"name": e.name, "index": e.index, "recv_ms": e.recv_ms, "client_ms": e.client_ms} for e in events],
@@ -201,20 +227,20 @@ async def stream_session(ws: WebSocket, session_id: str):
             project = project_for_token(db, sess.project_id)
             if sess.expires_at < utcnow():
                 raise _StreamError("SESSION_EXPIRED")
+            # Claiming the session also drops a reference embedding: from here it lives in this coroutine only
+            # (read before the commit expires the row).
+            reference_blob = sess.reference_embedding
             claimed = db.exec(update(VerifySession).where(col(VerifySession.id) == session_id,
-                                                          col(VerifySession.used) == False).values(used=True))  # noqa: E712
+                                                          col(VerifySession.used) == False)  # noqa: E712
+                              .values(used=True, reference_embedding=None))
             db.commit()
             if claimed.rowcount != 1:
                 raise _StreamError("SESSION_USED")
-            subject = find_subject(db, project, sess.subject_external_id) if sess.subject_external_id else None
-            if sess.subject_external_id and not subject:
-                raise _StreamError("SUBJECT_NOT_FOUND")
-            enrolled = np.frombuffer(subject.embedding, dtype=np.float32) if subject else None
+            reference_embedding = np.frombuffer(reference_blob, dtype=np.float32) if reference_blob is not None else None
             challenges = sess.challenges.split(",")
             flash_colors = [c for c in sess.flash_colors.split(",") if c]
             deadline = _now_ms() + int((sess.expires_at - utcnow()).total_seconds() * 1000)
-            project_id, purpose, subject_id = project.id, sess.purpose, sess.subject_external_id
-            subject_row_id = subject.id if subject else None
+            project_id, purpose, is_reference = project.id, sess.purpose, sess.reference
         p = get_policy()
 
         await ws.send_json({"type": "plan", "challenges": challenges, "flash_colors": flash_colors,
@@ -262,14 +288,14 @@ async def stream_session(ws: WebSocket, session_id: str):
 
         if chunks:
             frames = await asyncio.to_thread(decode_chunks, fmt, chunks, s.max_stream_frames)
-        result = await asyncio.to_thread(analyze_stream, frames, events, challenges, flash_colors, enrolled)
+        result = await asyncio.to_thread(analyze_stream, frames, events, challenges, flash_colors, reference_embedding)
         if s.store_frames and (s.debug or not result.ok):
             await asyncio.to_thread(_store_frames, project_id, session_id, frames, events, challenges, flash_colors,
-                                    subject_id, client_info, result, fmt, chunks)
+                                    reference_embedding, client_info, result, fmt, chunks)
         t0 = frames[0].recv_ms if frames else 0
         with Session(get_engine()) as db:
-            row = Verification(project_id=project_id, subject_id=subject_row_id, subject_external_id=subject_id,
-                               purpose=purpose, session_id=session_id, ok=result.ok, reason_code=result.reason_code,
+            row = Verification(project_id=project_id, reference=is_reference, purpose=purpose, session_id=session_id,
+                               ok=result.ok, reason_code=result.reason_code,
                                match_score=result.match_score, spoof_score=result.spoof_score,
                                consistency_score=result.consistency_score,
                                details=json.dumps({**result.details, "challenges": challenges,

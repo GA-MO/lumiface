@@ -23,14 +23,13 @@ The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet
 | `BOOTSTRAP_PRESET` | `balanced` | its preset |
 | `ADMIN_API_KEY` | unset | enables `/v1/projects` (`X-Admin-Key`) |
 | `DEBUG` | `0` | mounts `/v1/debug/score`; with `STORE_FRAMES` keeps the frames of every verification, not only failed ones |
-| `STORE_FRAMES` | `0` | keep the decoded frames (and the raw video, `stream.<format>`) of failed (or, with DEBUG, all) verifications under `FRAMES_DIR/<project>/<session>/` |
+| `STORE_FRAMES` | `0` | keep the decoded frames (and the raw video, `stream.<format>`, and the reference embedding, `reference.npy`) of failed (or, with DEBUG, all) verifications under `FRAMES_DIR/<project>/<session>/` |
 | `FRAMES_DIR` | `data/frames` | where those frames go |
 | `WEIGHTS_DIR` | `weights` | ONNX files |
 | `DET_SIZE` | `640` | detector input size; frames larger than this gain nothing |
 | `MAX_STREAM_CHUNKS` | `1800` | messages accepted on one stream (video chunks or JPEG frames) |
 | `MAX_STREAM_FRAMES` | `900` | decoded frames kept per session; a longer video is thinned evenly |
 | `SESSION_TTL_SECONDS` | `60` | how long a session can be started |
-| `ENROL_TOKEN_TTL_SECONDS` | `300` | default life of an enrol token |
 | `RETENTION_INTERVAL_SECONDS` | `300` | purge loop period, `0` disables |
 | `SESSION_PURGE_GRACE_SECONDS` | `3600` | how long a spent session row stays |
 | `CVPR_ENABLED` | `1` | load the CVPR-2024 gate (can also be switched per project) |
@@ -40,7 +39,7 @@ Policy fields in the environment (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are t
 
 ## Database
 
-SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`, `enroltoken`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `expires_at`). The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames, and every gate's own verdict) live in `verification.details` for your backend; the device only ever gets the verdict. See [the `details` object](/docs/reason-codes#the-details-object).
+SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `verifysession`, `verification`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `reference`, `reference_embedding`) and drops the `subject` and `enroltoken` tables of a database from before enrolment was removed, embeddings included. Nothing biometric stays in a row past the session: `verifysession.reference_embedding` is cleared when the stream claims the session. The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames, and every gate's own verdict) live in `verification.details` for your backend; the device only ever gets the verdict. See [the `details` object](/docs/reason-codes#the-details-object).
 
 ## Health and versions
 

@@ -1,8 +1,9 @@
 # Flutter example
 
-Every use case of `lumiface` (check-in, login, liveness only, enrol from the camera, custom overlay), a subjects
-tab, a history tab with the scores the backend read, and a preset picker. It talks to `examples/backend`
-(which holds the project key) and to the Lumiface server with the tokens the backend hands it.
+Every use case of `lumiface` (check-in, login, liveness only, custom overlay), a users tab (register a photo
+with the example backend, which sends it as the session's reference), a history tab with the scores the backend
+read, and a preset picker. It talks to `examples/backend` (which holds the project key and the photos) and to
+the Lumiface server with the tokens the backend hands it.
 
 ```bash
 bun run dev:backend                       # examples/backend on :8010 (needs the server on :8000)
@@ -11,7 +12,7 @@ flutter run -d chrome                     # web: TensorFlow.js BlazeFace, localh
 flutter run -d <android-id> --release     # phone: use --release, debug builds hide R8 problems
 ```
 
-Settings tab: Lumiface URL, backend URL, subject id, debug bar, Thai strings.
+Settings tab: Lumiface URL, backend URL, user to verify, debug bar, Thai strings.
 
 | Device | Lumiface URL | Backend URL |
 |---|---|---|

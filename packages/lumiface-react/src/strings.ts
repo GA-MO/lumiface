@@ -6,7 +6,6 @@ export interface LivenessStrings {
   uploading: string;
   success: string;
   liveSuccess: string;
-  enrollSuccess: string;
   flashing: string;
   cameraError: string;
   hints: Record<AlignHint, string>;
@@ -21,7 +20,6 @@ export const EN: LivenessStrings = {
   uploading: "Verifying…",
   success: "Verified",
   liveSuccess: "Live person confirmed",
-  enrollSuccess: "Photo enrolled",
   flashing: "Hold still…",
   cameraError: "Camera unavailable",
   hints: {
@@ -46,8 +44,6 @@ export const EN: LivenessStrings = {
     FACE_LOST: "Face left the frame",
     NETWORK_ERROR: "Cannot reach the server",
     SESSION_EXPIRED: "Session expired, please try again",
-    SUBJECT_NOT_FOUND: "This person is not enrolled",
-    SUBJECT_EXISTS: "This person is already enrolled",
     NO_FACE: "No face detected",
     MULTIPLE_FACES: "More than one face detected",
     FACE_TOO_SMALL: "Move closer to the camera",
@@ -67,7 +63,6 @@ export const TH: LivenessStrings = {
   uploading: "กำลังตรวจสอบ…",
   success: "ยืนยันตัวตนสำเร็จ",
   liveSuccess: "ยืนยันว่าเป็นบุคคลจริง",
-  enrollSuccess: "ลงทะเบียนใบหน้าแล้ว",
   flashing: "มองจอ อยู่นิ่งๆ…",
   cameraError: "ใช้กล้องไม่ได้",
   hints: {
@@ -100,7 +95,7 @@ export const TH: LivenessStrings = {
 };
 
 export function successFor(strings: LivenessStrings, flow: FaceFlow): string {
-  return flow === "verify" ? strings.success : flow === "liveness" ? strings.liveSuccess : strings.enrollSuccess;
+  return flow === "verify" ? strings.success : strings.liveSuccess;
 }
 
 /** The line to show for a state in a flow. */

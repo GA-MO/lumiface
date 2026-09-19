@@ -1,4 +1,4 @@
-"""Shared verdict types and the per-face checks (single face, pose, consistency) used by enrolment and the stream."""
+"""Shared verdict types and the per-face checks (single face, pose, consistency) used by the reference photo and the stream."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..policy import get_policy
-from .antispoof import get_antispoof
 from .face import BadImage, FaceResult, cosine, decode_image, get_face_engine
 
 
@@ -21,7 +20,7 @@ class VerifyResult:
 
 
 @dataclass
-class EnrollResult:
+class ReferenceResult:
     ok: bool
     reason_code: str
     embedding: np.ndarray | None = None
@@ -45,23 +44,21 @@ def _single_face(img) -> tuple[FaceResult | None, str | None]:
     return f, None
 
 
-def enroll(photo: bytes) -> EnrollResult:
+def reference(photo: bytes) -> ReferenceResult:
+    """One frontal face for a session's reference photo. No anti-spoof: the photo is the backend's own record
+    of the person (an ID scan, a registration selfie), handed over with the key, and it is never kept."""
     s = get_policy()
     try:
         img = decode_image(photo)
     except BadImage:
-        return EnrollResult(False, "BAD_IMAGE")
+        return ReferenceResult(False, "BAD_IMAGE")
     face, err = _single_face(img)
     if err:
-        return EnrollResult(False, err)
+        return ReferenceResult(False, err)
     assert face is not None
-    if abs(face.yaw) > s.enroll_max_yaw or abs(face.pitch) > s.enroll_max_pitch:
-        return EnrollResult(False, "POSE_NOT_FRONTAL", details={"yaw": face.yaw, "pitch": face.pitch})
-    sp = get_antispoof().score(img, face.bbox)
-    if sp.real < s.spoof_threshold or (sp.cvpr is not None and sp.cvpr < s.cvpr_threshold):
-        return EnrollResult(False, "SPOOF", spoof_score=sp.real, details={**sp.per_model, "cvpr": sp.cvpr})
-    return EnrollResult(True, "OK", embedding=face.embedding, spoof_score=sp.real,
-                        details={"yaw": face.yaw, "pitch": face.pitch, **sp.per_model, "cvpr": sp.cvpr})
+    if abs(face.yaw) > s.reference_max_yaw or abs(face.pitch) > s.reference_max_pitch:
+        return ReferenceResult(False, "POSE_NOT_FRONTAL", details={"yaw": face.yaw, "pitch": face.pitch})
+    return ReferenceResult(True, "OK", embedding=face.embedding, details={"yaw": face.yaw, "pitch": face.pitch})
 
 
 def _consistency(faces: list[FaceResult]) -> tuple[float, bool]:

@@ -22,13 +22,13 @@ Future<VerifyResult?> pushFlow(BuildContext context, Widget Function(void Functi
 final useCases = <UseCase>[
   UseCase(
     title: 'Attendance check-in',
-    subtitle: 'Verify the saved subject id, purpose "checkin", Thai or English strings from Settings.',
+    subtitle: 'Verify the selected user (its photo is the reference), purpose "checkin", Thai or English strings from Settings.',
     icon: Icons.badge,
     open: (context, s) => pushFlow(
       context,
       (done) => FaceVerifyView(
         client: s.client,
-        sessionProvider: () => s.backend.createSession(subjectId: s.subjectId, purpose: 'checkin'),
+        sessionProvider: () => s.backend.createSession(userId: s.userId, purpose: 'checkin'),
         strings: s.strings.copyWith(success: s.thai ? 'เช็คอินสำเร็จ' : 'Checked in'),
         showDebug: s.debug,
         onResult: done,
@@ -44,7 +44,7 @@ final useCases = <UseCase>[
       context,
       (done) => FaceVerifyView(
         client: s.client,
-        sessionProvider: () => s.backend.createSession(subjectId: s.subjectId, purpose: 'login'),
+        sessionProvider: () => s.backend.createSession(userId: s.userId, purpose: 'login'),
         strings: s.strings.copyWith(success: 'Welcome back'),
         theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme).copyWith(
           guideShape: FaceGuideShape.roundedRect,
@@ -59,7 +59,7 @@ final useCases = <UseCase>[
   ),
   UseCase(
     title: 'Liveness only (kiosk)',
-    subtitle: 'The backend creates the session without a subject: proves a live person, nothing to match against.',
+    subtitle: 'The backend creates the session without a reference photo: proves a live person, nothing to match against.',
     icon: Icons.sensors,
     open: (context, s) => pushFlow(
       context,
@@ -75,47 +75,12 @@ final useCases = <UseCase>[
     ),
   ),
   UseCase(
-    title: 'Enrol from the camera',
-    subtitle: 'FaceFlow.enroll: the backend mints an enrol token for the id, the device aligns and uploads one frame.',
-    icon: Icons.person_add_alt_1,
-    open: (context, s) async {
-      final id = await askText(context, 'Subject id to enrol', initial: s.subjectId);
-      if (id == null || id.isEmpty || !context.mounted) return null;
-      return pushFlow(
-        context,
-        (done) => FaceVerifyView(
-          client: s.client,
-          flow: FaceFlow.enroll,
-          enrolTokenProvider: () => s.backend.createEnrolToken(id),
-          strings: s.strings,
-          showDebug: s.debug,
-          onResult: done,
-        ),
-      );
-    },
-  ),
-  UseCase(
     title: 'Custom UI (headless)',
     subtitle: 'overlayBuilder draws its own guide, prompts and result card from FaceVerifyScope.',
     icon: Icons.brush,
     open: (context, s) => pushFlow(context, (done) => CustomUiPage(settings: s, onResult: done)),
   ),
 ];
-
-Future<String?> askText(BuildContext context, String label, {String initial = ''}) {
-  final ctrl = TextEditingController(text: initial);
-  return showDialog<String>(
-    context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(label),
-      content: TextField(controller: ctrl, autofocus: true),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-        FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('OK')),
-      ],
-    ),
-  );
-}
 
 class UseCasesPage extends StatefulWidget {
   const UseCasesPage({super.key, required this.settings});
@@ -132,9 +97,9 @@ class _UseCasesPageState extends State<UseCasesPage> {
 
   Future<void> _open(UseCase u) async {
     final s = widget.settings;
-    final needsSubject = u.title.startsWith('Attendance') || u.title.startsWith('Login');
-    if (needsSubject && s.subjectId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Set a subject id in Settings')));
+    final needsUser = u.title.startsWith('Attendance') || u.title.startsWith('Login');
+    if (needsUser && s.userId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Register a user on the Users tab first')));
       return;
     }
     final r = await u.open(context, s);
@@ -187,7 +152,6 @@ class _UseCasesPageState extends State<UseCasesPage> {
                     Text(
                       r.ok
                           ? 'OK ${r.mode}${r.verificationId != null ? ' #${r.verificationId}' : ''}'
-                              '${r.subject != null ? ' subject ${r.subject!.externalId}' : ''}'
                           : 'FAILED ${r.reasonCode}',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),

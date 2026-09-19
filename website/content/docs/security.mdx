@@ -10,7 +10,7 @@ Lumiface is not certified liveness (no ISO 30107-3 evaluation). It is a layered 
 1. **The oval** (`face_move`, the only challenge): the server draws an oval and the person holds still at a normal selfie distance, then moves closer until the face fills it, then holds. The device guides with a face box (BlazeFace on the web and Android, Apple Vision on iOS) and decides nothing; the server reads its own face boxes on the streamed frames: the face must grow by `move_min_growth` (1.15×, from the farthest it was in the window, since a person who aligned close first backs off and then walks in) into `move_min_fill` (75 % of the oval on the server's own box, against 85 % on the device's: InsightFace's box came out up to 7 % narrower than BlazeFace's on a webcam), centred, within the timing limits (the window 300 ms – 10 s, the whole session ≥ 1.5 s). A still image cannot grow into the oval on cue and a replayed video does not follow it in time; the frame that fills the oval is also the closest, sharpest face every later gate scores.
 2. **Passive anti-spoof** on the server for every frame: MiniFASNet V2 + V1SE (needs a hard floor per frame and a mean), then the CVPR-2024 ResNet50 on a face crop with margin 0.3, which catches bezel-free screen replay (replay ≤ 0.015 against genuine ≥ 0.30).
 3. **Screen flash**: three random saturated colours chosen by the server, each held on the screen while frames keep streaming; the hue shift on the cheeks across each colour's window must correlate with the commanded sequence and beat every other permutation, and the surroundings may reflect at most 0.8× what the face does (real faces 0.47–0.52 on a phone, 0.04 on a laptop; a replayed phone screen 1.15–2.31 because the whole sheet reflects).
-4. **Identity**: every frame ≥ `match_threshold` against the enrolled embedding, and every pair of frames ≥ 0.60 (0.40 when one is turned away) against each other.
+4. **Identity**: on six frames — the three key frames (aligned, oval filled, end) and the middle frame of each flash window — every one ≥ `match_threshold` against the reference photo's embedding, and every pair ≥ 0.60 (0.40 when one is turned away) against each other. A face swapped in for the flash alone (another person reflects the colours while the reference person takes the key frames) fails here; on the 27 genuine sessions of the replay set (2026-09-19) the flash frames match 0.62–0.76 against 0.63–0.81 for the key frames, so the tint costs nothing at the 0.45 threshold. The flash frames stay out of anti-spoof, which the tint would bias.
 
 ## Measured results
 
@@ -44,27 +44,27 @@ Offer the no-flash mode as an accessibility path, on a project of its own with `
 ## Deploying safely
 
 - Keep the server private (VPN, allow-list) and terminate TLS in front of it.
-- The project API key stays on your backend. Devices only ever hold a **session token** (issued with the session, good for that one verify of the subject the backend chose) or a single-use **enrol token** (`POST /v1/subjects/tokens`); see [API authentication](/docs/api#authentication). A key embedded in an app or web bundle lets anyone list and delete subjects, read every verification and lower the policy's thresholds — so three things make that hard to do by accident: the device SDKs (`LumifaceClient`) cannot take a key, there is no server-side SDK to bundle by mistake (your backend calls the REST API), and the server answers 401 `API_KEY_FROM_BROWSER` to a key sent from any page but localhost. Keys start with `lf_sk_` so secret scanners catch them in a repo.
+- The project API key stays on your backend. Devices only ever hold a **session token** (issued with the session, good for that one verify of the photo the backend chose); see [API authentication](/docs/api#authentication). A key embedded in an app or web bundle lets anyone create sessions against any photo, read every verification and lower the policy's thresholds — so three things make that hard to do by accident: the device SDKs (`LumifaceClient`) cannot take a key, there is no server-side SDK to bundle by mistake (your backend calls the REST API), and the server answers 401 `API_KEY_FROM_BROWSER` to a key sent from any page but localhost. Keys start with `lf_sk_` so secret scanners catch them in a repo.
 - Read the outcome yourself: after the device reports "done", call `GET /v1/sessions/{id}` with the key. The device's copy of the answer is just bytes it can edit.
-- An enrol token binds the *identity*, not the *face*: whoever holds it enrols their own face as that subject. Issue one only after your own authentication of that user, and never for a subject that already has a face (the server refuses; re-enrol with the key after a `DELETE`).
-- Streams are capped (`MAX_FRAME_BYTES` per frame, `MAX_UPLOAD_BYTES` and `MAX_STREAM_FRAMES` per session, `MAX_IMAGE_PIXELS` per decoded frame) and die with the session's TTL; enrolment uploads by `MAX_UPLOAD_BYTES`.
+- The `reference_photo` on `POST /v1/sessions` is trusted as *your* record of the person: it is checked for one frontal face and not for spoofing, because it arrives with the project key from your backend, never from a device. Pick it from your own store by the user your backend has authenticated; a device must never be able to choose it.
+- Streams are capped (`MAX_FRAME_BYTES` per frame, `MAX_UPLOAD_BYTES` and `MAX_STREAM_FRAMES` per session, `MAX_IMAGE_PIXELS` per decoded frame) and die with the session's TTL; a reference photo by `MAX_FRAME_BYTES`.
 - `STORE_FRAMES=1` writes every streamed frame of failed attempts to `FRAMES_DIR/<project>/<session>/`; nothing deletes them, so keep it off in production or purge the directory yourself.
 - One project per app and per environment, so `relaxed` on a developer laptop never applies to production.
 - Set `ADMIN_API_KEY` only where project management runs; rotate keys with `POST /v1/projects/{id}/rotate-key`.
 - Leave `DEBUG=0` and `STORE_FRAMES=0` in production; both keep or return more than the verdict.
-- Embeddings are biometric data: keep the database encrypted at rest and delete subjects when people leave (`DELETE /v1/subjects/{id}`) or give them an expiry (see below).
+- Embeddings are biometric data. The server holds none between sessions (see below); the photos live in *your* store, under your own retention.
 - The InsightFace `buffalo_l` weights are non-commercial research only.
 
 ## Retention
 
-Nothing biometric has to live forever on the server:
+Nothing biometric lives on the server beyond a session:
 
-- **Subjects** carry an optional `expires_at`. `POST /v1/subjects` takes `ttl_seconds`; when omitted the project policy's
-  `subject_ttl_seconds` applies (`0` keeps the subject until `DELETE`). One-shot flows such as KYC against an ID photo
-  can enrol with a TTL of minutes; attendance keeps `0` and deletes on offboarding.
+- The **reference photo** given with a session is never written anywhere: its embedding sits on the session row and is
+  deleted in the same statement that marks the session used, before the verify runs; a session that is never opened
+  loses it with the purge. The audit row keeps the scores and `reference: true`, no face.
 - **Sessions** are single use and expire after `session_ttl_seconds`; the row stays `SESSION_PURGE_GRACE_SECONDS`
   (default one hour) so a late client still sees `SESSION_EXPIRED`.
-- A **purge loop** runs every `RETENTION_INTERVAL_SECONDS` (default 300, `0` disables) and deletes expired subjects and
-  spent sessions. An expired subject is already invisible to the API before the purge reaches it.
-- **Verifications** are the audit log and are kept; the purge only clears their link to a deleted embedding
-  (`subject_id`) while `subject_external_id` and the scores remain.
+- A **purge loop** runs every `RETENTION_INTERVAL_SECONDS` (default 300, `0` disables) and deletes spent sessions.
+- **Verifications** are the audit log and are kept: `ok`, `reason_code`, the scores and the server's `details`.
+- `STORE_FRAMES=1` is the exception, for development: it writes the frames and the reference embedding
+  (`reference.npy`) of a session to `FRAMES_DIR` so the pipeline can be replayed; keep it off in production.

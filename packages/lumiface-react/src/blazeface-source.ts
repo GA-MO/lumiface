@@ -3,7 +3,7 @@ import "@tensorflow/tfjs-backend-cpu";
 import { setWasmPaths, version_wasm } from "@tensorflow/tfjs-backend-wasm";
 
 import { BlazeFaceModel, type Detection } from "./blazeface.ts";
-import type { FaceSignalSource, FrameCapturer, VideoRecorder } from "./controller.ts";
+import type { FaceSignalSource, VideoRecorder } from "./controller.ts";
 import { noFace, type Box, type FaceSignal, type StreamFormat } from "./types.ts";
 
 export const MODEL_URL = "https://cdn.jsdelivr.net/gh/GA-MO/lumiface@main/packages/lumiface-react/models/face_detection_short/model.json";
@@ -40,7 +40,6 @@ export interface BlazeFaceSourceOptions {
   /** "wasm" (default) with the CPU backend as the fallback, or "cpu". */
   backend?: "wasm" | "cpu";
   detectIntervalMs?: number;
-  jpegQuality?: number;
   width?: number;
   height?: number;
   /** MediaRecorder chunk length; the server decodes the stream, so shorter only means less latency at the end. */
@@ -78,7 +77,7 @@ export function signalFromDetections(faces: Detection[], tsMs: number): FaceSign
  * MediaRecorder for the stream the server judges. Owns a `<video>` element you mount yourself (mirror it
  * with CSS for a front camera; signals and the recording stay un-mirrored).
  */
-export class BlazeFaceSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
+export class BlazeFaceSource implements FaceSignalSource, VideoRecorder {
   readonly video: HTMLVideoElement;
   readonly format: StreamFormat;
   private readonly mimeType: string;
@@ -99,7 +98,6 @@ export class BlazeFaceSource implements FaceSignalSource, FrameCapturer, VideoRe
       wasmUrl: WASM_URL,
       backend: "wasm",
       detectIntervalMs: 66,
-      jpegQuality: 0.9,
       width: 1280,
       height: 720,
       chunkMs: 250,
@@ -203,15 +201,6 @@ export class BlazeFaceSource implements FaceSignalSource, FrameCapturer, VideoRe
     if (r && r.state !== "inactive") r.stop();
   }
 
-  captureJpeg(): Promise<Blob> {
-    const canvas = document.createElement("canvas");
-    canvas.width = this.video.videoWidth;
-    canvas.height = this.video.videoHeight;
-    canvas.getContext("2d")!.drawImage(this.video, 0, 0);
-    return new Promise((resolve, reject) => {
-      canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("toBlob failed"))), "image/jpeg", this.options.jpegQuality);
-    });
-  }
 
   dispose() {
     this.stopStream();

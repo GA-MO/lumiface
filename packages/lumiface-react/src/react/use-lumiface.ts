@@ -2,18 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { LumifaceClient } from "../client.ts";
 import type { LivenessConfig } from "../config.ts";
-import { FaceEnrollController, FaceVerifyController, IDLE_STATE, type FaceFlowController, type LivenessState } from "../controller.ts";
+import { FaceVerifyController, IDLE_STATE, type LivenessState } from "../controller.ts";
 import { BlazeFaceSource, type BlazeFaceSourceOptions } from "../blazeface-source.ts";
 import type { FaceFlow, FaceSession, FaceSignal, VerifyResult } from "../types.ts";
 
 export interface UseLumifaceOptions {
   client: LumifaceClient;
-  /** "verify" (default) or "liveness" need `sessionProvider`; "enroll" needs `enrolTokenProvider`. */
+  /** "verify" (default) or "liveness": what the copy assumes until the session arrives; the session decides. */
   flow?: FaceFlow;
-  /** Your backend creates the session with the project key (fixing the subject); the browser only holds its token. */
-  sessionProvider?: () => Promise<FaceSession>;
-  /** For the enroll flow: your backend mints a single-use token with `POST /v1/subjects/tokens`. */
-  enrolTokenProvider?: () => Promise<string>;
+  /** Your backend creates the session with the project key (and the reference photo, or none for liveness); the browser only holds its token. */
+  sessionProvider: () => Promise<FaceSession>;
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
   camera?: BlazeFaceSourceOptions;
@@ -29,7 +27,7 @@ export interface LumifaceHandle {
   flow: FaceFlow;
   ready: boolean;
   error: Error | null;
-  controller: FaceFlowController | null;
+  controller: FaceVerifyController | null;
   source: BlazeFaceSource | null;
   /** Attach to a container; the camera `<video>` is mounted inside it. */
   mountVideo: (el: HTMLElement | null) => void;
@@ -44,7 +42,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
   const [signal, setSignal] = useState<FaceSignal | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
-  const controllerRef = useRef<FaceFlowController | null>(null);
+  const controllerRef = useRef<FaceVerifyController | null>(null);
   const sourceRef = useRef<BlazeFaceSource | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const flashingRef = useRef(false);
@@ -71,32 +69,15 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
         await source.initialize();
         if (cancelled) return;
         const o = optionsRef.current;
-        const controller: FaceFlowController =
-          flow === "enroll"
-            ? new FaceEnrollController({
-                source,
-                capturer: source,
-                client: o.client,
-                enrolTokenProvider: async () => {
-                  const p = optionsRef.current.enrolTokenProvider;
-                  if (!p) throw new Error('flow "enroll" needs enrolTokenProvider');
-                  return p();
-                },
-                config: o.config,
-              })
-            : new FaceVerifyController({
-                source,
-                recorder: source,
-                client: o.client,
-                flow,
-                sessionProvider: async () => {
-                  const p = optionsRef.current.sessionProvider;
-                  if (!p) throw new Error(`flow "${flow}" needs sessionProvider`);
-                  return p();
-                },
-                config: o.config,
-                clientInfo: { platform: "web", sdk: "lumiface-react", ...o.clientInfo },
-              });
+        const controller = new FaceVerifyController({
+          source,
+          recorder: source,
+          client: o.client,
+          flow,
+          sessionProvider: () => optionsRef.current.sessionProvider(),
+          config: o.config,
+          clientInfo: { platform: "web", sdk: "lumiface-react", ...o.clientInfo },
+        });
         controllerRef.current = controller;
         controller.subscribe((s) => {
           setState(s);

@@ -8,7 +8,7 @@ description: The same package on Chrome and Safari through TensorFlow.js BlazeFa
 - `getUserMedia` opens the front camera at 1280×720 and shows it mirrored.
 - A small ES module in the package assets (`assets/lumiface_blazeface.js`) imports `@tensorflow/tfjs-core`, the WASM and CPU backends and `tfjs-converter` (4.22.0) from jsDelivr, loads the short-range BlazeFace graph model from the package assets (`assets/face_detection_short/`, 280 KB) and returns one JSON signal per frame. The WASM backend is tried first, the CPU backend is the fallback.
 - The signal is the largest face box; BlazeFace reports no head angles, so `yaw` and `pitch` are null and the `lookStraight` hint never fires on the web. The controller and the thresholds are the same as on the phones.
-- The stream the server judges is a MediaRecorder recording (WebM/VP8 where the browser has it, MP4/H.264 on Safari), cut every 250 ms at 1.5 Mbps (`chunkMs`, `videoBitsPerSecond`); the enrolment photo is the video drawn onto a canvas (JPEG quality 0.9).
+- The stream the server judges is a MediaRecorder recording (WebM/VP8 where the browser has it, MP4/H.264 on Safari), cut every 250 ms at 1.5 Mbps (`chunkMs`, `videoBitsPerSecond`).
 
 ## Self-hosting
 

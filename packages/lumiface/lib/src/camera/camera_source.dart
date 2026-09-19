@@ -5,7 +5,7 @@ import '../liveness/signal_source.dart';
 /// Camera-backed signal source + frame capturer used by [FaceVerifyView].
 /// Implementations: the platform detector (TFLite BlazeFace on Android, Apple Vision on iOS) and
 /// TensorFlow.js BlazeFace on the web.
-abstract class CameraFaceSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
+abstract class CameraFaceSource implements FaceSignalSource, VideoRecorder {
   bool get isInitialized;
 
   /// Camera frame aspect ratio (width / height of the upright preview), 1 until initialised.

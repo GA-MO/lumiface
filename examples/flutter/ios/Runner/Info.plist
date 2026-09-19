@@ -71,6 +71,6 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Reaches the Lumiface server on your local network in this example.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Photo library is used to pick an enrollment photo.</string>
+	<string>Photo library is used to pick a registration photo for the example backend.</string>
 </dict>
 </plist>

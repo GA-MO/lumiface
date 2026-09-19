@@ -43,7 +43,7 @@ def current_project(
     origin: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> Project:
-    """The project secret key. Backend only; devices get a session or enrol token instead."""
+    """The project secret key. Backend only; devices get a session token instead."""
     return project_from_api_key(db, x_api_key, origin)
 
 

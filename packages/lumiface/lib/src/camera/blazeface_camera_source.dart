@@ -29,7 +29,6 @@ const _glueGlobal = 'lumifaceBlazeFace';
 class BlazeFaceCameraSource implements CameraFaceSource {
   BlazeFaceCameraSource({
     this.facing = CameraFacing.front,
-    this.jpegQuality = 0.9,
     this.tfjsUrl,
     this.wasmUrl,
     this.modelUrl,
@@ -40,7 +39,6 @@ class BlazeFaceCameraSource implements CameraFaceSource {
   });
 
   final CameraFacing facing;
-  final double jpegQuality;
   final String? tfjsUrl;
   final String? wasmUrl;
   final String? modelUrl;
@@ -182,15 +180,6 @@ class BlazeFaceCameraSource implements CameraFaceSource {
       faceCount: faces.length,
       box: Rect.fromLTWH(best![0].toDouble(), best[1].toDouble(), best[2].toDouble(), best[3].toDouble()),
     );
-  }
-
-  @override
-  Future<List<int>> captureJpeg() async {
-    final glue = web.window.getProperty<JSObject>(_glueGlobal.toJS);
-    final buffer = await glue
-        .callMethod<JSPromise<JSArrayBuffer>>('captureJpeg'.toJS, _video, jpegQuality.toJS)
-        .toDart;
-    return Uint8List.view(buffer.toDart);
   }
 
   @override

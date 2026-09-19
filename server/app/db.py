@@ -42,15 +42,21 @@ def init_db() -> None:
 
 _ADDED_COLUMNS = {
     "project": {"preset": "VARCHAR NOT NULL DEFAULT 'balanced'", "policy_overrides": "VARCHAR NOT NULL DEFAULT '{}'"},
-    "subject": {"expires_at": "TIMESTAMP"},
-    "verifysession": {"purpose": "VARCHAR NOT NULL DEFAULT ''", "token": "VARCHAR NOT NULL DEFAULT ''"},
-    "verification": {"purpose": "VARCHAR NOT NULL DEFAULT ''"},
+    "verifysession": {"purpose": "VARCHAR NOT NULL DEFAULT ''", "token": "VARCHAR NOT NULL DEFAULT ''",
+                      "reference": "BOOLEAN NOT NULL DEFAULT 0", "reference_embedding": "BLOB"},
+    "verification": {"purpose": "VARCHAR NOT NULL DEFAULT ''", "reference": "BOOLEAN NOT NULL DEFAULT 0"},
 }
+# Enrolment was removed: the server keeps no face between sessions. A database from before drops its
+# subjects and enrol tokens on first start, so no embedding lingers in a file nobody reads any more.
+_DROPPED_TABLES = ("enroltoken", "subject")
 
 
 def _add_missing_columns(engine) -> None:
     insp = inspect(engine)
     with engine.begin() as conn:
+        for table in _DROPPED_TABLES:
+            if table in insp.get_table_names():
+                conn.execute(text(f"DROP TABLE {table}"))
         for table, cols in _ADDED_COLUMNS.items():
             if table not in insp.get_table_names():
                 continue

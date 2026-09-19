@@ -15,8 +15,8 @@ FaceVerifyView(
 ```
 
 - `FaceVerifyView`: camera + flow with a default overlay; `theme`, `strings`, `promptBuilder`, `progressBuilder`, `resultBuilder`, `flashBuilder` or `overlayBuilder` for your own UI.
-- `FaceVerifyController` / `FaceEnrollController`: the headless state machines; feed any `FaceSignalSource` + `VideoRecorder` (verify) or `FrameCapturer` (enrol).
-- `LumifaceClient`: the device side — uploads a session's frames or one enrolment photo, with tokens your backend hands it through `sessionProvider` / `enrolTokenProvider`. It cannot take the project key.
+- `FaceVerifyController`: the headless state machine; feed any `FaceSignalSource` + `VideoRecorder`.
+- `LumifaceClient`: the device side — streams a session's recording with the token your backend hands it through `sessionProvider`. It cannot take the project key; your backend creates the session with the person's photo as `reference_photo` (or none, for liveness) and the server keeps nothing between sessions.
 - No backend client on purpose: the key's side is REST from your backend (`POST /v1/sessions`, `GET /v1/sessions/{id}`); `examples/backend` in the repository is a complete one.
 - `LivenessConfig` follows the project's policy (`client_config` in every session) unless you pass one.
 

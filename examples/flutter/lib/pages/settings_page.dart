@@ -14,7 +14,7 @@ class SettingsPage extends StatefulWidget {
 class _SettingsPageState extends State<SettingsPage> {
   late final _url = TextEditingController(text: widget.settings.baseUrl);
   late final _backend = TextEditingController(text: widget.settings.backendUrl);
-  late final _subject = TextEditingController(text: widget.settings.subjectId);
+  late final _user = TextEditingController(text: widget.settings.userId);
   ProjectPolicy? _policy;
   List<PolicyPreset>? _presets;
   String? _policyError;
@@ -68,7 +68,7 @@ class _SettingsPageState extends State<SettingsPage> {
               helperMaxLines: 2,
             ),
           ),
-          TextField(controller: _subject, decoration: const InputDecoration(labelText: 'My subject id')),
+          TextField(controller: _user, decoration: const InputDecoration(labelText: 'User to verify (registered on the Users tab)')),
           SwitchListTile(
             title: const Text('Thai strings'),
             value: s.thai,
@@ -82,7 +82,7 @@ class _SettingsPageState extends State<SettingsPage> {
           const SizedBox(height: 16),
           FilledButton(
             onPressed: () async {
-              await s.save(baseUrl: _url.text.trim(), backendUrl: _backend.text.trim(), subjectId: _subject.text.trim());
+              await s.save(baseUrl: _url.text.trim(), backendUrl: _backend.text.trim(), userId: _user.text.trim());
               if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
             },
             child: const Text('Save'),

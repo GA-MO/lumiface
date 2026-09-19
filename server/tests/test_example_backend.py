@@ -26,28 +26,33 @@ def demo(client):
 
 def test_example_backend_runs_the_real_loop(client, demo, person_crops):
     assert demo.get("/health").json()["lumiface_up"] is True
-    r = demo.post("/api/face/subjects", data={"external_id": "DEMO", "name": "Demo"},
+    # Registration: the photo lands in the example backend's own user store, not on Lumiface.
+    r = demo.post("/api/users", data={"user_id": "DEMO", "name": "Demo"},
                   files={"photo": ("a.jpg", person_crops[0], "image/jpeg")})
-    assert r.status_code == 200, r.text
-    assert "DEMO" in [s["external_id"] for s in demo.get("/api/face/subjects").json()]
+    assert r.status_code == 201, r.text
+    assert demo.get("/api/users").json() == [{"id": "DEMO", "name": "Demo"}]
 
-    s = demo.post("/api/face/session", json={"subject_id": "DEMO", "purpose": "demo"}).json()
+    s = demo.post("/api/face/session", json={"user_id": "DEMO", "purpose": "demo"}).json()
     assert s["session_token"] and s["mode"] == "verify"
     # The device streams straight to Lumiface with the session token — no key anywhere near it.
     _, body = run_stream(client, s, person_crops[0])
     assert body["ok"], body
     # And the backend reads the verdict for itself.
     done = demo.post("/api/face/done", json={"session_id": s["session_id"]}).json()
-    assert done["used"] is True and done["result"]["ok"] is True
+    assert done["used"] is True and done["result"]["ok"] is True and done["reference"] is True
+    assert done["user_id"] == "DEMO" and done["verified"] is True, "the backend's own session → user record decides"
 
-    tok = demo.post("/api/face/enrol-token", json={"subject_id": "DEMO2"}).json()["token"]
-    assert client.post("/v1/subjects", headers={"Authorization": f"Bearer {tok}"},
-                       files={"photo": ("a.jpg", person_crops[0], "image/jpeg")}).status_code == 201
-    assert demo.get("/api/face/verifications", params={"subject_id": "DEMO"}).json()
+    assert demo.post("/api/face/session", json={"user_id": "NOBODY"}).status_code == 404
+    s = demo.post("/api/face/session", json={"purpose": "kiosk"}).json()
+    assert s["mode"] == "liveness"
+    _, body = run_stream(client, s, person_crops[1])
+    assert body["ok"] is True
+    done = demo.post("/api/face/done", json={"session_id": s["session_id"]}).json()
+    assert done["user_id"] is None and done["verified"] is False, "liveness proves a person, not a user"
+    assert demo.get("/api/face/verifications", params={"purpose": "demo"}).json()
+    assert demo.delete("/api/users/DEMO").status_code == 204 and demo.get("/api/users").json() == []
     assert demo.put("/api/face/policy", json={"preset": "balanced"}).json()["preset"] == "balanced"
     assert [p["name"] for p in demo.get("/api/face/policy/presets").json()]
-    assert demo.delete("/api/face/subjects/DEMO").status_code == 204
-    assert demo.delete("/api/face/subjects/DEMO2").status_code == 204
     # Errors pass through with Lumiface's reason codes.
     r = demo.post("/api/face/done", json={"session_id": "nope"})
     assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "SESSION_NOT_FOUND"

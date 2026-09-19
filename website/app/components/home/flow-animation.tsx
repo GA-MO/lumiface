@@ -33,7 +33,7 @@ const GATES = [
   { name: "Flash reflection", detail: "cheeks follow the 3 colours, wall does not", at: 76 },
   { name: "Server clock", detail: "2.6 s into the oval, no repeated frames", at: 80 },
   { name: "MiniFASNet + CVPR-2024", detail: "print, screen and bezel-free replay", at: 86 },
-  { name: "ArcFace match", detail: "key frames vs the enrolled face", at: 92 },
+  { name: "ArcFace match", detail: "key frames vs the reference photo", at: 92 },
 ];
 
 const BACKEND = [

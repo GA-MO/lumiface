@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import sys
 import time
@@ -66,12 +67,12 @@ def build(kind: str, frames, events, rng: np.random.Generator) -> list[tuple[int
     return out
 
 
-async def play(url: str, key: str, subject: str | None, kind: str, folder: Path) -> dict:
+async def play(url: str, key: str, reference: Path | None, kind: str, folder: Path) -> dict:
     frames, events, meta = load(folder)
     rng = np.random.default_rng(len(kind))
     payloads = build(kind, frames, events, rng)
     async with httpx.AsyncClient(base_url=url, headers={"X-API-Key": key}) as http:
-        body = {"subject_id": subject} if subject else {}
+        body = {"reference_photo": base64.b64encode(reference.read_bytes()).decode()} if reference else {}
         sess = (await http.post("/v1/sessions", json=body)).raise_for_status().json()
     ws_url = url.replace("http", "ws", 1) + f"/v1/sessions/{sess['session_id']}/stream"
     async with websockets.connect(ws_url, max_size=None) as ws:
@@ -104,10 +105,10 @@ def main() -> int:
     ap.add_argument("--kind", nargs="+", default=["injection", "photo", "static"], choices=["injection", "photo", "static"])
     ap.add_argument("--url", default="http://localhost:8000")
     ap.add_argument("--key", default="change-me")
-    ap.add_argument("--subject", default="me", help="enrolled subject to claim; '' for a liveness session")
+    ap.add_argument("--reference", type=Path, help="photo of the victim to claim as reference_photo; omitted = liveness session")
     args = ap.parse_args()
     for kind in args.kind:
-        r = asyncio.run(play(args.url, args.key, args.subject or None, kind, args.session))
+        r = asyncio.run(play(args.url, args.key, args.reference, kind, args.session))
         print(f"{kind:10} {r['session_id'][:8]}  {r.get('reason_code')}")
     return 0
 

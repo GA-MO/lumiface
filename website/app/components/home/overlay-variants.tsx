@@ -103,7 +103,7 @@ function CustomOverlay() {
 export const OVERLAY_SNIPPETS = [
   `<LumifaceView
   client={client}
-  subjectId={id}
+  sessionProvider={session}
   strings={TH}
 />`,
   `<LumifaceView

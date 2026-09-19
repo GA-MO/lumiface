@@ -13,7 +13,7 @@ from .db import get_engine, init_db
 from .deps import new_api_key
 from .models import Project
 from .policy import PRESETS, PolicyScopeMiddleware
-from .routers import debug, policy, projects, sessions, subjects, verifications
+from .routers import debug, policy, projects, sessions, verifications
 from .services.antispoof import get_antispoof
 from .services.face import get_face_engine
 from .services.retention import retention_loop
@@ -79,7 +79,6 @@ def create_app() -> FastAPI:
                        allow_headers=["*"], expose_headers=["*"])
     app.include_router(projects.router)
     app.include_router(policy.router)
-    app.include_router(subjects.router)
     app.include_router(sessions.router)
     app.include_router(verifications.router)
     if s.debug:

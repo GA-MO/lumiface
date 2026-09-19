@@ -79,8 +79,6 @@ class LivenessState {
   };
 }
 
-/// Headless driver of one camera flow. Owns no widget: feed it a
-/// [FaceSignalSource] (and a [VideoRecorder] or a [FrameCapturer]) and observe [state].
 /// The whole camera frame, in frame-normalised coordinates.
 const Rect fullFrame = Rect.fromLTWH(0, 0, 1, 1);
 
@@ -104,31 +102,6 @@ Rect boxInRegion(Rect b, Rect region) => Rect.fromLTWH(
   b.width / region.width,
   b.height / region.height,
 );
-
-abstract class FaceFlowController {
-  FaceFlowController({required this.source});
-
-  final FaceSignalSource source;
-  final ValueNotifier<LivenessState> state = ValueNotifier(const LivenessState());
-
-  /// What the preview shows of the frame; the view keeps it in step with its layout. See [visibleRegionFor].
-  Rect visibleRegion = fullFrame;
-
-  /// The camera frame's width over its height; the view keeps it in step with the source.
-  double frameAspect = 0.75;
-
-  FaceFlow get flow;
-
-  /// The config in force; the server's `client_config` once a session exists.
-  LivenessConfig get config;
-
-  Future<void> start();
-
-  void cancel();
-
-  @mustCallSuper
-  void dispose() => state.dispose();
-}
 
 /// [maxWidth] overrides [LivenessConfig.maxFaceWidthFraction]: the controller passes the oval's
 /// start width so the walk into the oval always begins from where the person held still,
@@ -156,10 +129,12 @@ AlignHint? frontalHint(FaceSignal s, LivenessConfig config) {
   return null;
 }
 
-/// Drives one verification: session -> align -> challenges -> screen flash -> upload.
+/// Headless driver of one verification, owning no widget: feed it a [FaceSignalSource] and a
+/// [VideoRecorder] and observe [state]. Session -> align -> the oval -> screen flash -> verdict.
 ///
-/// With a [subjectId] the server matches the frames against that subject
-/// ([FaceFlow.verify]); without one it only proves liveness ([FaceFlow.liveness]).
+/// The backend that creates the session decides what it proves: with a reference photo the
+/// server matches the frames against it ([FaceFlow.verify]); without one it only proves
+/// liveness ([FaceFlow.liveness]).
 ///
 /// The flash step shows each server-picked colour for [FaceSession.flashHoldMs]
 /// and uploads one frame per colour; the server checks that the face reflected
@@ -171,18 +146,27 @@ AlignHint? frontalHint(FaceSignal s, LivenessConfig config) {
 /// here is derived from [FaceSignal.tsMs] so the controller is fully
 /// deterministic under test; a wall-clock watchdog only guards against the
 /// signal stream stalling.
-class FaceVerifyController extends FaceFlowController {
+class FaceVerifyController {
   FaceVerifyController({
-    required super.source,
+    required this.source,
     required this.recorder,
     required this.client,
     required this.sessionProvider,
     FaceFlow flow = FaceFlow.verify,
     LivenessConfig? config,
     this.clientInfo = const {},
-  }) : assert(flow != FaceFlow.enroll, 'use FaceEnrollController'),
-       _flow = flow,
-       _explicitConfig = config;
+  }) : _explicitConfig = config {
+    _flow = flow;
+  }
+
+  final FaceSignalSource source;
+  final ValueNotifier<LivenessState> state = ValueNotifier(const LivenessState());
+
+  /// What the preview shows of the frame; the view keeps it in step with its layout. See [visibleRegionFor].
+  Rect visibleRegion = fullFrame;
+
+  /// The camera frame's width over its height; the view keeps it in step with the source.
+  double frameAspect = 0.75;
 
   final LumifaceClient client;
 
@@ -190,19 +174,18 @@ class FaceVerifyController extends FaceFlowController {
   final VideoRecorder recorder;
 
   /// Fetches the session from your backend, which created it with the project
-  /// key and fixed the subject: return `FaceSession.fromJson` of the server's
-  /// `POST /v1/sessions` response. The device only ever holds the session's token.
+  /// key and fixed who is verified (the reference photo): return `FaceSession.fromJson`
+  /// of the server's `POST /v1/sessions` response. The device only ever holds the session's token.
   final Future<FaceSession> Function() sessionProvider;
   final Map<String, dynamic> clientInfo;
   final LivenessConfig? _explicitConfig;
   LivenessConfig _config = const LivenessConfig();
-  FaceFlow _flow;
+  late FaceFlow _flow;
 
   /// [FaceFlow.verify] or [FaceFlow.liveness]; the session decides once it arrives.
-  @override
   FaceFlow get flow => _flow;
 
-  @override
+  /// The config in force; the server's `client_config` once a session exists.
   LivenessConfig get config => _config;
 
   FaceSession? get session => _session;
@@ -228,7 +211,6 @@ class FaceVerifyController extends FaceFlowController {
   bool _flashDone = false;
   ChallengeDetector? _detector;
 
-  @override
   Future<void> start() async {
     if (state.value.phase != LivenessPhase.idle) return;
     _set(state.value.copyWith(phase: LivenessPhase.starting));
@@ -266,17 +248,15 @@ class FaceVerifyController extends FaceFlowController {
     recorder.stopRecording();
   }
 
-  @override
   void cancel() => _finish(VerifyResult.clientError('CANCELLED'));
 
-  @override
   void dispose() {
     _disposed = true;
     _sub?.cancel();
     _stopRecording();
     _watchdog?.cancel();
     _stream?.close();
-    super.dispose();
+    state.dispose();
   }
 
   void _armWatchdog(Duration d) {
@@ -465,97 +445,5 @@ class FaceVerifyController extends FaceFlowController {
           _finish(VerifyResult.clientError('CAPTURE_ERROR', e.toString()));
         })
         .whenComplete(() => _busy = false);
-  }
-}
-
-/// Aligns the face, captures one frontal frame and enrols it as [externalId].
-/// The result carries the created [Subject] on success or the server's
-/// rejection code (SPOOF, POSE_NOT_FRONTAL, NO_FACE, ...) on failure.
-class FaceEnrollController extends FaceFlowController {
-  FaceEnrollController({
-    required super.source,
-    required this.capturer,
-    required this.client,
-    required this.enrolTokenProvider,
-    this.config = const LivenessConfig(),
-    this.timeout = const Duration(seconds: 60),
-  });
-
-  final LumifaceClient client;
-  final FrameCapturer capturer;
-
-  /// Fetches a single-use enrol token from your backend (`POST /v1/subjects/tokens`
-  /// there); the token names the subject, so the device sends only the photo.
-  final Future<String> Function() enrolTokenProvider;
-  @override
-  final LivenessConfig config;
-  final Duration timeout;
-
-  StreamSubscription<FaceSignal>? _sub;
-  Timer? _watchdog;
-  bool _disposed = false;
-  bool _busy = false;
-  int? _alignedSince;
-
-  @override
-  FaceFlow get flow => FaceFlow.enroll;
-
-  @override
-  Future<void> start() async {
-    if (state.value.phase != LivenessPhase.idle) return;
-    state.value = const LivenessState(phase: LivenessPhase.aligning, hint: AlignHint.noFace);
-    _watchdog = Timer(timeout, () => _finish(VerifyResult.clientError('TIMEOUT')));
-    _sub = source.signals.listen(_onSignal);
-  }
-
-  @override
-  void cancel() => _finish(VerifyResult.clientError('CANCELLED'));
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _sub?.cancel();
-    _watchdog?.cancel();
-    super.dispose();
-  }
-
-  void _onSignal(FaceSignal s) {
-    if (_busy || _disposed || state.value.phase != LivenessPhase.aligning) return;
-    final hint = alignHint(s, config, visibleRegion);
-    if (hint != null) {
-      _alignedSince = null;
-      state.value = state.value.copyWith(hint: hint);
-      return;
-    }
-    _alignedSince ??= s.tsMs;
-    state.value = state.value.copyWith(hint: AlignHint.holdStill);
-    if (s.tsMs - _alignedSince! < config.alignHoldMs) return;
-    _busy = true;
-    _sub?.cancel();
-    state.value = state.value.copyWith(phase: LivenessPhase.uploading, clearHint: true);
-    _submit();
-  }
-
-  Future<void> _submit() async {
-    try {
-      final jpeg = await capturer.captureJpeg();
-      final subject = await client.enroll(photoJpeg: jpeg, enrolToken: await enrolTokenProvider());
-      _finish(VerifyResult.enrolled(subject));
-    } on LumifaceException catch (e) {
-      _finish(VerifyResult(ok: false, mode: 'enroll', reasonCode: e.reasonCode, message: e.details?.toString()));
-    } catch (e) {
-      _finish(VerifyResult.clientError('NETWORK_ERROR', e.toString()));
-    }
-  }
-
-  void _finish(VerifyResult r) {
-    if (_disposed || state.value.isDone) return;
-    _sub?.cancel();
-    _watchdog?.cancel();
-    state.value = state.value.copyWith(
-      phase: r.ok ? LivenessPhase.success : LivenessPhase.failed,
-      result: r,
-      clearHint: true,
-    );
   }
 }

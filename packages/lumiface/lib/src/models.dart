@@ -20,9 +20,10 @@ enum Challenge {
   };
 }
 
-/// What a session proves: `verify` matches an enrolled subject, `liveness`
-/// only proves a live person, `enroll` captures a frontal photo for enrolment.
-enum FaceFlow { verify, liveness, enroll }
+/// What a session proves: `verify` matches the reference photo the backend gave the session,
+/// `liveness` only proves a live person. The session decides; the value on the widget is the
+/// expectation before it arrives (it picks the copy shown meanwhile).
+enum FaceFlow { verify, liveness }
 
 /// One observation of the face in the camera stream: the largest box the detector found and,
 /// when the detector reports them (Apple Vision does, BlazeFace does not), the head angles in
@@ -164,7 +165,6 @@ class VerifyResult {
     this.scores = const VerifyScores(),
     this.verificationId,
     this.sessionId,
-    this.subject,
     this.message,
   });
 
@@ -177,9 +177,6 @@ class VerifyResult {
   /// The session this result belongs to; hand it to your backend, which reads
   /// the outcome with `GET /v1/sessions/{id}` instead of trusting this object.
   final String? sessionId;
-
-  /// Set by the enrol flow when the photo was accepted.
-  final Subject? subject;
   final String? message;
 
   factory VerifyResult.fromJson(Map<String, dynamic> j) => VerifyResult(
@@ -201,29 +198,7 @@ class VerifyResult {
     scores: scores,
     verificationId: verificationId,
     sessionId: sessionId,
-    subject: subject,
     message: message,
-  );
-
-  factory VerifyResult.enrolled(Subject subject) =>
-      VerifyResult(ok: true, mode: 'enroll', reasonCode: 'OK', subject: subject);
-}
-
-class Subject {
-  const Subject({required this.externalId, required this.name, required this.enrollSpoofScore, this.expiresAt});
-
-  final String externalId;
-  final String name;
-  final double enrollSpoofScore;
-
-  /// When the server drops the embedding; null keeps it until deleted.
-  final DateTime? expiresAt;
-
-  factory Subject.fromJson(Map<String, dynamic> j) => Subject(
-    externalId: j['external_id'] as String,
-    name: (j['name'] as String?) ?? '',
-    enrollSpoofScore: (j['enroll_spoof_score'] as num).toDouble(),
-    expiresAt: j['expires_at'] == null ? null : DateTime.parse(j['expires_at'] as String),
   );
 }
 
@@ -231,7 +206,7 @@ class VerificationRecord {
   const VerificationRecord({
     required this.id,
     this.sessionId = '',
-    required this.subjectId,
+    this.reference = false,
     required this.purpose,
     required this.ok,
     required this.reasonCode,
@@ -241,7 +216,9 @@ class VerificationRecord {
 
   final int id;
   final String sessionId;
-  final String? subjectId;
+
+  /// Verify against the session's reference photo (true) or liveness only (false).
+  final bool reference;
   final String purpose;
   final bool ok;
   final String reasonCode;
@@ -251,7 +228,7 @@ class VerificationRecord {
   factory VerificationRecord.fromJson(Map<String, dynamic> j) => VerificationRecord(
     id: j['id'] as int,
     sessionId: (j['session_id'] as String?) ?? '',
-    subjectId: j['subject_id'] as String?,
+    reference: (j['reference'] as bool?) ?? false,
     purpose: (j['purpose'] as String?) ?? '',
     ok: j['ok'] as bool,
     reasonCode: j['reason_code'] as String,
