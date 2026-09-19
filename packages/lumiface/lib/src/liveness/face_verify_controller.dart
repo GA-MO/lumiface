@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:math';
-import 'dart:ui' show Color, Rect;
+import 'dart:math' as math;
+import 'dart:ui' show Color, Offset, Rect;
 
 import 'package:flutter/foundation.dart';
 
@@ -12,7 +12,6 @@ import 'signal_source.dart';
 
 enum LivenessPhase { idle, starting, aligning, challenge, flash, uploading, success, failed }
 
-enum AlignHint { noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill }
 
 @immutable
 class LivenessState {
@@ -25,6 +24,7 @@ class LivenessState {
     this.flashColor,
     this.flashIndex = 0,
     this.result,
+    this.target,
   });
 
   final LivenessPhase phase;
@@ -32,6 +32,10 @@ class LivenessState {
   final Challenge? challenge;
   final int challengeIndex;
   final int challengeCount;
+
+  /// The oval a [Challenge.faceMove] asks the face to fill, as fractions of the preview; the
+  /// guide draws it instead of the theme's shape once set.
+  final Rect? target;
 
   /// Colour the UI must fill the whole screen with while [phase] is [LivenessPhase.flash].
   final Color? flashColor;
@@ -49,6 +53,7 @@ class LivenessState {
     bool clearFlash = false,
     int? flashIndex,
     VerifyResult? result,
+    Rect? target,
   }) => LivenessState(
     phase: phase ?? this.phase,
     hint: clearHint ? null : (hint ?? this.hint),
@@ -58,6 +63,7 @@ class LivenessState {
     flashColor: clearFlash ? null : (flashColor ?? this.flashColor),
     flashIndex: flashIndex ?? this.flashIndex,
     result: result ?? this.result,
+    target: target ?? this.target,
   );
 
   bool get isDone => phase == LivenessPhase.success || phase == LivenessPhase.failed;
@@ -74,7 +80,7 @@ class LivenessState {
 }
 
 /// Headless driver of one camera flow. Owns no widget: feed it a
-/// [FaceSignalSource] and a [FrameCapturer] and observe [state].
+/// [FaceSignalSource] (and a [VideoRecorder] or a [FrameCapturer]) and observe [state].
 /// The whole camera frame, in frame-normalised coordinates.
 const Rect fullFrame = Rect.fromLTWH(0, 0, 1, 1);
 
@@ -100,14 +106,16 @@ Rect boxInRegion(Rect b, Rect region) => Rect.fromLTWH(
 );
 
 abstract class FaceFlowController {
-  FaceFlowController({required this.source, required this.capturer});
+  FaceFlowController({required this.source});
 
   final FaceSignalSource source;
-  final FrameCapturer capturer;
   final ValueNotifier<LivenessState> state = ValueNotifier(const LivenessState());
 
   /// What the preview shows of the frame; the view keeps it in step with its layout. See [visibleRegionFor].
   Rect visibleRegion = fullFrame;
+
+  /// The camera frame's width over its height; the view keeps it in step with the source.
+  double frameAspect = 0.75;
 
   FaceFlow get flow;
 
@@ -122,15 +130,26 @@ abstract class FaceFlowController {
   void dispose() => state.dispose();
 }
 
-AlignHint? alignHint(FaceSignal s, LivenessConfig config, [Rect region = fullFrame]) {
+/// [maxWidth] overrides [LivenessConfig.maxFaceWidthFraction]: the controller passes the oval's
+/// start width so the walk into the oval always begins from where the person held still,
+/// whatever the frame's aspect.
+AlignHint? alignHint(FaceSignal s, LivenessConfig config, [Rect region = fullFrame, double? maxWidth]) {
   if (s.faceCount == 0 || s.box == null) return AlignHint.noFace;
   if (s.faceCount > 1) return AlignHint.multipleFaces;
   final b = boxInRegion(s.box!, region);
   if (b.width < config.minFaceWidthFraction) return AlignHint.tooFar;
-  if (b.width > config.maxFaceWidthFraction) return AlignHint.tooClose;
+  if (b.width > (maxWidth ?? config.maxFaceWidthFraction)) return AlignHint.tooClose;
   final dx = (b.center.dx - 0.5).abs();
   final dy = (b.center.dy - 0.5).abs();
   if (dx > config.centerTolerance || dy > config.centerTolerance) return AlignHint.notCentered;
+  return frontalHint(s, config);
+}
+
+/// After the oval the face is close by design: only its presence and (where the detector reports
+/// angles) its pose still matter.
+AlignHint? frontalHint(FaceSignal s, LivenessConfig config) {
+  if (s.faceCount == 0 || s.box == null) return AlignHint.noFace;
+  if (s.faceCount > 1) return AlignHint.multipleFaces;
   if ((s.yaw ?? 0).abs() > config.neutralMaxYaw || (s.pitch ?? 0).abs() > config.neutralMaxPitch) {
     return AlignHint.lookStraight;
   }
@@ -146,39 +165,35 @@ AlignHint? alignHint(FaceSignal s, LivenessConfig config, [Rect region = fullFra
 /// and uploads one frame per colour; the server checks that the face reflected
 /// the sequence (a screen replay reflects nothing, a recording cannot know it).
 ///
-/// When the server picked no turn challenge and [LivenessConfig.parallaxWhenNoTurn]
-/// is set, a client-only turn is appended so the nose-parallax check always
-/// runs; it is not reported to the server.
-///
-/// Frames go to the server continuously while the flow runs; the events sent at
-/// each boundary only tell the server where to look, it decides from its own
-/// frames and clock. All timing here is derived from [FaceSignal.tsMs] so the
-/// controller is fully deterministic under test; a wall-clock watchdog only
-/// guards against the signal stream stalling.
+/// The recorder runs from the plan to the verdict and its chunks go to the server
+/// as they are cut; the events sent at each boundary only tell the server where
+/// to look, it decides from the frames it decodes and its own clock. All timing
+/// here is derived from [FaceSignal.tsMs] so the controller is fully
+/// deterministic under test; a wall-clock watchdog only guards against the
+/// signal stream stalling.
 class FaceVerifyController extends FaceFlowController {
   FaceVerifyController({
     required super.source,
-    required super.capturer,
+    required this.recorder,
     required this.client,
     required this.sessionProvider,
     FaceFlow flow = FaceFlow.verify,
     LivenessConfig? config,
     this.clientInfo = const {},
-    this.streamFps = 8,
   }) : assert(flow != FaceFlow.enroll, 'use FaceEnrollController'),
        _flow = flow,
        _explicitConfig = config;
 
   final LumifaceClient client;
 
+  /// Records the camera for the server; every [CameraFaceSource] is one.
+  final VideoRecorder recorder;
+
   /// Fetches the session from your backend, which created it with the project
   /// key and fixed the subject: return `FaceSession.fromJson` of the server's
   /// `POST /v1/sessions` response. The device only ever holds the session's token.
   final Future<FaceSession> Function() sessionProvider;
   final Map<String, dynamic> clientInfo;
-
-  /// Frames streamed to the server per second of signal time.
-  final int streamFps;
   final LivenessConfig? _explicitConfig;
   LivenessConfig _config = const LivenessConfig();
   FaceFlow _flow;
@@ -203,8 +218,7 @@ class FaceVerifyController extends FaceFlowController {
   Timer? _watchdog;
   bool _disposed = false;
   bool _busy = false;
-  int? _lastFrameAt;
-  bool _capturing = false;
+  bool _recording = false;
   int? _alignedSince;
   int? _challengeStartedAt;
   int? _lastFaceSeenAt;
@@ -227,7 +241,7 @@ class FaceVerifyController extends FaceFlowController {
     if (_disposed) return;
     _flow = _session!.mode == 'liveness' ? FaceFlow.liveness : FaceFlow.verify;
     try {
-      _stream = client.openStream(_session!, clientInfo: clientInfo);
+      _stream = client.openStream(_session!, clientInfo: clientInfo, format: recorder.format);
       _serverPlan = await _stream!.plan;
     } on LumifaceException catch (e) {
       _finish(VerifyResult.clientError(e.reasonCode, e.details?.toString()));
@@ -238,27 +252,28 @@ class FaceVerifyController extends FaceFlowController {
     }
     if (_disposed) return;
     _config = _explicitConfig ?? _serverPlan!.clientConfig ?? _session!.clientConfig ?? const LivenessConfig();
-    _plan = _planChallenges(_serverPlan!.challenges);
+    _plan = _serverPlan!.challenges;
     _set(LivenessState(phase: LivenessPhase.aligning, hint: AlignHint.noFace, challengeCount: _plan.length));
     _armWatchdog(Duration(seconds: _session!.ttlSeconds));
+    _recording = true;
+    recorder.startRecording((data, tsMs) => _stream?.sendChunk(data, tsMs));
     _sub = source.signals.listen(_onSignal);
+  }
+
+  void _stopRecording() {
+    if (!_recording) return;
+    _recording = false;
+    recorder.stopRecording();
   }
 
   @override
   void cancel() => _finish(VerifyResult.clientError('CANCELLED'));
 
-  List<Challenge> _planChallenges(List<Challenge> server) {
-    final hasTurn = server.any((c) => c == Challenge.turnLeft || c == Challenge.turnRight);
-    if (hasTurn || !config.parallaxWhenNoTurn || config.parallaxMinShift <= 0) return server;
-    return [...server, Random().nextBool() ? Challenge.turnLeft : Challenge.turnRight];
-  }
-
-  bool _isServerChallenge(int i) => i < _serverPlan!.challenges.length;
-
   @override
   void dispose() {
     _disposed = true;
     _sub?.cancel();
+    _stopRecording();
     _watchdog?.cancel();
     _stream?.close();
     super.dispose();
@@ -276,6 +291,7 @@ class FaceVerifyController extends FaceFlowController {
   void _finish(VerifyResult r) {
     if (_disposed || state.value.isDone) return;
     _sub?.cancel();
+    _stopRecording();
     _watchdog?.cancel();
     if (state.value.phase != LivenessPhase.uploading) _stream?.close();
     final result = _session != null && r.sessionId == null ? r.withSession(_session!.id) : r;
@@ -288,34 +304,10 @@ class FaceVerifyController extends FaceFlowController {
     );
   }
 
-  /// One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow.
-  /// One encode at a time: a slow device sends fewer frames rather than piling up isolates.
-  /// [now] skips both limits: a blink is closed for ~100 ms, shorter than the gap between two
-  /// frames at 7 fps, so the frame that shows the eyes shut is sent the moment the device sees it.
-  void _streamFrame(FaceSignal s, {bool now = false}) {
-    final stream = _stream;
-    if (stream == null) return;
-    if (!now) {
-      if (_capturing) return;
-      if (_lastFrameAt != null && s.tsMs - _lastFrameAt! < 1000 ~/ streamFps) return;
-    }
-    _lastFrameAt = s.tsMs;
-    _capturing = true;
-    capturer
-        .captureJpeg()
-        .then((jpeg) => stream.sendFrame(jpeg, s.tsMs))
-        .catchError((_) {})
-        .whenComplete(() => _capturing = false);
-  }
-
-  bool _eyesShut(LivenessState st, FaceSignal s) =>
-      st.phase == LivenessPhase.challenge && st.challenge == Challenge.blink && (s.eyeOpen ?? 1) <= config.eyeClosedThreshold;
-
   Future<void> _onSignal(FaceSignal s) async {
     if (_busy || _disposed || state.value.isDone) return;
     final st = state.value;
     if (s.present) _lastFaceSeenAt = s.tsMs;
-    _streamFrame(s, now: _eyesShut(st, s));
 
     switch (st.phase) {
       case LivenessPhase.aligning:
@@ -329,8 +321,15 @@ class FaceVerifyController extends FaceFlowController {
     }
   }
 
+  /// The widest a face may be at alignment: the oval's start, when the plan has one.
+  double get _alignMaxWidth {
+    final oval = _ovalRect;
+    final limit = config.maxFaceWidthFraction;
+    return oval == null ? limit : math.min(limit, boxInRegion(oval, visibleRegion).width * config.moveStartMaxRatio);
+  }
+
   void _align(FaceSignal s) {
-    final hint = alignHint(s, config, visibleRegion);
+    final hint = alignHint(s, config, visibleRegion, _alignMaxWidth);
     if (hint != null) {
       _alignedSince = null;
       _set(state.value.copyWith(hint: hint));
@@ -344,13 +343,31 @@ class FaceVerifyController extends FaceFlowController {
     }
   }
 
+  /// The plan's oval in frame-normalised coordinates. Its width is a fraction of the frame's shorter
+  /// side (faces scale with it whatever the orientation), so both fractions depend on the aspect.
+  Rect? get _ovalRect {
+    final o = _serverPlan?.oval;
+    if (o == null) return null;
+    final landscape = frameAspect > 1;
+    final w = landscape ? o.width / frameAspect : o.width;
+    final h = landscape ? o.width * o.heightRatio : o.width * o.heightRatio * frameAspect;
+    return Rect.fromCenter(center: Offset(o.cx, o.cy), width: w, height: h);
+  }
+
   void _startChallenge(int i, FaceSignal s) {
     final c = _plan[i];
-    _detector = ChallengeDetector.forChallenge(c, config)..feed(s);
+    final oval = c == Challenge.faceMove ? _ovalRect : null;
+    _detector = ChallengeDetector.forChallenge(c, config, oval: oval)..feed(s);
     _challengeStartedAt = s.tsMs;
     _settleUntil = null;
     _doneReported = false;
-    _set(state.value.copyWith(phase: LivenessPhase.challenge, challenge: c, challengeIndex: i, clearHint: true));
+    _set(state.value.copyWith(
+      phase: LivenessPhase.challenge,
+      challenge: c,
+      challengeIndex: i,
+      clearHint: true,
+      target: oval == null ? null : boxInRegion(oval, visibleRegion),
+    ));
   }
 
   Future<void> _challenge(FaceSignal s) async {
@@ -370,14 +387,14 @@ class FaceVerifyController extends FaceFlowController {
       final i = state.value.challengeIndex;
       if (!_doneReported) {
         _doneReported = true;
-        if (_isServerChallenge(i)) _stream?.event(StreamEventName.challengeDone, s.tsMs, index: i);
+        _stream?.event(StreamEventName.challengeDone, s.tsMs, index: i);
       }
       final next = i + 1;
       if (next < _plan.length) {
         _startChallenge(next, s);
         return;
       }
-      final hint = alignHint(s, config, visibleRegion);
+      final hint = frontalHint(s, config);
       if (hint != null) {
         _set(state.value.copyWith(hint: hint));
         return;
@@ -389,9 +406,12 @@ class FaceVerifyController extends FaceFlowController {
       _guard(_upload);
       return;
     }
-    // The window closes after the settle, so the frames that show the gesture ending (eyes
-    // open again after a blink, head back) are inside it rather than in the next one.
-    if (_detector!.feed(s)) _settleUntil = s.tsMs + config.settleAfterChallengeMs;
+    // The window closes after the settle, so the frames with the face at rest in the oval are inside it.
+    if (_detector!.feed(s)) {
+      _settleUntil = s.tsMs + config.settleAfterChallengeMs;
+    } else if (_detector case FaceMoveDetector(:final hint)) {
+      _set(state.value.copyWith(hint: hint, clearHint: hint == null));
+    }
   }
 
   void _startFlash(int i, int tsMs) {
@@ -430,6 +450,7 @@ class FaceVerifyController extends FaceFlowController {
   Future<void> _upload() async {
     _sub?.cancel();
     _set(state.value.copyWith(phase: LivenessPhase.uploading, clearHint: true));
+    _stopRecording();
     try {
       _finish(await _stream!.end());
     } catch (e) {
@@ -453,7 +474,7 @@ class FaceVerifyController extends FaceFlowController {
 class FaceEnrollController extends FaceFlowController {
   FaceEnrollController({
     required super.source,
-    required super.capturer,
+    required this.capturer,
     required this.client,
     required this.enrolTokenProvider,
     this.config = const LivenessConfig(),
@@ -461,6 +482,7 @@ class FaceEnrollController extends FaceFlowController {
   });
 
   final LumifaceClient client;
+  final FrameCapturer capturer;
 
   /// Fetches a single-use enrol token from your backend (`POST /v1/subjects/tokens`
   /// there); the token names the subject, so the device sends only the photo.

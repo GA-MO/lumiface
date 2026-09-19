@@ -12,8 +12,9 @@ dependencies:
 ```
 
 - iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer. Xcode 26 refuses pods that declare a deployment target under 15, so the example's `Podfile` pins every pod to 15.5 in `post_install`; copy that block.
-- Android: `minSdk` 23 or newer. Release builds need no ProGuard work of yours: the package ships the keep rules ML Kit requires under R8 (without them face detection fails on every frame in release).
-- Web: nothing to add; the MediaPipe glue is loaded from the package assets. See [Web](/docs/flutter/web).
+- Android: `minSdk` 23 or newer and `<uses-permission android:name="android.permission.INTERNET" />` in your manifest (Flutter adds it to debug builds only; ML Kit used to bring it into release builds, TensorFlow Lite does not). The package's plugin bundles TensorFlow Lite (`org.tensorflow:tensorflow-lite`) and the short-range BlazeFace model (230 KB) and ships the R8 keep rules it needs.
+- iOS: the plugin uses Apple Vision (`VNDetectFaceRectanglesRequest`), part of the OS, no pods beyond Flutter's.
+- Web: nothing to add; the TensorFlow.js glue and the BlazeFace model are loaded from the package assets. See [Web](/docs/flutter/web).
 
 ## The view
 
@@ -33,7 +34,7 @@ It fills its parent, so put it in a `Scaffold` body or any sized box. The result
 ## The app holds no secret
 
 `LumifaceClient` takes a URL and nothing else — there is no way to give it the project key — and it can do
-exactly two things: upload the frames of a session it was handed, and upload one enrolment photo with a token it
+exactly two things: stream the recording of a session it was handed, and upload one enrolment photo with a token it
 was handed. Both come from your backend, which is the only place the key lives:
 
 ```dart
@@ -77,6 +78,7 @@ The `VerifyResult` the app receives is for the UI; the decision is the `GET /v1/
     strings: { type: "LivenessStrings", description: "Every text. en and th are built in; copyWith changes single lines." },
     theme: { type: "FaceVerifyTheme", description: "Colours, guide shape and geometry, progress bar, message style." },
     facing: { type: "CameraFacing", description: "front (default) or back." },
+    sourceFactory: { type: "CameraFaceSource Function()?", description: "Your own camera + detector in place of the platform one; see Custom UI." },
     showDebug: { type: "bool", description: "Draws the face box and a line of raw signals." },
     autoStart: { type: "bool", description: "false hands you the controller through onController to start later." },
     onController: { type: "void Function(FaceFlowController)?", description: "Receives the controller once the camera is up." },
@@ -111,7 +113,7 @@ class VerifyResult {
 
 ## The client
 
-`LumifaceClient` is the device side only: `openStream(session)` returns a `VerifyStream` (`plan`, `sendFrame`, `event`, `end`, `close`) that the controller drives, and `enroll(photoJpeg:, enrolToken:)`. Errors other than a verdict throw `LumifaceException(reasonCode, details)`.
+`LumifaceClient` is the device side only: `openStream(session, format:)` returns a `VerifyStream` (`plan`, `sendChunk`, `event`, `end`, `close`) that the controller drives, and `enroll(photoJpeg:, enrolToken:)`. Errors other than a verdict throw `LumifaceException(reasonCode, details)`.
 
 ## Theme
 

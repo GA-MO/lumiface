@@ -7,7 +7,7 @@
 
 <p align="center">
   Self-hosted face verification with active liveness.<br>
-  A screen flash and random challenges on the device, two anti-spoof models and ArcFace matching on your server, one policy per project.
+  The oval and a screen flash on the device (the oval-and-flash flow), two anti-spoof models and ArcFace matching on your server, one policy per project.
 </p>
 
 <p align="center">
@@ -36,14 +36,14 @@
 
 ## What it is
 
-A selfie login usually ends at "a face was detected". Lumiface answers two questions instead: **is a real person in front of the camera**, and **is it the person you enrolled**. The device runs a short session (two random challenges, a smile always among them, then three screen-flash colours the server picked) while streaming JPEG frames over a WebSocket the whole time. The server clocks the session itself, confirms each blink, smile, turn and nod from its own landmarks inside its window, checks that the cheeks reflected the flash colours in order, runs MiniFASNet and a CVPR-2024 anti-spoof gate on the key frames, and matches **every key frame** against the enrolled ArcFace embedding. One stream, one `{ok, reason_code, scores}`.
+A selfie login usually ends at "a face was detected". Lumiface answers two questions instead: **is a real person in front of the camera**, and **is it the person you enrolled**. The device runs a short session — guided by a face box from BlazeFace (web, Android) or Apple Vision (iOS): move the face into the oval the server drew, then three screen-flash colours the server picked — while the camera is recorded and streamed over a WebSocket the whole time (H.264 from the phone encoders, MediaRecorder on the web, about 30 fps). The server clocks the session itself, confirms the move into the oval from its own detector inside its window, checks that the cheeks reflected the flash colours in order, runs MiniFASNet and a CVPR-2024 anti-spoof gate on the key frames, and matches **every key frame** against the enrolled ArcFace embedding. One stream, one `{ok, reason_code, scores}`.
 
 Faces never leave your network. The server is a FastAPI app with SQLite or Postgres; the models run on CPU. Every project has an API key and a **policy**, a preset plus overrides for every threshold, changed through the API without a redeploy or an app update.
 
 ## Features
 
 - **Identity, not only liveness.** With a `subjectId` the server computes the cosine similarity of every frame against the enrolled face (ArcFace, InsightFace buffalo_l: 99.52% on LFW, EER 0.83%) and fails with `NO_MATCH` when any frame is under `match_threshold`; frames must also match each other (`INCONSISTENT`). Without a `subjectId` the same session is a liveness check.
-- **Active liveness, guided on the device, judged on the server.** ML Kit (iOS, Android) or MediaPipe (web) guides blink, turn, nod and smile and checks nose parallax, so a flat photo turning in front of the camera fails before upload; the server re-reads every gesture from its own landmarks, so a patched client gains nothing.
+- **Active liveness, guided on the device, judged on the server.** TensorFlow.js BlazeFace (web), TensorFlow Lite BlazeFace (Android) or Apple Vision (iOS) guide the face into the server's oval; the server re-reads the move from its own detector, so a patched client gains nothing.
 - **Screen flash.** Three server-chosen colours; the server correlates the chroma deltas on the face with the sequence and rejects when the background reflected as much as the face.
 - **Two anti-spoof models.** MiniFASNet for prints and screens, the CVPR-2024 ResNet50 gate for bezel-free replay, on every key frame.
 - **One policy per project.** `balanced`, `strict`, `relaxed`, `emulator` presets plus per-threshold overrides through `PUT /v1/policy`; the session carries the client tunables, so apps follow the policy without a rebuild.
@@ -125,9 +125,9 @@ The answer is the same from every client:
 | Step | Who | What happens |
 |---|---|---|
 | **Enrol** | `POST /v1/subjects` with a photo, or `FaceFlow.enroll` from the camera | One frontal face, anti-spoof checked, stored as a 512-d ArcFace embedding under `external_id`. A second photo with `replace` updates it; `ttl_seconds` (or the policy's `subject_ttl_seconds`) drops it again after a while, a purge loop deletes the row. |
-| **Session** | `POST /v1/sessions` from your backend with the API key | The server picks the challenges and flash colours, stamps a TTL, returns the client tunables and a `session_token` for the device. |
-| **Challenge** | on the device | Blink / turn / nod / smile guided by ML Kit or MediaPipe, with the parallax check, then the flash; frames stream up the whole time (~8 fps) with an event at each boundary. |
-| **Verify** | `WS /v1/sessions/{id}/stream` with the session token: frames flow up the whole time | The server clocks the flow itself, confirms each blink / smile / turn / nod from its own landmarks in the frames, reads the flash reflection, then anti-spoof → **match against `E001`** → consistency. The first failing check names the `reason_code`. |
+| **Session** | `POST /v1/sessions` from your backend with the API key | The server draws the oval and picks the flash colours, stamps a TTL, returns the client tunables and a `session_token` for the device. |
+| **Challenge** | on the device | Move into the server's oval guided by the platform's face box (BlazeFace, Apple Vision), then the flash; the camera is recorded the whole time and streamed up in chunks, with an event at each boundary. |
+| **Verify** | `WS /v1/sessions/{id}/stream` with the session token: the recording flows up as it is cut | The server decodes it into frames, clocks the flow itself, confirms the move into the oval (box growth and fit) from its own detector in the frames, reads the flash reflection, then anti-spoof → **match against `E001`** → consistency. The first failing check names the `reason_code`. |
 | **Confirm** | `GET /v1/sessions/{id}` from your backend | Reads `result.ok`; the device's own report is not trusted. |
 
 The live demo on the docs home runs `liveness` against a stand-in server because there is no enrolled subject in the browser; the example app and the React demo run all three flows against a real server.
@@ -142,7 +142,7 @@ The live demo on the docs home runs `liveness` against a stand-in server because
 | **Docs site** | Guides, policy reference, reason codes, and a live demo of the real SDK with a stand-in server | `bun run dev:site` → http://localhost:3002 · [source](website) |
 
 <p align="center">
-  <img src="docs/images/flow.jpeg" width="820" alt="Three calls, one result: the device runs the challenges and the flash, the server runs MiniFASNet, the CVPR-2024 gate, the flash check and the ArcFace match">
+  <img src="docs/images/flow.jpeg" width="820" alt="Three calls, one result: the device runs the oval and the flash, the server runs MiniFASNet, the CVPR-2024 gate, the flash check and the ArcFace match">
 </p>
 
 ## How it works
@@ -150,16 +150,16 @@ The live demo on the docs home runs `liveness` against a stand-in server because
 ```
   device (Flutter / React)                          server (FastAPI)
   ────────────────────────                          ────────────────
-  backend: POST /v1/sessions ───────────────────▶  pick 2 challenges (smile always) + 3 flash colours,
+  backend: POST /v1/sessions ───────────────────▶  the oval + 3 flash colours,
     ◀──────── session_token, client_config           TTL, project policy tunables
   WS /v1/sessions/{id}/stream  hello ───────────▶
-    ◀──────── plan: challenges, colours
-  ML Kit / MediaPipe guide the person
-    blink · turn · nod · smile · flash ×3
-  JPEG frames ~8 fps + boundary events ─────────▶  server clock   TIMING_*, FRAMES_STATIC
+    ◀──────── plan: face_move, oval, colours
+  BlazeFace / Apple Vision guide the person
+    move into the oval · flash ×3
+  video chunks (VP8 / H.264) + boundary events ─▶  decode        frames with both clocks
+                                                    server clock   TIMING_*, FRAMES_STATIC
                                                     face          NO_FACE, MULTIPLE_FACES, FACE_TOO_SMALL
-                                                    landmarks     blink / smile / turn / nod seen in the window
-                                                                  → EXPRESSION_MISMATCH, POSE_MISMATCH
+                                                    face boxes    grew from far into the oval → MOVEMENT_MISMATCH
                                                     flash         chroma in each colour window → FLASH_FAIL
                                                     anti-spoof    MiniFASNet + CVPR-2024 gate  → SPOOF
                                                     identity      cosine(frame, enrolled) ≥ match_threshold → NO_MATCH
@@ -167,18 +167,19 @@ The live demo on the docs home runs `liveness` against a stand-in server because
     ◀──────── {ok, reason_code, scores, verification_id}
 ```
 
-Thresholds live in the policy (`match_threshold` 0.45 for `balanced`, 0.55 for `strict`, 0.40 for `relaxed`, ...); every one is listed with its default and meaning in the [policy reference](https://ga-mo.github.io/lumiface/docs/policy-reference). What the pipeline does not stop (latex and silicone masks past the smile, real-time deepfakes injected as a camera) is on the [security page](https://ga-mo.github.io/lumiface/docs/security). Lumiface is not certified liveness (no ISO 30107-3).
+Thresholds live in the policy (`match_threshold` 0.45 for `balanced`, 0.55 for `strict`, 0.40 for `relaxed`, ...); every one is listed with its default and meaning in the [policy reference](https://ga-mo.github.io/lumiface/docs/policy-reference). What the pipeline does not stop (latex and silicone masks on a live person, real-time deepfakes injected as a camera) is on the [security page](https://ga-mo.github.io/lumiface/docs/security). Lumiface is not certified liveness (no ISO 30107-3).
 
 ## Entry points
 
 | | |
 |---|---|
-| `server/` | FastAPI: `app/routers` (subjects, sessions, verifications, policy, projects), `app/services` (face, antispoof, flash, expression, verify), `app/policy.py` (presets and schema) |
-| `packages/lumiface/` | Flutter: `FaceVerifyView`, `FaceVerifyController`, `LumifaceClient`, `LivenessStrings`, `FaceVerifyTheme`; `android/` only carries the ProGuard keep rules ML Kit needs |
-| `packages/lumiface-react/` | React: `LumifaceView`, `useLumiface`, headless controller, MediaPipe source; `@lumiface/react/core` is browser-free |
+| `server/` | FastAPI: `app/routers` (subjects, sessions, verifications, policy, projects), `app/services` (face, antispoof, flash, stream, verify), `app/policy.py` (presets and schema) |
+| `packages/lumiface/` | Flutter: `FaceVerifyView`, `FaceVerifyController`, `LumifaceClient`, `LivenessStrings`, `FaceVerifyTheme`; `android/` runs TFLite BlazeFace, `ios/` Apple Vision, `assets/` the tfjs glue and model for the web |
+| `packages/lumiface-react/` | React: `LumifaceView`, `useLumiface`, headless controller, `BlazeFaceSource` (tfjs, WASM backend); `@lumiface/react/core` is browser-free |
 | `website/` | Docs (fumadocs + React Router), builds to `pages-site/` for GitHub Pages |
 | `examples/` | `flutter` (use cases, subjects, history), `react` (Vite demo), `backend` (the key holder, ~100 lines) |
 | `docs/plans/face-check-in.md` | Plan, status and the Android emulator setup |
+| `server/data/sessions/` | The replay set (not in git): every live session, replayed by `tests/test_replay.py`; 27 genuine and 10 replay attacks as of 2026-09-19 |
 
 ## Working on it
 

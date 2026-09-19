@@ -5,25 +5,32 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
+import '../liveness/signal_source.dart';
 import '../models.dart';
 import 'camera_source.dart';
 import 'image_convert.dart';
 
 CameraFaceSource createPlatformCameraFaceSource({CameraFacing facing = CameraFacing.front}) =>
-    MlKitCameraSource(lensDirection: facing == CameraFacing.front ? CameraLensDirection.front : CameraLensDirection.back);
+    NativeCameraSource(lensDirection: facing == CameraFacing.front ? CameraLensDirection.front : CameraLensDirection.back);
 
-/// Camera + ML Kit face detection for iOS/Android.
+/// Camera + the platform's own face detector and video encoder: TensorFlow Lite BlazeFace (short
+/// range, bundled with the package) and MediaCodec H.264 on Android, Apple Vision
+/// (`VNDetectFaceRectanglesRequest`) and VideoToolbox H.264 on iOS. Every frame goes to the plugin
+/// over a method channel (`ai.lumiface/detector`) and comes back as upright, frame-normalised boxes
+/// (Vision adds yaw and pitch, BlazeFace reports none) plus, while recording, the H.264 access
+/// units the encoder has finished, each stamped with the frame time it was fed at.
 ///
-/// Produces [FaceSignal]s from the preview stream and can snapshot the latest
-/// frame as an upright JPEG for upload.
-class MlKitCameraSource implements CameraFaceSource {
-  MlKitCameraSource({
+/// Produces [FaceSignal]s from the preview stream, records it for the server and can snapshot the
+/// latest frame as an upright JPEG for enrolment.
+class NativeCameraSource implements CameraFaceSource {
+  NativeCameraSource({
     this.lensDirection = CameraLensDirection.front,
     this.resolution = ResolutionPreset.high,
     this.jpegQuality = 90,
   });
+
+  static const channel = MethodChannel('ai.lumiface/detector');
 
   final CameraLensDirection lensDirection;
   final ResolutionPreset resolution;
@@ -31,25 +38,40 @@ class MlKitCameraSource implements CameraFaceSource {
 
   CameraController? controller;
   CameraDescription? _camera;
-  late final FaceDetector _detector = FaceDetector(
-    options: FaceDetectorOptions(
-      enableClassification: true,
-      enableLandmarks: true,
-      enableTracking: true,
-      performanceMode: FaceDetectorMode.fast,
-      minFaceSize: 0.15,
-    ),
-  );
 
   final _signals = StreamController<FaceSignal>.broadcast();
   CameraImage? _latest;
   CameraImage? _signalImage;
   bool _detecting = false;
   bool _streaming = false;
+  bool _recording = false;
+  void Function(List<int> data, int tsMs)? _onChunk;
   final Stopwatch _clock = Stopwatch()..start();
 
   @override
   Stream<FaceSignal> get signals => _signals.stream;
+
+  @override
+  StreamFormat get format => StreamFormat.h264;
+
+  @override
+  void startRecording(void Function(List<int> data, int tsMs) onChunk) {
+    _onChunk = onChunk;
+    _recording = true;
+  }
+
+  @override
+  void stopRecording() {
+    if (!_recording) return;
+    _recording = false;
+    final deliver = _onChunk;
+    _onChunk = null;
+    channel.invokeMethod<List<Object?>>('stopRecording').then((chunks) {
+      for (final c in (chunks ?? const []).cast<Map<Object?, Object?>>()) {
+        deliver?.call(c['data'] as Uint8List, c['ts'] as int);
+      }
+    }).catchError((_) {});
+  }
 
   @override
   bool get isInitialized => controller?.value.isInitialized ?? false;
@@ -102,8 +124,8 @@ class MlKitCameraSource implements CameraFaceSource {
   @override
   Future<void> dispose() async {
     await stopStream();
+    stopRecording();
     await _signals.close();
-    await _detector.close();
     await controller?.dispose();
   }
 
@@ -133,78 +155,66 @@ class MlKitCameraSource implements CameraFaceSource {
   Future<void> _detect(CameraImage image) async {
     final ts = _clock.elapsedMilliseconds;
     _signalImage = image;
-    final rotation = InputImageRotationValue.fromRawValue(_rotationDegrees());
-    final format = InputImageFormatValue.fromRawValue(image.format.raw);
-    if (rotation == null || format == null || image.planes.length != 1) {
+    if (image.planes.length != 1) {
       _signals.add(FaceSignal.none(ts));
       return;
     }
     final plane = image.planes.first;
-    final input = InputImage.fromBytes(
-      bytes: plane.bytes,
-      metadata: InputImageMetadata(
-        size: Size(image.width.toDouble(), image.height.toDouble()),
-        rotation: rotation,
-        format: format,
-        bytesPerRow: plane.bytesPerRow,
-      ),
-    );
-    List<Face> faces;
+    Map<Object?, Object?> out;
     try {
-      faces = await _detector.processImage(input);
+      // camera_avfoundation delivers iOS frames already upright (and mirrored for the front camera);
+      // Android delivers sensor orientation. The plugin makes both upright and un-mirrored.
+      out = await channel.invokeMethod<Map<Object?, Object?>>('process', {
+        'bytes': plane.bytes,
+        'width': image.width,
+        'height': image.height,
+        'bytesPerRow': plane.bytesPerRow,
+        'format': Platform.isAndroid ? 'nv21' : 'bgra8888',
+        'rotation': Platform.isIOS ? 0 : _rotationDegrees(),
+        'mirror': Platform.isIOS && _camera!.lensDirection == CameraLensDirection.front,
+        'ts': ts,
+        'record': _recording,
+      }) ?? const {};
     } catch (_) {
-      _signals.add(FaceSignal.none(ts));
+      if (!_signals.isClosed) _signals.add(FaceSignal.none(ts));
       return;
     }
     if (_signals.isClosed) return;
-    if (faces.isEmpty) {
-      _signals.add(FaceSignal.none(ts));
-      return;
+    _signals.add(signalFromFaces((out['faces'] as List<Object?>?) ?? const [], ts));
+    final deliver = _onChunk;
+    if (deliver != null) {
+      for (final c in ((out['chunks'] as List<Object?>?) ?? const []).cast<Map<Object?, Object?>>()) {
+        deliver(c['data'] as Uint8List, c['ts'] as int);
+      }
     }
-    faces.sort((a, b) => _area(b.boundingBox).compareTo(_area(a.boundingBox)));
-    final f = faces.first;
-    final rotated = rotation == InputImageRotation.rotation90deg || rotation == InputImageRotation.rotation270deg;
-    // Bounding boxes come back in upright-image coordinates; the upright size
-    // differs per platform for rotated frames (matches the ML Kit example painter).
-    final double normW, normH;
-    if (rotated) {
-      normW = (Platform.isIOS ? image.width : image.height).toDouble();
-      normH = (Platform.isIOS ? image.height : image.width).toDouble();
-    } else {
-      normW = image.width.toDouble();
-      normH = image.height.toDouble();
-    }
-    final b = f.boundingBox;
-    // ML Kit yaw (Euler Y) is positive when the face turns toward the image's
-    // right. Android delivers front-camera frames un-mirrored, so that equals the
-    // user's own left; the back camera is the opposite. iOS mirrors the front
-    // camera's frames (camera_avfoundation), which flips both. FaceSignal wants
-    // +yaw == user's left.
-    final front = _camera!.lensDirection == CameraLensDirection.front;
-    final yawSign = (front != Platform.isIOS) ? 1.0 : -1.0;
-    Offset? mark(FaceLandmarkType t) {
-      final p = f.landmarks[t]?.position;
-      return p == null ? null : Offset(p.x / normW, p.y / normH);
-    }
-    _signals.add(FaceSignal(
-      tsMs: ts,
-      faceCount: faces.length,
-      box: Rect.fromLTWH(b.left / normW, b.top / normH, b.width / normW, b.height / normH),
-      eyeOpenLeft: f.leftEyeOpenProbability,
-      eyeOpenRight: f.rightEyeOpenProbability,
-      smile: f.smilingProbability,
-      yaw: f.headEulerAngleY == null ? null : f.headEulerAngleY! * yawSign,
-      pitch: f.headEulerAngleX,
-      nose: mark(FaceLandmarkType.noseBase),
-      leftEye: mark(FaceLandmarkType.leftEye),
-      rightEye: mark(FaceLandmarkType.rightEye),
-    ));
   }
 
-  static double _area(Rect r) => r.width * r.height;
+  /// The plugin's faces (`left, top, width, height` of the upright frame, `yaw`/`pitch` when it has
+  /// them) as a signal: the largest box, angles from that face.
+  @visibleForTesting
+  static FaceSignal signalFromFaces(List<Object?> faces, int ts) {
+    if (faces.isEmpty) return FaceSignal.none(ts);
+    Map<Object?, Object?>? best;
+    var bestArea = -1.0;
+    for (final f in faces.cast<Map<Object?, Object?>>()) {
+      final area = (f['width'] as num) * (f['height'] as num);
+      if (area > bestArea) {
+        bestArea = area.toDouble();
+        best = f;
+      }
+    }
+    return FaceSignal(
+      tsMs: ts,
+      faceCount: faces.length,
+      box: Rect.fromLTWH((best!['left'] as num).toDouble(), (best['top'] as num).toDouble(),
+          (best['width'] as num).toDouble(), (best['height'] as num).toDouble()),
+      yaw: (best['yaw'] as num?)?.toDouble(),
+      pitch: (best['pitch'] as num?)?.toDouble(),
+    );
+  }
 
-  /// Encodes the frame the latest signal was read from, so a frame sent because the
-  /// device saw something (eyes shut) shows that thing rather than a newer frame.
+  /// Encodes the frame the latest signal was read from, so the frame the server gets is the one
+  /// the device judged.
   @override
   Future<List<int>> captureJpeg() async {
     final image = _signalImage ?? _latest;

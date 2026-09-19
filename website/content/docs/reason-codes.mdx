@@ -8,17 +8,16 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 | Code | Meaning | Usual fix |
 |---|---|---|
 | `OK` | passed | |
-| `FRAME_COUNT` | no frames reached the server | client bug, network |
+| `FRAME_COUNT` | no frames reached the server, or the video stream did not decode | client bug, network, an unsupported recording |
 | `TIMING_ORDER` | the events did not follow the plan (missing, repeated, reordered) | client bug |
-| `TIMING_TOO_FAST` | whole session under `min_session_ms` or a challenge under `min_challenge_ms`, on the server's clock | scripted client |
-| `TIMING_TOO_SLOW` | a challenge over `max_challenge_ms` | retry |
-| `FRAMES_STATIC` | the same bytes streamed again and again | a still image played as video |
+| `TIMING_TOO_FAST` | whole session under `min_session_ms` or the `face_move` window under `min_challenge_ms`, on the server's clock | scripted client |
+| `TIMING_TOO_SLOW` | the `face_move` window over `max_challenge_ms` | retry |
+| `FRAMES_STATIC` | the decoded frames repeat (the same picture again and again) | a still image played as video, a frozen feed |
 | `NO_FACE` | no face in the frames of a window (`details.window`) | lighting, framing |
 | `MULTIPLE_FACES` | more than one comparable face | one person in frame |
 | `FACE_TOO_SMALL` | face box under `min_face_size` | move closer |
 | `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
-| `POSE_MISMATCH` | no frame in the turn or nod window shows the pose | perform the challenge |
-| `EXPRESSION_MISMATCH` | the server saw no blink (eye aspect ratio never fell to 0.75 of the open baseline and rose back) or no smile in the window | close the eyes slowly, smile wider |
+| `MOVEMENT_MISMATCH` | in the `face_move` window the face did not grow from far into the oval (`details.challenge_<i>`: `start_width`, `end_width`, `growth`, `fill`, `centred`) | start further away, then move in until the oval is filled |
 | `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
 | `NO_MATCH` | a frame below `match_threshold` against the subject | wrong person or bad enrolment |
 | `INCONSISTENT` | frames not the same person | one person for the whole session |
@@ -35,7 +34,7 @@ description: Every code a verification, an enrolment or the SDK can end with, wh
 
 | Code | Meaning |
 |---|---|
-| `TIMEOUT` | a challenge ran past `challenge_timeout_ms`, or the session TTL passed |
+| `TIMEOUT` | the oval was not filled within `challenge_timeout_ms`, or the session TTL passed |
 | `FACE_LOST` | no face for longer than `face_lost_grace_ms` |
 | `CANCELLED` | `cancel()` was called |
 | `NETWORK_ERROR` | session or verify request failed |

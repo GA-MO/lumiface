@@ -50,7 +50,7 @@ Results on 2026-09-18:
 | 0.45 `balanced` | 0.00% | 3.20% |
 | 0.55 `strict` | 0.00% | 10.67% |
 
-How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over the key frames** (neutral, the peak of each challenge, neutral again), so the per-session FRR is higher than the single-frame column (turned and nodding frames score lower). Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
+How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over the key frames** (neutral, the peak of each challenge, neutral again), so the per-session FRR is higher than the single-frame column. Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
 
 ## Replaying stored sessions
 
@@ -70,7 +70,7 @@ genuine must pass, attack must be refused, under the balanced preset.
 
 ## STORE_FRAMES and DEBUG
 
-`STORE_FRAMES=1` keeps every streamed frame of a failed verification under `data/frames/<project>/<session_id>/` (named by arrival time, with `events.json` for the timeline); with `DEBUG=1` every verification is kept. The verdict's `details` — the server's windows, per-challenge readings, flash scores and key frames — are in the verification row's `details` column. `POST /v1/debug/score` scores a single photo.
+`STORE_FRAMES=1` keeps every decoded frame of a failed verification under `data/frames/<project>/<session_id>/` (with `session.json` for both clocks, the events and the plan, and the raw `stream.webm` / `.mp4` / `.h264` the device sent); with `DEBUG=1` every verification is kept. The verdict's `details` — the server's windows, the `face_move` readings, flash scores and key frames — are in the verification row's `details` column. `POST /v1/debug/score` scores a single photo.
 
 ## Numbers from the reference devices
 
@@ -83,6 +83,7 @@ genuine must pass, attack must be refused, under the balanced preset.
 | Flash response / locality (iPhone 12, Safari, both SDKs) | 6.9–15.9 / 0.39–0.52 | replay 0.95 / 3.04 |
 | Flash response / locality (iPhone 12, Flutter native) | 17–27 / 0.37–0.47 | replay 0.49 / 7.26 |
 | MiniFASNet real score, key frames (iPhone 12 native, upright frames) | 0.91–0.999 | sideways frames (a rotation bug) scored 0.22–0.5: orientation matters more than the threshold |
-| Smile width gain | 1.14–1.24 | neutral 0.93–1.05 |
 | CVPR live prob, crop margin 0.3 | ≥ 0.30 | replay ≤ 0.015 |
-| Nose parallax shift at 25° | ≈ 0.11–0.15 | rotated flat photo 0.026 |
+| `face_move` growth / fill, server box (2026-09-19; S25+ TFLite BlazeFace, Chrome tfjs BlazeFace, iPhone 12 Vision) | 1.20–1.66 / 0.81–0.97 | a still: growth 1.0; a replayed video of the walk passes this gate (1.4–2.4) and is stopped by the flash |
+| Flash locality with the oval flow (same devices) | 0.02–0.25 (MacBook), 0.41–0.56 (S25+, iPhone 12); over video 0.32–0.53 | phone-screen replay 1.5–3.1 (S25+, MacBook), 6.6–8.6 (iPhone 12); over video 2.4–7.0 |
+| Frames per session | JPEG 6–8 fps; video ~30 fps (S25+ MediaCodec 360×640, iPhone 12 VideoToolbox 720×1280, Chrome MediaRecorder 1280×720 ~13 fps in a synthetic run) | |

@@ -1,3 +1,5 @@
+import 'dart:ui' show Rect;
+
 import '../models.dart';
 import 'config.dart';
 
@@ -10,122 +12,47 @@ abstract class ChallengeDetector {
 
   bool feed(FaceSignal s);
 
-  static ChallengeDetector forChallenge(Challenge c, LivenessConfig config) => switch (c) {
-        Challenge.blink => BlinkDetector(config),
-        Challenge.smile => SmileDetector(config),
-        Challenge.turnLeft => TurnDetector(config, left: true),
-        Challenge.turnRight => TurnDetector(config, left: false),
-        Challenge.nod => NodDetector(config),
+  static const defaultOval = Rect.fromLTWH(0.19, 0.2, 0.62, 0.5);
+
+  static ChallengeDetector forChallenge(Challenge c, LivenessConfig config, {Rect? oval}) => switch (c) {
+        Challenge.faceMove => FaceMoveDetector(config, oval: oval ?? defaultOval),
       };
 }
 
-/// open -> closed (40..600 ms) -> open. A closed phase that lasts too long
-/// (photo with eyes shut, slow video) resets the detector.
-class BlinkDetector extends ChallengeDetector {
-  BlinkDetector(super.config);
+/// Start far (face narrower than `moveStartMaxRatio` of the oval), move closer until the face box is
+/// `ovalMinFill` of the oval's width and centred within a fifth of it, hold for `ovalHoldMs`. [oval]
+/// and the boxes are in frame-normalised coordinates. [hint] says what the person should do next;
+/// null while approaching, when the challenge text itself is the instruction.
+class FaceMoveDetector extends ChallengeDetector {
+  FaceMoveDetector(super.config, {required this.oval});
 
-  bool _seenOpen = false;
-  int? _closedAt;
-
-  @override
-  bool feed(FaceSignal s) {
-    final e = s.eyeOpen;
-    if (e == null) return false;
-    if (_closedAt == null) {
-      if (e >= config.eyeOpenThreshold) _seenOpen = true;
-      if (_seenOpen && e <= config.eyeClosedThreshold) _closedAt = s.tsMs;
-      return false;
-    }
-    final closedFor = s.tsMs - _closedAt!;
-    if (closedFor > config.blinkMaxMs) {
-      _closedAt = null;
-      _seenOpen = false;
-      return false;
-    }
-    if (e >= config.eyeOpenThreshold) {
-      if (closedFor >= config.blinkMinMs) return true;
-      _closedAt = null;
-    }
-    return false;
-  }
-}
-
-/// Requires a non-smiling baseline first, then smile >= threshold held for smileHoldMs.
-class SmileDetector extends ChallengeDetector {
-  SmileDetector(super.config);
-
-  bool _baseline = false;
-  int? _smilingSince;
+  final Rect oval;
+  bool _startedFar = false;
+  int? _fittedSince;
+  AlignHint? hint;
 
   @override
   bool feed(FaceSignal s) {
-    final v = s.smile;
-    if (v == null) return false;
-    if (!_baseline) {
-      if (v <= config.smileBaselineMax) _baseline = true;
-      return false;
-    }
-    if (v >= config.smileThreshold) {
-      _smilingSince ??= s.tsMs;
-      return s.tsMs - _smilingSince! >= config.smileHoldMs;
-    }
-    _smilingSince = null;
-    return false;
-  }
-}
-
-/// Yaw beyond turnMinYaw in the requested direction, held for turnHoldMs,
-/// and (parallaxMinShift > 0) the nose must have moved relative to the eyes
-/// since the frontal baseline, which a rotated flat picture cannot do.
-/// Positive yaw == user's own left (signal sources normalise this).
-class TurnDetector extends ChallengeDetector {
-  TurnDetector(super.config, {required this.left});
-
-  final bool left;
-  int? _since;
-  double? _baseline;
-
-  bool get _needParallax => config.parallaxMinShift > 0;
-
-  @override
-  bool feed(FaceSignal s) {
-    final yaw = s.yaw;
-    if (yaw == null) return false;
-    if (_needParallax && yaw.abs() <= config.neutralMaxYaw) {
-      _baseline = s.noseParallax ?? _baseline;
-    }
-    final dirOk = left ? yaw >= config.turnMinYaw : yaw <= -config.turnMinYaw;
-    if (!dirOk) {
-      _since = null;
-      return false;
-    }
-    if (_needParallax) {
-      final p = s.noseParallax;
-      if (_baseline == null || p == null || (p - _baseline!).abs() < config.parallaxMinShift) {
-        _since = null;
+    final b = s.box;
+    if (b == null) return false;
+    if (!_startedFar) {
+      if (b.width > oval.width * config.moveStartMaxRatio) {
+        hint = AlignHint.tooClose;
         return false;
       }
+      _startedFar = true;
     }
-    _since ??= s.tsMs;
-    return s.tsMs - _since! >= config.turnHoldMs;
+    final filled = b.width >= oval.width * config.ovalMinFill;
+    final offCentre = (b.center.dx - oval.center.dx).abs() > oval.width * 0.2 ||
+        (b.center.dy - oval.center.dy).abs() > oval.height * 0.2;
+    if (filled && !offCentre) {
+      hint = AlignHint.holdStill;
+      _fittedSince ??= s.tsMs;
+      return s.tsMs - _fittedSince! >= config.ovalHoldMs;
+    }
+    _fittedSince = null;
+    hint = filled && offCentre ? AlignHint.notCentered : null;
+    return false;
   }
 }
 
-/// |pitch| beyond nodMinPitch (either direction) held for nodHoldMs.
-class NodDetector extends ChallengeDetector {
-  NodDetector(super.config);
-
-  int? _since;
-
-  @override
-  bool feed(FaceSignal s) {
-    final p = s.pitch;
-    if (p == null) return false;
-    if (p.abs() < config.nodMinPitch) {
-      _since = null;
-      return false;
-    }
-    _since ??= s.tsMs;
-    return s.tsMs - _since! >= config.nodHoldMs;
-  }
-}

@@ -1,35 +1,11 @@
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from app.services.challenge import new_challenges
-from app.services.expression import mouth_metrics, smile_ok
+from app.services.challenge import new_challenges, oval_for
 from app.services.face import FaceResult
 from app.services.flash import PALETTE, face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
-from app.services.stream import StreamEvent, StreamFrame, blink_observed, build_windows, eye_aspect_ratio, placement_windows
-from app.services.verify import _pose_ok
-
-SAMPLES = Path(__file__).resolve().parents[1] / "data" / "samples"
-
-
-def test_new_challenges_from_pool(monkeypatch):
-    from app.policy import default_policy
-    monkeypatch.setattr(default_policy(), "challenge_pool", "blink,smile")
-    for _ in range(20):
-        c = new_challenges()
-        assert len(c) == 2 and len(set(c)) == 2 and set(c) <= {"blink", "smile"}
-
-
-def test_new_challenges_always_include_required(monkeypatch):
-    from app.policy import default_policy
-    monkeypatch.setattr(default_policy(), "challenge_pool", "blink,turn_left,turn_right,smile,nod")
-    firsts = set()
-    for _ in range(40):
-        c = new_challenges()
-        assert "smile" in c and len(c) == 2
-        firsts.add(c[0])
-    assert len(firsts) > 1, "required challenge must not always come first"
+from app.services.stream import Analysed, StreamEvent, StreamFrame, build_windows, movement_observed, placement_windows
 
 
 def _lit(base, colors, gain, noise=0.0, seed=0):
@@ -83,46 +59,6 @@ def test_flash_ignores_global_exposure_drift():
     assert r.correlation > 0.6 and r.order_ok
 
 
-def _landmarks(mouth_w=60.0, lift=0.0):
-    """68 points with eyes 100 px apart; mouth corners `mouth_w` apart, `lift` px above the lip centre."""
-    pts = np.zeros((68, 3), dtype=np.float32)
-    pts[36] = (0, 0, 0)
-    pts[45] = (100, 0, 0)
-    pts[48] = (50 - mouth_w / 2, 60 - lift, 0)
-    pts[54] = (50 + mouth_w / 2, 60 - lift, 0)
-    pts[51] = (50, 55, 0)
-    pts[57] = (50, 65, 0)
-    return pts
-
-
-def test_smile_metrics_and_decision():
-    neutral = mouth_metrics(_landmarks())
-    assert neutral is not None and abs(neutral.width - 0.6) < 1e-6 and abs(neutral.lift) < 1e-6
-    ok, info = smile_ok(neutral, mouth_metrics(_landmarks(mouth_w=69, lift=7)))
-    assert ok and info["width_gain"] > 1.1 and info["lift"] > 0.06
-    ok, _ = smile_ok(neutral, mouth_metrics(_landmarks(mouth_w=69)))
-    assert ok, "wider mouth alone is enough"
-    ok, _ = smile_ok(neutral, mouth_metrics(_landmarks(lift=6)))
-    assert ok, "corner lift alone is enough"
-    ok, info = smile_ok(neutral, mouth_metrics(_landmarks(mouth_w=61, lift=1)))
-    assert not ok, info
-    assert smile_ok(None, neutral)[0], "no landmarks -> skip, never reject"
-
-
-@pytest.mark.skipif(not (SAMPLES / "replay_phone" / "b460f086_neutral_start.jpg").exists(), reason="local samples only")
-def test_smile_on_recorded_session_frames():
-    from app.services.face import decode_image, get_face_engine
-
-    def metrics(name):
-        faces = get_face_engine().analyze(decode_image((SAMPLES / "replay_phone" / name).read_bytes()))
-        return mouth_metrics(faces[0].landmarks)
-
-    neutral = metrics("b460f086_neutral_start.jpg")
-    assert smile_ok(neutral, metrics("b460f086_challenge_1.jpg"))[0], "genuine smile frame"
-    ok, info = smile_ok(metrics("c6f9e2f5_neutral_start.jpg"), metrics("c6f9e2f5_challenge_1.jpg"))
-    assert not ok, f"non-smile challenge frame must not pass: {info}"
-
-
 def _face_emb(vec, yaw=0.0, pitch=0.0):
     e = np.zeros(512, dtype=np.float32)
     e[: len(vec)] = vec
@@ -153,33 +89,6 @@ def test_face_patch_mean_rgb_reads_centre_block():
     assert rgb[2] > 200 and rgb[0] < 60
 
 
-def _eyes(open_ratio):
-    """68-point landmarks with both eyes `open_ratio` as tall as they are wide (iBUG 36-47)."""
-    pts = np.zeros((68, 3), dtype=np.float32)
-    for base, cx in ((36, 40.0), (42, 80.0)):
-        pts[base] = (cx - 10, 50, 0)
-        pts[base + 3] = (cx + 10, 50, 0)
-        h = 20 * open_ratio / 2
-        pts[base + 1] = (cx - 4, 50 - h, 0)
-        pts[base + 2] = (cx + 4, 50 - h, 0)
-        pts[base + 5] = (cx - 4, 50 + h, 0)
-        pts[base + 4] = (cx + 4, 50 + h, 0)
-    return pts
-
-
-def test_eye_aspect_ratio_tracks_openness():
-    assert eye_aspect_ratio(_eyes(0.3)) == pytest.approx(0.3)
-    assert eye_aspect_ratio(_eyes(0.1)) == pytest.approx(0.1)
-    assert eye_aspect_ratio(None) is None
-
-
-def test_blink_needs_a_close_and_a_reopen():
-    assert blink_observed([0.3, 0.29, 0.12, 0.28, 0.3], 0.3)
-    assert not blink_observed([0.3, 0.3, 0.31, 0.29], 0.3), "eyes never closed"
-    assert not blink_observed([0.3, 0.15, 0.12, 0.1], 0.3), "closed and stayed closed"
-    assert not blink_observed([0.1, 0.3], 0.0)
-
-
 def _events(*names):
     out, t = [], 1000
     counts: dict[str, int] = {}
@@ -195,7 +104,7 @@ def _events(*names):
 
 def test_windows_follow_the_plan_on_the_server_clock():
     w = build_windows(_events("aligned", "challenge_done", "challenge_done", "flash", "flash", "flash_end", "end"),
-                      first_frame_ms=200, challenges=["blink", "smile"], flash_colors=["FF0000", "00FF00"])
+                      first_frame_ms=200, challenges=["face_move", "face_move"], flash_colors=["FF0000", "00FF00"])
     assert w.align == (200, 1000)
     assert w.challenges == [(1000, 1500), (1500, 2000)]
     assert w.flashes == [(2500 + 120, 3000), (3000 + 120, 3500)]
@@ -203,15 +112,15 @@ def test_windows_follow_the_plan_on_the_server_clock():
 
 
 def test_windows_reject_a_wrong_or_reordered_sequence():
-    assert build_windows(_events("aligned", "end"), 0, ["blink"], []) == "TIMING_ORDER"
-    assert build_windows(_events("challenge_done", "aligned", "end"), 0, ["blink"], []) == "TIMING_ORDER"
+    assert build_windows(_events("aligned", "end"), 0, ["face_move"], []) == "TIMING_ORDER"
+    assert build_windows(_events("challenge_done", "aligned", "end"), 0, ["face_move"], []) == "TIMING_ORDER"
     bad = _events("aligned", "challenge_done", "challenge_done", "end")
     bad[2].index = 0  # the same challenge reported twice
-    assert build_windows(bad, 0, ["blink", "smile"], []) == "TIMING_ORDER"
+    assert build_windows(bad, 0, ["face_move", "face_move"], []) == "TIMING_ORDER"
     late = _events("aligned", "challenge_done", "end")
     late[1].recv_ms = 100  # earlier than the event before it
-    assert build_windows(late, 0, ["blink"], []) == "TIMING_ORDER"
-    w = build_windows(_events("aligned", "challenge_done", "end"), 0, ["blink"], [])
+    assert build_windows(late, 0, ["face_move"], []) == "TIMING_ORDER"
+    w = build_windows(_events("aligned", "challenge_done", "end"), 0, ["face_move"], [])
     assert w.flashes == [] and w.end == (1500, 2000)
 
 
@@ -220,32 +129,39 @@ def test_frames_are_placed_on_the_device_clock_when_it_is_stamped():
     for e in events[:-1]:
         e.client_ms = e.recv_ms - 300  # every event reaches the server 300 ms after the device raised it
     frames = [StreamFrame(recv_ms=t + 300, client_ms=t, data=b"") for t in range(0, 2500, 100)]
-    server = build_windows(events, 300, ["blink"], ["FF0000"])
-    place = placement_windows(frames, events, ["blink"], ["FF0000"], server)
+    server = build_windows(events, 300, ["face_move"], ["FF0000"])
+    place = placement_windows(frames, events, ["face_move"], ["FF0000"], server)
     assert place is not server
     assert place.align == (0, 700) and place.challenges == [(700, 1200)]
     assert place.flashes == [(1700 + 120, 2200)] and place.end == (2200, 2400)
     events[1].client_ms = None
-    assert placement_windows(frames, events, ["blink"], ["FF0000"], server) is server
+    assert placement_windows(frames, events, ["face_move"], ["FF0000"], server) is server
 
 
-def _face(yaw=0.0, pitch=0.0):
-    return FaceResult(bbox=np.array([0, 0, 200, 200], dtype=np.float32), det_score=0.9, pitch=pitch, yaw=yaw,
-                      roll=0.0, embedding=np.zeros(512, dtype=np.float32))
+def _analysed(width_px: int, cx: int = 320, img_w: int = 640, t: int = 0) -> Analysed:
+    bbox = np.array([cx - width_px / 2, 100, cx + width_px / 2, 100 + width_px * 1.3], dtype=np.float32)
+    face = FaceResult(bbox=bbox, det_score=0.9, pitch=0.0, yaw=0.0, roll=0.0, embedding=np.zeros(512, dtype=np.float32))
+    return Analysed(StreamFrame(recv_ms=t, client_ms=t, data=b""), face, None, np.zeros((480, img_w, 3), dtype=np.uint8))
 
 
-def test_pose_checks_strict_direction(monkeypatch):
+def test_face_move_wants_the_face_to_grow_into_the_oval(monkeypatch):
     from app.policy import default_policy
-    monkeypatch.setattr(default_policy(), "turn_strict_direction", True)
-    assert _pose_ok("turn_right", _face(yaw=45))
-    assert not _pose_ok("turn_right", _face(yaw=-45))
-    assert _pose_ok("turn_left", _face(yaw=-30))
+    s = default_policy()
+    monkeypatch.setattr(s, "oval_width_fraction", 0.62)
+    far, near = _analysed(160), _analysed(380)  # 0.25 -> 0.59 of a 640 px frame, oval 0.62
+    ok, info, peak = movement_observed([far, far, _analysed(220), _analysed(300), near, near], s)
+    assert ok and peak is near and info["growth"] > 2 and info["fill"] > 0.9
+    ok, info, _ = movement_observed([near, near, near, near], s)
+    assert not ok and info["growth"] == 1.0, "already close: no movement seen"
+    ok, info, _ = movement_observed([far, far, _analysed(220), _analysed(220)], s)
+    assert not ok and info["fill"] < 0.75, "moved but never filled the oval"
+    ok, info, _ = movement_observed([near, near, _analysed(200), far, _analysed(300), near, near], s)
+    assert ok and info["growth"] > 2, "aligned close, backed off, then walked in: the start is the farthest frame"
+    ok, info, _ = movement_observed([far, far, _analysed(380, cx=80), _analysed(380, cx=80)], s)
+    assert not ok and not info["centred"], "filled the width off to the side"
 
 
-def test_pose_checks():
-    assert _pose_ok("blink", _face())
-    assert not _pose_ok("turn_left", _face(yaw=5))
-    assert _pose_ok("turn_left", _face(yaw=-30))
-    assert _pose_ok("turn_right", _face(yaw=30))
-    assert not _pose_ok("nod", _face(pitch=5))
-    assert _pose_ok("nod", _face(pitch=-25))
+def test_plan_is_the_oval_alone():
+    assert new_challenges() == ["face_move"]
+    assert oval_for(["face_move"]) == {"cx": 0.5, "cy": 0.45, "width": 0.35, "height_ratio": 1.35}
+    assert oval_for([]) is None

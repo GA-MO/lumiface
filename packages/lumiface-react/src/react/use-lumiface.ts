@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { LumifaceClient } from "../client.ts";
 import type { LivenessConfig } from "../config.ts";
 import { FaceEnrollController, FaceVerifyController, IDLE_STATE, type FaceFlowController, type LivenessState } from "../controller.ts";
-import { MediaPipeSource, type MediaPipeSourceOptions } from "../mediapipe-source.ts";
+import { BlazeFaceSource, type BlazeFaceSourceOptions } from "../blazeface-source.ts";
 import type { FaceFlow, FaceSession, FaceSignal, VerifyResult } from "../types.ts";
 
 export interface UseLumifaceOptions {
@@ -16,7 +16,7 @@ export interface UseLumifaceOptions {
   enrolTokenProvider?: () => Promise<string>;
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
-  camera?: MediaPipeSourceOptions;
+  camera?: BlazeFaceSourceOptions;
   autoStart?: boolean;
   onResult?: (result: VerifyResult) => void;
   /** Push screen brightness up / restore it around the flash step. */
@@ -30,7 +30,7 @@ export interface LumifaceHandle {
   ready: boolean;
   error: Error | null;
   controller: FaceFlowController | null;
-  source: MediaPipeSource | null;
+  source: BlazeFaceSource | null;
   /** Attach to a container; the camera `<video>` is mounted inside it. */
   mountVideo: (el: HTMLElement | null) => void;
   start: () => Promise<void>;
@@ -45,7 +45,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const controllerRef = useRef<FaceFlowController | null>(null);
-  const sourceRef = useRef<MediaPipeSource | null>(null);
+  const sourceRef = useRef<BlazeFaceSource | null>(null);
   const containerRef = useRef<HTMLElement | null>(null);
   const flashingRef = useRef(false);
   const optionsRef = useRef(options);
@@ -59,7 +59,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
 
   useEffect(() => {
     let cancelled = false;
-    const source = new MediaPipeSource(optionsRef.current.camera);
+    const source = new BlazeFaceSource(optionsRef.current.camera);
     sourceRef.current = source;
     const facing = optionsRef.current.camera?.facing ?? "user";
     if (facing === "user") source.video.style.transform = "scaleX(-1)";
@@ -86,7 +86,7 @@ export function useLumiface(options: UseLumifaceOptions): LumifaceHandle {
               })
             : new FaceVerifyController({
                 source,
-                capturer: source,
+                recorder: source,
                 client: o.client,
                 flow,
                 sessionProvider: async () => {

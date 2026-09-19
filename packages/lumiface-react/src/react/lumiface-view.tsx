@@ -108,7 +108,7 @@ function guideColor(theme: LumifaceTheme, phase: LivenessState["phase"]) {
 }
 
 /** Dimmed mask with a face-shaped cut-out whose colour follows the phase. */
-export function FaceGuide({ theme, phase, box }: { theme: LumifaceTheme; phase: LivenessState["phase"]; box?: Box | null }) {
+export function FaceGuide({ theme, phase, box, target }: { theme: LumifaceTheme; phase: LivenessState["phase"]; box?: Box | null; target?: Box | null }) {
   const ref = useRef<SVGSVGElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const maskId = useId();
@@ -122,7 +122,10 @@ export function FaceGuide({ theme, phase, box }: { theme: LumifaceTheme; phase: 
     return () => ro.disconnect();
   }, []);
   const { width, height } = size;
-  const { x, y, w, h } = guideRect(theme, width, height);
+  // A face_move target (the server's oval, as fractions of this box) replaces the theme's shape.
+  const { x, y, w, h } = target
+    ? { x: target.left * width, y: target.top * height, w: target.width * width, h: target.height * height }
+    : guideRect(theme, width, height);
   const rx = theme.guideShape === "oval" ? w / 2 : w * 0.2;
   const ry = theme.guideShape === "oval" ? h / 2 : w * 0.2;
   const color = guideColor(theme, phase);
@@ -153,14 +156,9 @@ function fmt(v: number | null | undefined) {
 
 /** One line of raw detector values, for calibration sessions. */
 export function FaceDebugBar({ signal }: { signal: FaceSignal }) {
-  const eye = signal.eyeOpenLeft !== null && signal.eyeOpenRight !== null ? (signal.eyeOpenLeft + signal.eyeOpenRight) / 2 : null;
-  const px =
-    signal.nose && signal.leftEye && signal.rightEye
-      ? (signal.nose.x - (signal.leftEye.x + signal.rightEye.x) / 2) / Math.abs(signal.rightEye.x - signal.leftEye.x)
-      : null;
   return (
     <div style={{ background: "rgba(0,0,0,0.6)", color: "#fff", fontFamily: "monospace", fontSize: 11, padding: 8 }}>
-      faces={signal.faceCount} w={fmt(signal.box?.width)} eye={fmt(eye)} smile={fmt(signal.smile)} yaw={fmt(signal.yaw)} pitch={fmt(signal.pitch)} px={fmt(px)}
+      faces={signal.faceCount} w={fmt(signal.box?.width)} h={fmt(signal.box?.height)} cx={fmt(signal.box ? signal.box.left + signal.box.width / 2 : null)} yaw={fmt(signal.yaw)} pitch={fmt(signal.pitch)}
     </div>
   );
 }
@@ -177,7 +175,7 @@ function DefaultOverlay({ scope, showDebug, renderPrompt, renderProgress, render
   const progress = progressOf(state);
   return (
     <>
-      <FaceGuide theme={theme} phase={state.phase} box={showDebug ? scope.displayBox : null} />
+      <FaceGuide theme={theme} phase={state.phase} box={showDebug ? scope.displayBox : null} target={state.target} />
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column" }}>
         <div style={{ padding: "16px 32px 0" }}>
           {renderProgress
@@ -236,8 +234,11 @@ export function LumifaceView(props: LumifaceViewProps) {
   const videoAspect = handle.source?.aspectRatio ?? 0;
   const region = useMemo(() => visibleRegionFor(videoAspect, containerAspect), [videoAspect, containerAspect]);
   useEffect(() => {
-    if (handle.controller) handle.controller.visibleRegion = region;
-  }, [handle.controller, handle.ready, region]);
+    if (handle.controller) {
+      handle.controller.visibleRegion = region;
+      if (videoAspect > 0) handle.controller.frameAspect = videoAspect;
+    }
+  }, [handle.controller, handle.ready, region, videoAspect]);
   const scope: LumifaceScope = {
     ...handle,
     strings,

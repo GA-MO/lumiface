@@ -1,11 +1,12 @@
 {
   "name": "@lumiface/react",
   "version": "0.2.0",
-  "description": "Face verification with active liveness for React: MediaPipe on the client, the Lumiface server behind it.",
+  "description": "Face verification with active liveness for React: TensorFlow.js BlazeFace on the client, the Lumiface server behind it.",
   "type": "module",
   "license": "MIT",
   "files": [
-    "src"
+    "src",
+    "models"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -20,7 +21,10 @@
     "react-dom": "^18.3.0 || ^19.0.0"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^1.0.1"
+    "@tensorflow/tfjs-backend-cpu": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

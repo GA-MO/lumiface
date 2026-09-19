@@ -26,7 +26,7 @@ def _replay(folder: Path):
     # fresh policy slot and unbound afterwards so the other tests keep their own.
     token = _current.set(_RequestPolicy())
     try:
-        use_policy(resolve_policy("balanced", {"flash_enforce": True, "smile_enforce": True, "min_session_ms": 1500,
+        use_policy(resolve_policy("balanced", {"flash_enforce": True, "min_session_ms": 1500,
                                                "min_challenge_ms": 300, "min_face_size": 112, "enroll_max_pitch": 20}))
         frames, events, meta = load(folder)
         return analyze_stream(frames, events, meta["challenges"], meta["flash_colors"],

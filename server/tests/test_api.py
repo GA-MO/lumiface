@@ -52,7 +52,8 @@ def _run_session(client, frame_bytes, subject_id="E001", purpose="", headers=HEA
 def test_verify_same_person_ok(client, person_crops, enrolled):
     s, plan, body = _run_session(client, person_crops[0], purpose="checkin")
     assert "challenges" not in s and "flash_colors" not in s, "the plan only travels over the stream"
-    assert plan["challenges"] == ["smile"] and len(plan["flash_colors"]) == 3 and plan["client_config"]["align_hold_ms"]
+    assert plan["challenges"] == ["face_move"] and len(plan["flash_colors"]) == 3 and plan["client_config"]["align_hold_ms"]
+    assert plan["oval"] == {"cx": 0.5, "cy": 0.45, "width": 0.35, "height_ratio": 1.35}
     assert body["type"] == "result" and body["ok"] is True, body
     assert body["mode"] == "verify" and body["reason_code"] == "OK"
     assert body["scores"]["match"] > 0.9 and body["scores"]["spoof"] > 0.5
@@ -117,8 +118,8 @@ def test_frozen_feed_is_rejected(client, person_crops, enrolled):
 def test_session_carries_client_config_only(client):
     s = client.post("/v1/sessions", headers=HEADERS, json={}).json()
     assert set(s) == {"session_id", "session_token", "mode", "purpose", "expires_at", "ttl_seconds", "client_config"}
-    assert s["client_config"]["parallax_min_shift"] == 0.08
-    assert s["client_config"]["blink_max_ms"] == 600
+    assert s["client_config"]["move_start_max_ratio"] == 0.8
+    assert s["client_config"]["oval_hold_ms"] == 500
 
 
 def _details(client, session_id):
@@ -132,23 +133,52 @@ def _details(client, session_id):
         return json.loads(row.details)
 
 
+def test_still_face_does_not_move(client, person_crops, enrolled):
+    s, plan, body = _run_session(client, person_crops[0], move=False)
+    assert body["reason_code"] == "MOVEMENT_MISMATCH", body
+    d = _details(client, s["session_id"])
+    assert d["challenge_0"]["name"] == "face_move" and d["challenge_0"]["growth"] == 1.0
+
+
+def test_moving_face_is_measured(client, person_crops, enrolled):
+    s, plan, body = _run_session(client, person_crops[0])
+    assert body["ok"] is True, body
+    d = _details(client, s["session_id"])["challenge_0"]
+    assert 1.8 < d["growth"] < 2.3 and d["fill"] >= 0.85 and d["centred"]
+
+
+def test_h264_access_units_verify_like_jpeg(client, person_crops, enrolled):
+    """The phone plugins send one H.264 access unit per frame; the server decodes and judges the same way."""
+    s, _, body = _run_session(client, person_crops[0], fmt="h264")
+    assert body["ok"] is True, body
+    d = _details(client, s["session_id"])
+    assert d["client"]["format"] == "h264" and d["frames"] >= 8
+    assert 1.8 < d["challenge_0"]["growth"] < 2.3 and d["placement"] == "client"
+
+
+def test_webm_recording_verifies_like_jpeg(client, person_crops, enrolled):
+    """A browser records the whole session with MediaRecorder; the frames get their times from the video."""
+    s, _, body = _run_session(client, person_crops[0], fmt="webm")
+    assert body["ok"] is True, body
+    d = _details(client, s["session_id"])
+    assert d["client"]["format"] == "webm" and d["frames"] >= 8
+    assert 1.8 < d["challenge_0"]["growth"] < 2.3
+
+
+def test_unknown_stream_format_is_refused(client, person_crops, enrolled):
+    sess = client.post("/v1/sessions", headers=HEADERS, json={"subject_id": "E001"}).json()
+    with client.websocket_connect(f"/v1/sessions/{sess['session_id']}/stream") as ws:
+        ws.send_json({"type": "hello", "token": sess["session_token"], "format": "avi"})
+        assert ws.receive_json() == {"type": "error", "reason_code": "HELLO_INVALID"}
+
+
 def test_flash_shadow_mode_reports_scores(client, person_crops, enrolled):
     s, _, body = _run_session(client, person_crops[0])
     assert body["ok"] is True, body
     d = _details(client, s["session_id"])
     assert d["flash"]["enforced"] is False and d["flash"]["response"] < 0.5
     assert [e["name"] for e in d["events"]] == ["aligned", "challenge_done", "flash", "flash", "flash", "flash_end", "end"]
-    assert d["client"] == {"platform": "test", "user_agent": "testclient"} and d["frames"] >= 8
-
-
-def test_smile_enforced_rejects_static_face(client, person_crops, enrolled):
-    client.put("/v1/policy", headers=HEADERS, json={"overrides": {"smile_enforce": True}})
-    try:
-        s, _, body = _run_session(client, person_crops[0])
-        assert body["reason_code"] == "EXPRESSION_MISMATCH", body
-        assert _details(client, s["session_id"])["challenge_0"]["width_gain"] == 1.0
-    finally:
-        client.delete("/v1/policy", headers=HEADERS)
+    assert d["client"] == {"platform": "test", "user_agent": "testclient", "format": "jpeg"} and d["frames"] >= 8
 
 
 def test_flash_enforced_rejects_unlit_frames(client, person_crops, enrolled):
@@ -182,19 +212,19 @@ def test_verifications_listed_and_filtered(client, enrolled):
 def test_policy_defaults_follow_environment(client):
     body = client.get("/v1/policy", headers=HEADERS).json()
     assert body["preset"] == "balanced" and body["overrides"] == {}
-    assert body["effective"]["challenge_pool"] == "smile"
+    assert body["effective"]["oval_width_fraction"] == 0.35
     assert body["effective"]["min_face_size"] == 60
-    assert body["effective"]["client"]["blink_min_ms"] == 40
+    assert body["effective"]["client"]["move_start_max_ratio"] == 0.8
 
 
 def test_policy_presets_listed_with_schema(client):
     presets = {p["name"]: p for p in client.get("/v1/policy/presets", headers=HEADERS).json()}
     assert set(presets) == {"balanced", "strict", "relaxed", "emulator"}
-    assert presets["strict"]["effective"]["challenge_count"] == 3
+    assert presets["strict"]["effective"]["move_min_growth"] == 1.4
     assert presets["emulator"]["effective"]["flash_enforce"] is False
     schema = client.get("/v1/policy/schema", headers=HEADERS).json()
     names = {f["name"] for f in schema}
-    assert {"match_threshold", "client.parallax_min_shift"} <= names
+    assert {"match_threshold", "oval_width_fraction", "client.oval_min_fill"} <= names
     assert all(f["description"] for f in schema)
 
 
@@ -207,12 +237,12 @@ def test_policy_update_rejects_unknown_field(client):
 
 def test_strict_preset_rejects_the_same_person_at_higher_bar(client, person_crops, enrolled):
     r = client.put("/v1/policy", headers=HEADERS,
-                   json={"preset": "strict", "overrides": {"spoof_threshold": 0.999, "challenge_count": 2}})
+                   json={"preset": "strict", "overrides": {"spoof_threshold": 0.999}})
     assert r.status_code == 200, r.text
-    assert r.json()["effective"]["turn_strict_direction"] is True
+    assert r.json()["effective"]["flash_min_correlation"] == 0.7
     try:
         s, _, body = _run_session(client, person_crops[0])
-        assert s["client_config"]["parallax_min_shift"] == 0.10
+        assert s["client_config"]["oval_min_fill"] == 0.9
         assert body["reason_code"] == "SPOOF"
     finally:
         client.delete("/v1/policy", headers=HEADERS)

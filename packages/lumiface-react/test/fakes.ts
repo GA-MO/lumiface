@@ -1,11 +1,16 @@
 import { LumifaceClient } from "../src/client.ts";
 import { LumifaceError } from "../src/types.ts";
-import type { FaceSignalSource, FrameCapturer } from "../src/controller.ts";
-import type { Challenge, FaceSession, FaceSignal, StreamEventName, Subject, VerifyResult, VerifyStream } from "../src/types.ts";
+import type { FaceSignalSource, FrameCapturer, VideoRecorder } from "../src/controller.ts";
+import type { Challenge, FaceSession, FaceSignal, OvalTarget, StreamEventName, StreamFormat, Subject, VerifyResult, VerifyStream } from "../src/types.ts";
 
-export class FakeSource implements FaceSignalSource, FrameCapturer {
+export class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
   private listeners = new Set<(s: FaceSignal) => void>();
   captures = 0;
+  readonly format: StreamFormat = "webm";
+  /** The recorder's state as the controller drove it: started, then stopped. */
+  recording = false;
+  recordings = 0;
+  private onChunk: ((data: Blob, tsMs: number) => void) | null = null;
 
   subscribe(listener: (s: FaceSignal) => void) {
     this.listeners.add(listener);
@@ -18,6 +23,22 @@ export class FakeSource implements FaceSignalSource, FrameCapturer {
     for (const l of this.listeners) l(s);
   }
 
+  start(onChunk: (data: Blob, tsMs: number) => void) {
+    this.recording = true;
+    this.recordings++;
+    this.onChunk = onChunk;
+  }
+
+  stop() {
+    this.recording = false;
+    this.onChunk = null;
+  }
+
+  /** A chunk the recorder cut at `tsMs`; delivered only while recording, like MediaRecorder. */
+  chunk(tsMs: number) {
+    this.onChunk?.(new Blob([new Uint8Array([0x1a, 0x45, tsMs & 0xff])]), tsMs);
+  }
+
   async captureJpeg(): Promise<Blob> {
     this.captures++;
     return new Blob([new Uint8Array([0xff, 0xd8, this.captures])], { type: "image/jpeg" });
@@ -26,8 +47,9 @@ export class FakeSource implements FaceSignalSource, FrameCapturer {
 
 export class FakeClient extends LumifaceClient {
   response: VerifyResult | null = null;
-  /** What the controller streamed: frame timestamps and events, in order. */
-  sentFrames: number[] = [];
+  /** What the controller streamed: chunk timestamps and events, in order, and the hello's format. */
+  sentChunks: number[] = [];
+  format: StreamFormat | null = null;
   sentEvents: { name: StreamEventName; ts: number; index?: number }[] = [];
   ended = false;
   closed = false;
@@ -40,6 +62,7 @@ export class FakeClient extends LumifaceClient {
   constructor(
     readonly challenges: Challenge[],
     readonly flashColors: string[] = [],
+    readonly oval: OvalTarget | null = null,
   ) {
     super({ baseUrl: "http://x" });
   }
@@ -58,15 +81,16 @@ export class FakeClient extends LumifaceClient {
     };
   };
 
-  override openStream(): VerifyStream {
+  override openStream(_session: FaceSession, _clientInfo: Record<string, unknown> = {}, format: StreamFormat = "jpeg"): VerifyStream {
+    this.format = format;
     const plan = this.planError
       ? Promise.reject(new LumifaceError(this.planError))
-      : Promise.resolve({ challenges: this.challenges, flashColors: this.flashColors, flashHoldMs: 450, clientConfig: this.sessionConfig });
+      : Promise.resolve({ challenges: this.challenges, flashColors: this.flashColors, flashHoldMs: 450, clientConfig: this.sessionConfig, oval: this.oval });
     plan.catch(() => {});
     return {
       plan,
-      sendFrame: (_jpeg, ts) => {
-        this.sentFrames.push(ts);
+      sendChunk: (_data, ts) => {
+        this.sentChunks.push(ts);
       },
       event: (name, ts, index) => {
         this.sentEvents.push({ name, ts, ...(index === undefined ? {} : { index }) });
@@ -90,26 +114,11 @@ export class FakeClient extends LumifaceClient {
   }
 }
 
-/** A well-framed face with landmarks; the nose sits in front of the eye plane so it shifts with yaw unless `flat`. */
-export function neutral(ts: number, o: { eye?: number; smile?: number; yaw?: number; pitch?: number; flat?: boolean } = {}): FaceSignal {
-  const { eye = 0.95, smile = 0.05, yaw = 0, pitch = 0, flat = false } = o;
-  const cx = 0.5, eyeY = 0.45, noseY = 0.55, halfEye = 0.08;
-  const rad = (yaw * Math.PI) / 180;
-  const half = halfEye * Math.cos(rad);
-  const noseShift = flat ? 0 : 0.35 * halfEye * 2 * Math.sin(rad);
-  return {
-    tsMs: ts,
-    faceCount: 1,
-    box: { left: 0.3, top: 0.3, width: 0.4, height: 0.45 },
-    eyeOpenLeft: eye,
-    eyeOpenRight: eye,
-    smile,
-    yaw,
-    pitch,
-    nose: { x: cx + noseShift, y: noseY },
-    leftEye: { x: cx - half, y: eyeY },
-    rightEye: { x: cx + half, y: eyeY },
-  };
+/** A well-framed face, `width` of the frame wide and centred; `yaw`/`pitch` as a detector with angles would report. */
+export function neutral(ts: number, o: { yaw?: number; pitch?: number; width?: number } = {}): FaceSignal {
+  const { yaw = 0, pitch = 0, width = 0.45 } = o;
+  const height = width * 1.125;
+  return { tsMs: ts, faceCount: 1, box: { left: 0.5 - width / 2, top: 0.45 - height / 2, width, height }, yaw, pitch };
 }
 
 export const pump = () => new Promise<void>((r) => setTimeout(r, 0));

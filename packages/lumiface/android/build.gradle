@@ -37,12 +37,22 @@ android {
 
     sourceSets {
         main.java.srcDirs += "src/main/kotlin"
+        androidTest.java.srcDirs += "src/androidTest/kotlin"
     }
 
     defaultConfig {
         minSdk = 21
-        // Merged into every app that depends on lumiface: R8 otherwise strips ML Kit internals
-        // and face detection throws InputImageConverterError on every frame in release builds.
         consumerProguardFiles("consumer-rules.pro")
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+
+    androidResources {
+        noCompress += "tflite"
+    }
+}
+
+dependencies {
+    implementation("org.tensorflow:tensorflow-lite:2.17.0")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
 }

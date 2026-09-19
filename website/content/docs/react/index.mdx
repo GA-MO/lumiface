@@ -1,6 +1,6 @@
 ---
 title: React SDK
-description: LumifaceView and useLumiface for React 18 and 19, MediaPipe in the browser, the same server and policy as Flutter.
+description: LumifaceView and useLumiface for React 18 and 19, TensorFlow.js BlazeFace in the browser, the same server and policy as Flutter.
 ---
 
 ## Install
@@ -8,13 +8,12 @@ description: LumifaceView and useLumiface for React 18 and 19, MediaPipe in the 
 ```json
 {
   "dependencies": {
-    "@lumiface/react": "github:GA-MO/lumiface#path:packages/lumiface-react",
-    "@mediapipe/tasks-vision": "^1.0.1"
+    "@lumiface/react": "github:GA-MO/lumiface#path:packages/lumiface-react"
   }
 }
 ```
 
-The package ships TypeScript source (`src/`), so Next.js needs `transpilePackages: ["@lumiface/react"]`; Vite needs nothing. `@lumiface/react/core` is the browser-free part (client, controller, detectors, strings) for tests and workers.
+The package depends on `@tensorflow/tfjs-core`, `tfjs-converter`, `tfjs-backend-wasm` and `tfjs-backend-cpu` (4.22). The short-range BlazeFace model (`models/face_detection_short`, 280 KB) is loaded from this repository on jsDelivr by default and the WASM binaries from jsDelivr too; pass `camera={{ modelUrl, wasmUrl }}` to self-host both. The package ships TypeScript source (`src/`), so Next.js needs `transpilePackages: ["@lumiface/react"]`; Vite needs nothing. `@lumiface/react/core` is the browser-free part (client, controller, detectors, strings) for tests and workers.
 
 ## The view
 
@@ -44,7 +43,7 @@ It fills its parent, so size the parent. Props mirror the Flutter view.
 ## The browser holds no secret
 
 `LumifaceClient` takes a URL and nothing else — there is no option for the project key — and it can do exactly
-two things: upload the frames of a session it was handed, and upload one enrolment photo with a token it was
+two things: stream the recording of a session it was handed, and upload one enrolment photo with a token it was
 handed. `/api/face/session` above is your backend route that produces the session, with two REST calls:
 
 ```ts
@@ -83,7 +82,7 @@ Props:
     config: { type: "LivenessConfig", description: "Overrides the project's client_config." },
     strings: { type: "LivenessStrings", description: "EN (default) or TH; mergeStrings(EN, {...}) for single lines." },
     theme: { type: "Partial<LumifaceTheme>", description: "Colours, guide shape and geometry, message style, progress." },
-    camera: { type: "MediaPipeSourceOptions", description: "facing, wasmUrl, modelUrl, delegate, yawSign, detectIntervalMs, jpegQuality, width, height." },
+    camera: { type: "BlazeFaceSourceOptions", description: "facing, modelUrl, wasmUrl, backend (wasm | cpu), detectIntervalMs, chunkMs, videoBitsPerSecond, jpegQuality, width, height." },
     clientInfo: { type: "Record<string, unknown>", description: "Sent in the stream hello and stored with the verification." },
     showDebug: { type: "boolean", description: "Face box and a line of raw signals." },
     autoStart: { type: "boolean", description: "false: call start() from useLumiface yourself." },
@@ -96,7 +95,7 @@ Props:
     onFlashChanged: { type: "(flashing) => void", description: "Raise and restore brightness on kiosks that allow it." },
     onDone: { type: "() => void", description: "The default button." },
     onStateChanged: { type: "(state) => void", description: "Every state change." },
-    renderLoading: { type: "() => ReactNode", description: "While the camera and MediaPipe load." },
+    renderLoading: { type: "() => ReactNode", description: "While the camera and the model load." },
     renderError: { type: "(error) => ReactNode", description: "When the camera cannot start." },
     style: { type: "CSSProperties", description: "On the outer box, with className." },
   }}
@@ -116,11 +115,11 @@ return (
 );
 ```
 
-It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. Options: `client`, `flow`, `sessionProvider`, `enrolTokenProvider`, `config`, `clientInfo`, `camera`, `autoStart`, `onResult`, `onStateChanged`, `onFlashChanged`. The effect re-runs when `client` or `flow` change.
+It returns `state`, `signal`, `flow`, `ready`, `error`, `controller`, `source`, `mountVideo` (ref callback that mounts the `<video>`), `start()` and `cancel()`. Options: `client`, `flow`, `sessionProvider`, `enrolTokenProvider`, `config`, `clientInfo`, `camera`, `autoStart`, `onResult`, `onFlashChanged`. The effect re-runs when `client` or `flow` change. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (frame-normalised) and `yaw` / `pitch` (null from BlazeFace).
 
 ## Headless
 
-`FaceVerifyController` and `FaceEnrollController` take a `FaceSignalSource` (`subscribe(listener)`) and a `FrameCapturer` (`captureJpeg(): Promise<Blob>`), expose `state`, `subscribe`, `start`, `cancel`, `dispose`. `MediaPipeSource` implements both over `getUserMedia` + FaceLandmarker and owns a `<video>` you mount anywhere. The test suite (`test/controller.test.ts`) drives the controller with synthetic signals exactly like the Flutter tests.
+`FaceVerifyController` takes a `FaceSignalSource` (`subscribe(listener)`) and a `VideoRecorder` (`format`, `start(onChunk)`, `stop()`), `FaceEnrollController` a `FaceSignalSource` and a `FrameCapturer` (`captureJpeg(): Promise<Blob>`); both expose `state`, `subscribe`, `start`, `cancel`, `dispose`. `BlazeFaceSource` implements all three over `getUserMedia` + the BlazeFace graph model (`BlazeFaceModel`, with the anchor decoding in `blazeface.ts`) + MediaRecorder, and owns a `<video>` you mount anywhere; its signals carry a box and no angles. The test suite (`test/controller.test.ts`) drives the controller with synthetic signals exactly like the Flutter tests.
 
 ## Demo
 

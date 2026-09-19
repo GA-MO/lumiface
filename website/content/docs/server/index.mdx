@@ -11,7 +11,7 @@ cp .env.example .env            # BOOTSTRAP_API_KEY, ADMIN_API_KEY, defaults for
 docker compose up --build       # buffalo_l is downloaded into a volume on first start
 ```
 
-The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet50.onnx` (convert it once, see [Get started](/docs/get-started)). `data/` holds the SQLite database and, with `STORE_FRAMES=1`, the frames of failed verifications for calibration.
+The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet50.onnx` (convert it once, see [Get started](/docs/get-started)). Video from the devices is decoded with PyAV (`av`, FFmpeg bundled in the wheel: VP8, H.264), no system FFmpeg needed. `data/` holds the SQLite database and, with `STORE_FRAMES=1`, the frames of failed verifications for calibration.
 
 ## Environment
 
@@ -23,10 +23,12 @@ The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet
 | `BOOTSTRAP_PRESET` | `balanced` | its preset |
 | `ADMIN_API_KEY` | unset | enables `/v1/projects` (`X-Admin-Key`) |
 | `DEBUG` | `0` | mounts `/v1/debug/score`; with `STORE_FRAMES` keeps the frames of every verification, not only failed ones |
-| `STORE_FRAMES` | `0` | keep the streamed frames of failed (or, with DEBUG, all) verifications under `FRAMES_DIR/<project>/<session>/` |
+| `STORE_FRAMES` | `0` | keep the decoded frames (and the raw video, `stream.<format>`) of failed (or, with DEBUG, all) verifications under `FRAMES_DIR/<project>/<session>/` |
 | `FRAMES_DIR` | `data/frames` | where those frames go |
 | `WEIGHTS_DIR` | `weights` | ONNX files |
 | `DET_SIZE` | `640` | detector input size; frames larger than this gain nothing |
+| `MAX_STREAM_CHUNKS` | `1800` | messages accepted on one stream (video chunks or JPEG frames) |
+| `MAX_STREAM_FRAMES` | `900` | decoded frames kept per session; a longer video is thinned evenly |
 | `SESSION_TTL_SECONDS` | `60` | how long a session can be started |
 | `ENROL_TOKEN_TTL_SECONDS` | `300` | default life of an enrol token |
 | `RETENTION_INTERVAL_SECONDS` | `300` | purge loop period, `0` disables |
@@ -38,7 +40,7 @@ Policy fields in the environment (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are t
 
 ## Database
 
-SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`, `enroltoken`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `expires_at`). The verdict's full `details` (windows, per-challenge readings, flash scores, key frames) live in `verification.details` for your backend; the device only ever gets the verdict.
+SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `subject`, `verifysession`, `verification`, `enroltoken`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `expires_at`). The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames) live in `verification.details` for your backend; the device only ever gets the verdict.
 
 ## Health and versions
 

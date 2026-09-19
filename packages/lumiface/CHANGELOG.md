@@ -1,3 +1,9 @@
+## 0.3.0
+
+- Box-only detectors: TensorFlow Lite BlazeFace in the Android plugin, Apple Vision in a new iOS plugin, TensorFlow.js BlazeFace on the web (`BlazeFaceCameraSource`). ML Kit and MediaPipe are gone.
+- `face_move` (the oval) is the only challenge; blink, smile, turn and nod, the nose parallax and their `LivenessConfig` fields are removed. `FaceSignal` carries a box and, where the detector has them, yaw and pitch.
+- The stream carries video: `CameraFaceSource` is a `VideoRecorder` (H.264 from MediaCodec on Android and VideoToolbox on iOS, MediaRecorder on the web), `VerifyStream.sendFrame` became `sendChunk`, `openStream` takes the `format`; `FaceVerifyController` takes `recorder` in place of `capturer` (`FaceEnrollController` keeps `capturer` for the photo).
+
 ## 0.2.0
 
 - Renamed from `face_checkin` to `lumiface`; `CheckinApi` → `LumifaceClient`, employees → subjects, check-ins → verifications.

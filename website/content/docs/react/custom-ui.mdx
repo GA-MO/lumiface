@@ -39,8 +39,8 @@ Every render prop receives a `LumifaceScope`: the hook's handle (`state`, `signa
 ## Your own markup
 
 ```tsx
-const fg = useLumiface({ client, purpose: "kiosk", onResult });
+const fg = useLumiface({ client, flow: "liveness", sessionProvider: faceSession, onResult });
 const scope = { message: messageFor(TH, fg.state, fg.flow), progress: progressOf(fg.state) };
 ```
 
-Mount the video with `ref={fg.mountVideo}` on a positioned container; it is mirrored for the front camera. Keep the flash rule: while `state.phase === "flash"`, fill the viewport with `#${state.flashColor}`.
+Mount the video with `ref={fg.mountVideo}` on a positioned container; it is mirrored for the front camera. Keep the flash rule: while `state.phase === "flash"`, fill the viewport with `#${state.flashColor}`. Draw `state.target` (the server's oval for a `face_move` challenge, as fractions of the video box) in place of your own guide while it is set; `FaceGuide` does this when given `target`.

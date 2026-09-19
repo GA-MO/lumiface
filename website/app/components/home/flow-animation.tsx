@@ -4,11 +4,10 @@ const T = "12s";
 
 // Percent of the loop. 0-6: backend mints the session. 6-72: the device streams. 72-97: the server finishes. 97: verdict.
 const PROMPTS = [
-  { text: "Center your face", from: 6, to: 14, color: "#fff" },
-  { text: "Close eyes", from: 14, to: 26, color: "#ffc107" },
-  { text: "Smile", from: 26, to: 40, color: "#ffc107" },
-  { text: "Turn your head left", from: 40, to: 54, color: "#ffc107" },
-  { text: "Hold still", from: 54, to: 72, color: "#fff" },
+  { text: "Move back a little", from: 6, to: 10, color: "#fff" },
+  { text: "Hold still", from: 10, to: 14, color: "#fff" },
+  { text: "Move closer until your face fills the oval", from: 14, to: 40, color: "#ffc107" },
+  { text: "Hold still", from: 40, to: 72, color: "#fff" },
   { text: "Checking", from: 72, to: 97, color: "#fff" },
   { text: "Verified", from: 97, to: 100, color: "#4caf50" },
 ];
@@ -22,9 +21,7 @@ const FLASHES = [
 /** Events the device sends over the stream, at the boundary each one marks. */
 const EVENTS = [
   { text: "aligned", at: 14 },
-  { text: "challenge_done 0", at: 26 },
-  { text: "challenge_done 1", at: 40 },
-  { text: "challenge_done 2", at: 54 },
+  { text: "challenge_done 0", at: 40 },
   { text: "flash 0 · 1 · 2", at: 60 },
   { text: "flash_end", at: 72 },
   { text: "end", at: 74 },
@@ -32,11 +29,9 @@ const EVENTS = [
 
 /** What the server reads from its own frames, as it happens, then the gates it runs at the end. */
 const GATES = [
-  { name: "Blink seen", detail: "eye aspect ratio 0.26 → 0.17, then open", at: 24 },
-  { name: "Smile seen", detail: "mouth 13% wider than the neutral frames", at: 38 },
-  { name: "Turn seen", detail: "yaw −31° inside the turn window", at: 52 },
+  { name: "Move seen", detail: "face box grew 0.42 → 0.58 of the frame, into the oval", at: 38 },
   { name: "Flash reflection", detail: "cheeks follow the 3 colours, wall does not", at: 76 },
-  { name: "Server clock", detail: "1.9 s per challenge, no repeated frames", at: 80 },
+  { name: "Server clock", detail: "2.6 s into the oval, no repeated frames", at: 80 },
   { name: "MiniFASNet + CVPR-2024", detail: "print, screen and bezel-free replay", at: 86 },
   { name: "ArcFace match", detail: "key frames vs the enrolled face", at: 92 },
 ];
@@ -66,12 +61,10 @@ const css = [
   `@keyframes fa-dash{to{stroke-dashoffset:-48}}`,
   // Frames flow the whole time the device streams (6-74%), a packet every ~1.4% of the loop.
   ...Array.from({ length: 12 }, (_, i) => `@keyframes fa-packet-${i}{0%,${6 + i * 1.4}%{offset-distance:0%;opacity:0}${6.5 + i * 1.4}%{opacity:1}${9 + i * 1.4}%{offset-distance:100%;opacity:1}${9.5 + i * 1.4}%,${9.5 + i * 1.4 + 0.01}%{offset-distance:0%;opacity:0}${9.5 + i * 1.4 + 0.02}%,100%{offset-distance:0%;opacity:0}}`),
-  windowKeyframes("fa-progress-1", 26, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
-  windowKeyframes("fa-progress-2", 40, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
-  windowKeyframes("fa-progress-3", 54, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
-  windowKeyframes("fa-head", 40, 54, "transform:translateX(-7px) scaleX(0.9)", "transform:translateX(0) scaleX(1)"),
-  windowKeyframes("fa-mouth", 26, 40, "d:path('M36 76 Q45 85 54 76')", "d:path('M38 78 Q45 80 52 78')"),
-  windowKeyframes("fa-eyes", 20, 22, "transform:scaleY(0.1)", "transform:scaleY(1)"),
+  windowKeyframes("fa-progress-1", 40, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  windowKeyframes("fa-progress-2", 72, 100, "background:#fff", "background:rgba(255,255,255,0.25)"),
+  // The face: a normal selfie distance, "move back" to the start, hold, then the walk that fills the oval.
+  `@keyframes fa-head{0%,6%{transform:scale(0.95)}10%,14%{transform:scale(0.72)}40%,100%{transform:scale(1.32)}}`,
   `@media (prefers-reduced-motion: reduce){.fa *{animation-play-state:paused}}`,
 ].join("\n");
 
@@ -88,7 +81,7 @@ function Wire({ vertical }: { vertical: boolean }) {
   );
 }
 
-/** The whole flow on a loop: the backend mints a session, the device streams the challenges and the flash, the server reads each one from its own frames, the backend fetches the verdict. */
+/** The whole flow on a loop: the backend mints a session, the device streams the walk into the oval and the flash, the server reads both from its own frames, the backend fetches the verdict. */
 export function FlowAnimation() {
   return (
     <div className="fa mt-12 rounded-3xl border border-fd-border bg-fd-card p-6 sm:p-8">
@@ -117,14 +110,12 @@ export function FlowAnimation() {
           <svg viewBox="0 0 90 170" className="absolute inset-0 h-full w-full" aria-hidden>
             <rect width="90" height="170" fill="#2b3542" />
             <path d="M-10 170 V138 C10 118 30 112 45 112 C60 112 80 118 100 138 V170 Z" fill="#3a4554" />
-            <g style={{ animationName: "fa-head", transformOrigin: "45px 70px" }}>
+            <g style={{ animationName: "fa-head", transformOrigin: "45px 72px" }}>
               <rect x="39" y="90" width="12" height="20" rx="5" fill="#6b7a8c" />
               <ellipse cx="45" cy="70" rx="22" ry="27" fill="#7d8ca0" />
-              <g style={{ animationName: "fa-eyes", transformOrigin: "45px 62px" }}>
-                <ellipse cx="37" cy="62" rx="3" ry="2" fill="#1f2730" />
-                <ellipse cx="53" cy="62" rx="3" ry="2" fill="#1f2730" />
-              </g>
-              <path d="M38 78 Q45 80 52 78" fill="none" stroke="#1f2730" strokeWidth="1.5" strokeLinecap="round" style={{ animationName: "fa-mouth" }} />
+              <ellipse cx="37" cy="62" rx="3" ry="2" fill="#1f2730" />
+              <ellipse cx="53" cy="62" rx="3" ry="2" fill="#1f2730" />
+              <path d="M38 78 Q45 80 52 78" fill="none" stroke="#1f2730" strokeWidth="1.5" strokeLinecap="round" />
             </g>
             <rect x="0" y="0" width="90" height="170" fill="rgba(0,0,0,0.5)" mask="url(#fa-cut)" />
             <defs>
@@ -139,7 +130,7 @@ export function FlowAnimation() {
             <div key={f.color} className="absolute inset-0" style={{ background: f.color, animationName: `fa-flash-${i}` }} />
           ))}
           <div className="absolute inset-x-0 top-3 flex justify-center gap-1">
-            {[1, 2, 3].map((n) => (
+            {[1, 2].map((n) => (
               <span key={n} className="h-1 w-5 rounded-full" style={{ animationName: `fa-progress-${n}` }} />
             ))}
           </div>
@@ -166,8 +157,8 @@ export function FlowAnimation() {
             </span>
           ))}
         </div>
-        <p className="mt-2 text-center font-mono text-[10px] text-fd-muted-foreground">WS /v1/sessions/…/stream · JPEG ~8 fps + events · session token</p>
-        <p className="mt-1 text-center text-[11px] text-fd-muted-foreground">Stamped with the server's clock on arrival</p>
+        <p className="mt-2 text-center font-mono text-[10px] text-fd-muted-foreground">WS /v1/sessions/…/stream · video chunks (VP8 / H.264) + events · session token</p>
+        <p className="mt-1 text-center text-[11px] text-fd-muted-foreground">Decoded into frames, stamped with the server's clock on arrival</p>
       </div>
 
       <div className="w-full sm:w-[280px]">

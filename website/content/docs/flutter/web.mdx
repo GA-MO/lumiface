@@ -1,38 +1,38 @@
 ---
 title: Flutter web
-description: The same package on Chrome and Safari through MediaPipe FaceLandmarker; what changes and what to watch.
+description: The same package on Chrome and Safari through TensorFlow.js BlazeFace; what changes and what to watch.
 ---
 
-`flutter build web` works out of the box. On the web the package uses `MediaPipeCameraSource`:
+`flutter build web` works out of the box. On the web the package uses `BlazeFaceCameraSource`:
 
 - `getUserMedia` opens the front camera at 1280×720 and shows it mirrored.
-- A small ES module in the package assets (`assets/lumiface_mediapipe.js`) imports `@mediapipe/tasks-vision@1.0.1` from jsDelivr and the `face_landmarker` model from Google's CDN, and returns one JSON signal per frame.
-- Blendshapes give eye-open (`1 - eyeBlink`) and smile probabilities; the facial transformation matrix gives yaw and pitch; the nose tip and eye centres give the parallax. The output is the same `FaceSignal` the ML Kit source produces, so the controller and the thresholds are unchanged.
-- Frames are captured by drawing the video onto a canvas (JPEG quality 0.9).
+- A small ES module in the package assets (`assets/lumiface_blazeface.js`) imports `@tensorflow/tfjs-core`, the WASM and CPU backends and `tfjs-converter` (4.22.0) from jsDelivr, loads the short-range BlazeFace graph model from the package assets (`assets/face_detection_short/`, 280 KB) and returns one JSON signal per frame. The WASM backend is tried first, the CPU backend is the fallback.
+- The signal is the largest face box; BlazeFace reports no head angles, so `yaw` and `pitch` are null and the `lookStraight` hint never fires on the web. The controller and the thresholds are the same as on the phones.
+- The stream the server judges is a MediaRecorder recording (WebM/VP8 where the browser has it, MP4/H.264 on Safari), cut every 250 ms at 1.5 Mbps (`chunkMs`, `videoBitsPerSecond`); the enrolment photo is the video drawn onto a canvas (JPEG quality 0.9).
 
-## Self-hosting the model
+## Self-hosting
 
 Pass URLs when you construct the source yourself:
 
 ```dart
 FaceVerifyView(
   client: client,
-  sourceFactory: () => MediaPipeCameraSource(
-    tasksVisionUrl: '/vendor/tasks-vision',   // folder with vision_bundle.mjs and wasm/
-    modelUrl: '/vendor/face_landmarker.task',
+  sourceFactory: () => BlazeFaceCameraSource(
+    tfjsUrl: '/vendor/tfjs/',                          // folder holding tfjs-core@<v>/+esm etc.
+    wasmUrl: '/vendor/tfjs-backend-wasm/dist/',         // the .wasm binaries
+    modelUrl: '/vendor/face_detection_short/model.json',
   ),
   ...
 )
 ```
 
-Serve the wasm folder with the right MIME types. No COOP/COEP headers are needed for the default (non-threaded) build.
+No COOP/COEP headers are needed; without them the WASM backend runs single-threaded.
 
 ## Things that differ from a phone
 
 - **Flash response is lower.** A laptop screen lights the face less than a phone held close: a MacBook in a bright room measured response 2.05 against the default minimum of 2.0. Use the `relaxed` preset while developing on a laptop, or lower `flash_min_response` for a web-only project.
 - **The guide relates to the camera frame, not the viewport.** A landscape webcam cropped into a portrait box hides its sides; the user should sit centred in front of the camera.
 - **Exposure lock is unavailable** in the browser; the settle window after the flash still keeps tinted frames out of `neutral_end`.
-- **Yaw sign.** If a turn to the user's left reads as negative yaw on some camera, construct `MediaPipeCameraSource(yawSign: -1)`.
 - The camera needs `https` or `localhost`.
 
-Verified on Chrome desktop with the Mac webcam and on iPhone 12 Safari (2026-09-18, `balanced`, verify against a subject): alignment, blink, smile, turns, nods and the flash all pass; on the iPhone screen the flash response was 7–16 with locality 0.39–0.52, and a video replayed on another phone was refused (`FLASH_FAIL` at response 0.95 / locality 3.0, or `TIMING_TOO_SLOW`).
+The BlazeFace source has not yet been run in front of a camera in Flutter web; the same decoder in the React SDK was verified on 2026-09-18 in headless Chrome on a sample face (WASM backend, 7 ms a frame). The earlier MediaPipe source was verified on Chrome desktop and iPhone 12 Safari with the gesture flow of the time.

@@ -1,30 +1,22 @@
-import 'dart:ui' show Color, Offset, Rect;
+import 'dart:ui' show Color, Rect;
 
 import 'liveness/config.dart';
 
 /// Active-liveness challenges. Names match the server's challenge pool.
+/// What the person should do so the face sits where the flow needs it.
+enum AlignHint { noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill }
+
 enum Challenge {
-  blink,
-  turnLeft,
-  turnRight,
-  smile,
-  nod;
+  /// The one challenge: move closer until the face fills the oval the server chose .
+  faceMove;
 
   static Challenge fromWire(String s) => switch (s) {
-    'blink' => Challenge.blink,
-    'turn_left' => Challenge.turnLeft,
-    'turn_right' => Challenge.turnRight,
-    'smile' => Challenge.smile,
-    'nod' => Challenge.nod,
+    'face_move' => Challenge.faceMove,
     _ => throw ArgumentError('unknown challenge $s'),
   };
 
   String get wire => switch (this) {
-    Challenge.blink => 'blink',
-    Challenge.turnLeft => 'turn_left',
-    Challenge.turnRight => 'turn_right',
-    Challenge.smile => 'smile',
-    Challenge.nod => 'nod',
+    Challenge.faceMove => 'face_move',
   };
 }
 
@@ -32,65 +24,28 @@ enum Challenge {
 /// only proves a live person, `enroll` captures a frontal photo for enrolment.
 enum FaceFlow { verify, liveness, enroll }
 
-/// One observation of the face in the camera stream. All fields except [tsMs]
-/// and [faceCount] are null when no face is present.
-///
-/// [box], [nose], [leftEye] and [rightEye] are normalised to the *upright*
-/// image (0..1 on both axes). Angles are degrees; [yaw] positive = the user's
-/// own left (mirror-corrected by the signal source so the controller never
-/// cares about camera facing).
+/// One observation of the face in the camera stream: the largest box the detector found and,
+/// when the detector reports them (Apple Vision does, BlazeFace does not), the head angles in
+/// degrees. [box] is normalised to the *upright* image (0..1 on both axes) and null without a face.
 class FaceSignal {
-  const FaceSignal({
-    required this.tsMs,
-    required this.faceCount,
-    this.box,
-    this.eyeOpenLeft,
-    this.eyeOpenRight,
-    this.smile,
-    this.yaw,
-    this.pitch,
-    this.nose,
-    this.leftEye,
-    this.rightEye,
-  });
+  const FaceSignal({required this.tsMs, required this.faceCount, this.box, this.yaw, this.pitch});
 
   const FaceSignal.none(this.tsMs)
     : faceCount = 0,
       box = null,
-      eyeOpenLeft = null,
-      eyeOpenRight = null,
-      smile = null,
       yaw = null,
-      pitch = null,
-      nose = null,
-      leftEye = null,
-      rightEye = null;
+      pitch = null;
+
+  FaceSignal copyWith({Rect? box}) =>
+      FaceSignal(tsMs: tsMs, faceCount: faceCount, box: box ?? this.box, yaw: yaw, pitch: pitch);
 
   final int tsMs;
   final int faceCount;
   final Rect? box;
-  final double? eyeOpenLeft;
-  final double? eyeOpenRight;
-  final double? smile;
   final double? yaw;
   final double? pitch;
-  final Offset? nose;
-  final Offset? leftEye;
-  final Offset? rightEye;
 
   bool get present => faceCount == 1 && box != null;
-
-  double? get eyeOpen => (eyeOpenLeft == null || eyeOpenRight == null) ? null : (eyeOpenLeft! + eyeOpenRight!) / 2;
-
-  /// Horizontal offset of the nose base from the eye midpoint, in units of
-  /// inter-eye distance. Stays constant when a flat picture is rotated; shifts
-  /// with yaw on a real (3D) face because the nose sits in front of the eyes.
-  double? get noseParallax {
-    if (nose == null || leftEye == null || rightEye == null) return null;
-    final dist = (rightEye!.dx - leftEye!.dx).abs();
-    if (dist < 1e-4) return null;
-    return (nose!.dx - (leftEye!.dx + rightEye!.dx) / 2) / dist;
-  }
 }
 
 /// A verification session issued by the server. Carries the challenges, the
@@ -130,10 +85,38 @@ class FaceSession {
 }
 
 /// The server's first message on the stream: what to do, decided server-side for this session.
+/// The oval a [Challenge.faceMove] asks the face to fill: [cx], [cy] are fractions of the camera frame,
+/// [width] a fraction of the frame's shorter side, [heightRatio] the oval's height over its width.
+
+class OvalTarget {
+  const OvalTarget({this.cx = 0.5, this.cy = 0.45, this.width = 0.62, this.heightRatio = 1.35});
+
+  final double cx;
+  final double cy;
+  final double width;
+  final double heightRatio;
+
+  factory OvalTarget.fromJson(Map<String, dynamic> j) => OvalTarget(
+    cx: (j['cx'] as num?)?.toDouble() ?? 0.5,
+    cy: (j['cy'] as num?)?.toDouble() ?? 0.45,
+    width: (j['width'] as num?)?.toDouble() ?? 0.62,
+    heightRatio: (j['height_ratio'] as num?)?.toDouble() ?? 1.35,
+  );
+}
+
 class StreamPlan {
-  const StreamPlan({required this.challenges, this.flashColors = const [], this.flashHoldMs = 450, this.clientConfig});
+  const StreamPlan({
+    required this.challenges,
+    this.flashColors = const [],
+    this.flashHoldMs = 450,
+    this.clientConfig,
+    this.oval,
+  });
 
   final List<Challenge> challenges;
+
+  /// Present when the plan includes [Challenge.faceMove].
+  final OvalTarget? oval;
 
   /// Screen-flash sequence: the screen is filled with each colour in turn. Empty when disabled.
   final List<Color> flashColors;
@@ -147,6 +130,7 @@ class StreamPlan {
         Color(0xFF000000 | int.parse(h, radix: 16)),
     ],
     flashHoldMs: (j['flash_hold_ms'] as int?) ?? 450,
+    oval: j['oval'] is Map ? OvalTarget.fromJson((j['oval'] as Map).cast<String, dynamic>()) : null,
     clientConfig: j['client_config'] is Map
         ? LivenessConfig.fromJson((j['client_config'] as Map).cast<String, dynamic>())
         : null,

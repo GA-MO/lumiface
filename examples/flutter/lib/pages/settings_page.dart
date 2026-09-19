@@ -110,10 +110,9 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             const SizedBox(height: 8),
             Text('Effective: match ≥ ${policy.effective['match_threshold']}, '
-                '${policy.effective['challenge_count']} challenges, '
+                'oval ${policy.effective['oval_width_fraction']} of the short side, growth ≥ ${policy.effective['move_min_growth']}, '
                 'flash ${policy.effective['flash_enforce'] == true ? 'enforced' : 'shadow'}, '
-                'smile ${policy.effective['smile_enforce'] == true ? 'enforced' : 'off'}, '
-                'client parallax ${policy.clientConfig.parallaxMinShift}'),
+                'client oval fill ≥ ${policy.clientConfig.ovalMinFill}'),
           ],
           const SizedBox(height: 24),
           const Text('Tip: on a phone use your Mac\'s LAN IP for the server URL, e.g. http://192.168.1.10:8000. '

@@ -16,7 +16,8 @@ from ..db import get_db, get_engine
 from ..deps import bearer_token, current_project, new_token, project_for_token, token_matches
 from ..models import Project, Verification, VerifySession, utcnow
 from ..policy import ClientPolicy, get_policy
-from ..services.challenge import new_challenges
+from ..services.challenge import new_challenges, oval_for
+from ..services.video import FORMATS, VideoChunk, decode_chunks
 from ..services.flash import new_flash_colors
 from ..services.stream import StreamEvent, StreamFrame, VerifyResult, analyze_stream
 from .subjects import find_subject
@@ -117,12 +118,15 @@ def get_session(session_id: str, project: Project = Depends(current_project), db
 
 def _store_frames(project_id: int, session_id: str, frames: list[StreamFrame], events: list[StreamEvent],
                   challenges: list[str], flash_colors: list[str], subject_id: str | None,
-                  client_info: dict, result: VerifyResult) -> None:
+                  client_info: dict, result: VerifyResult, fmt: str = "jpeg", chunks: list[VideoChunk] | None = None) -> None:
     """The whole streamed session as the server saw it, replayable by `scripts/replay_sessions.py`
     against a changed pipeline without anyone in front of a camera again: every frame with both
-    clocks, the events, the plan, and the verdict this run produced."""
+    clocks, the events, the plan, and the verdict this run produced. A video stream is kept as the
+    device sent it too (`stream.<format>`, the raw chunks in order), the decoded frames are what replay."""
     d = Path(get_settings().frames_dir).resolve() / str(project_id) / session_id
     d.mkdir(parents=True, exist_ok=True)
+    if chunks:
+        (d / f"stream.{fmt}").write_bytes(b"".join(c.data for c in chunks))
     t0 = frames[0].recv_ms if frames else 0
     names = []
     for i, f in enumerate(frames):
@@ -130,7 +134,7 @@ def _store_frames(project_id: int, session_id: str, frames: list[StreamFrame], e
         (d / names[-1]).write_bytes(f.data)
     (d / "session.json").write_text(json.dumps({
         "session_id": session_id, "subject_id": subject_id, "challenges": challenges, "flash_colors": flash_colors,
-        "client": client_info, "verdict": {"ok": result.ok, "reason_code": result.reason_code},
+        "client": client_info, "format": fmt, "verdict": {"ok": result.ok, "reason_code": result.reason_code},
         "frames": [{"file": n, "recv_ms": f.recv_ms, "client_ms": f.client_ms} for n, f in zip(names, frames)],
         "events": [{"name": e.name, "index": e.index, "recv_ms": e.recv_ms, "client_ms": e.client_ms} for e in events],
     }, indent=1))
@@ -151,16 +155,23 @@ def _now_ms() -> int:
 async def stream_session(ws: WebSocket, session_id: str):
     """The device's side of a verification.
 
-    1. `{"type": "hello", "token": <session_token>, "client": {...}}`
-    2. <- `{"type": "plan", "challenges": [...], "flash_colors": [...], "flash_hold_ms": n, "client_config": {...}}`
-    3. binary frames: 8-byte big-endian client time in ms, then a JPEG; sent continuously
+    1. `{"type": "hello", "token": <session_token>, "client": {...}, "format": "webm" | "mp4" | "h264" | "jpeg"}`
+       (`jpeg` when omitted)
+    2. <- `{"type": "plan", "challenges": [...], "flash_colors": [...], "flash_hold_ms": n, "oval": {...} | null,
+             "client_config": {...}}`
+    3. binary messages: 8-byte big-endian device time in ms, then the payload: a video chunk (`webm`, `mp4`:
+       MediaRecorder's chunks; `h264`: one Annex-B access unit) stamped with its first frame's time, or one
+       JPEG (`jpeg`); sent continuously
        text events: `{"type": "event", "name": "aligned" | "challenge_done" | "flash" | "flash_end", "index"?: i, "ts": ms}`
     4. `{"type": "end"}` -> <- `{"type": "result", ...}` and the socket closes.
-    The server clocks everything itself; the session is spent as soon as the hello is accepted.
+    Video is decoded into frames with both clocks (`services/video.py`) before the pipeline runs, so the
+    verdict is judged the same way whatever the device sent. The server clocks everything itself; the
+    session is spent as soon as the hello is accepted.
     """
     s = get_settings()
     await ws.accept()
     frames: list[StreamFrame] = []
+    chunks: list[VideoChunk] = []
     events: list[StreamEvent] = []
     total_bytes = 0
     try:
@@ -175,6 +186,10 @@ async def stream_session(ws: WebSocket, session_id: str):
         except HTTPException:
             token = None
         client_info = hello.get("client") if isinstance(hello.get("client"), dict) else {}
+        fmt = hello.get("format", "jpeg")
+        if fmt not in FORMATS:
+            raise _StreamError("HELLO_INVALID")
+        client_info = {**client_info, "format": fmt}
         # The browser's own description of itself, so the audit log tells iOS Safari from desktop Chrome.
         if ws.headers.get("user-agent"):
             client_info = {**client_info, "user_agent": ws.headers["user-agent"][:200]}
@@ -203,7 +218,8 @@ async def stream_session(ws: WebSocket, session_id: str):
         p = get_policy()
 
         await ws.send_json({"type": "plan", "challenges": challenges, "flash_colors": flash_colors,
-                            "flash_hold_ms": p.flash_hold_ms, "client_config": p.client.model_dump()})
+                            "flash_hold_ms": p.flash_hold_ms, "oval": oval_for(challenges),
+                            "client_config": p.client.model_dump()})
 
         while True:
             remaining = deadline - _now_ms()
@@ -221,9 +237,13 @@ async def stream_session(ws: WebSocket, session_id: str):
                 if len(data) < 8 or len(data) - 8 > s.max_frame_bytes:
                     raise _StreamError("PAYLOAD_TOO_LARGE", 1009)
                 total_bytes += len(data)
-                if total_bytes > s.max_upload_bytes or len(frames) >= s.max_stream_frames:
+                if total_bytes > s.max_upload_bytes or len(frames) + len(chunks) >= s.max_stream_chunks:
                     raise _StreamError("PAYLOAD_TOO_LARGE", 1009)
-                frames.append(StreamFrame(recv_ms=now, client_ms=int.from_bytes(data[:8], "big"), data=data[8:]))
+                client_ms = int.from_bytes(data[:8], "big")
+                if fmt == "jpeg":
+                    frames.append(StreamFrame(recv_ms=now, client_ms=client_ms, data=data[8:]))
+                else:
+                    chunks.append(VideoChunk(recv_ms=now, client_ms=client_ms, data=data[8:]))
                 continue
             try:
                 ev = json.loads(msg.get("text") or "")
@@ -240,10 +260,12 @@ async def stream_session(ws: WebSocket, session_id: str):
             events.append(StreamEvent(name=ev["name"], recv_ms=now, index=index if isinstance(index, int) else None,
                                       client_ms=ev.get("ts") if isinstance(ev.get("ts"), int) else None))
 
+        if chunks:
+            frames = await asyncio.to_thread(decode_chunks, fmt, chunks, s.max_stream_frames)
         result = await asyncio.to_thread(analyze_stream, frames, events, challenges, flash_colors, enrolled)
         if s.store_frames and (s.debug or not result.ok):
             await asyncio.to_thread(_store_frames, project_id, session_id, frames, events, challenges, flash_colors,
-                                    subject_id, client_info, result)
+                                    subject_id, client_info, result, fmt, chunks)
         t0 = frames[0].recv_ms if frames else 0
         with Session(get_engine()) as db:
             row = Verification(project_id=project_id, subject_id=subject_row_id, subject_external_id=subject_id,

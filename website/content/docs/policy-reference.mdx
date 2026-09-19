@@ -20,7 +20,7 @@ The same names, upper-cased, are the environment variables that set the defaults
 |---|---|---|---|
 | `match_threshold` | float | `0.45` | Min cosine similarity between every frame and the enrolled face. |
 | `consistency_threshold` | float | `0.6` | Min cosine similarity between two frontal frames. |
-| `consistency_pose_threshold` | float | `0.4` | Min similarity when one frame is mid turn/nod. |
+| `consistency_pose_threshold` | float | `0.4` | Min similarity when one frame is turned away. |
 | `pose_frame_max_angle` | float | `20` | |yaw| or |pitch| above this marks a pose frame. |
 | `spoof_threshold` | float | `0.5` | MiniFASNet real score, mean over frames. |
 | `spoof_hard_floor` | float | `0.3` | MiniFASNet real score every single frame must clear. |
@@ -31,20 +31,16 @@ The same names, upper-cased, are the environment variables that set the defaults
 | `min_face_size` | int | `112` | Min face box side in pixels. |
 | `enroll_max_yaw` | float | `20` | Max |yaw| accepted for an enrolment photo. |
 | `enroll_max_pitch` | float | `20` | Max |pitch| accepted for an enrolment photo. |
-| `turn_min_yaw` | float | `20` | Server-side yaw a turn frame must show. |
-| `nod_min_pitch` | float | `15` | Server-side pitch a nod frame must show. |
-| `turn_strict_direction` | bool | `false` | Require the turn to go the commanded way. |
-| `smile_enforce` | bool | `true` | Reject when the server cannot see the smile itself. |
-| `smile_min_width_gain` | float | `1.08` | Mouth width gain vs the neutral frame. |
-| `smile_min_lift` | float | `0.04` | Mouth corner lift vs the neutral frame (inter-ocular units). |
 | `session_ttl_seconds` | int | `60` | A session must be verified within this time. |
 | `subject_ttl_seconds` | int | `0` | Default retention of an enrolled face in seconds; 0 keeps it until deleted. |
 | `allow_browser_api_key` | bool | `false` | Accept the project key from a browser origin other than localhost. Development only. |
-| `challenge_count` | int | `2` | Challenges per session. |
-| `challenge_pool` | str | `"blink,turn_left,turn_right,smile,nod"` | Comma separated pool: blink, turn_left, turn_right, smile, nod. |
-| `required_challenge` | str | `"smile"` | Always included when in the pool; empty for none. |
-| `min_challenge_ms` | int | `300` | Shortest accepted challenge duration. |
-| `max_challenge_ms` | int | `5000` | Longest accepted challenge duration. |
+| `oval_width_fraction` | float | `0.62` | face_move: oval width as a fraction of the frame's shorter side; the face must fill it. |
+| `oval_center_y` | float | `0.45` | face_move: oval centre as a fraction of the frame height. |
+| `oval_height_ratio` | float | `1.35` | face_move: oval height / width. |
+| `move_min_growth` | float | `1.15` | face_move: face width at the end / at the start of the window, server-side. |
+| `move_min_fill` | float | `0.75` | face_move: face width at the end / oval width, server-side. Below the device's oval_min_fill: the server's box is a little smaller and the person stops the moment the device says hold. |
+| `min_challenge_ms` | int | `300` | Shortest accepted face_move window. |
+| `max_challenge_ms` | int | `10000` | Longest accepted face_move window. |
 | `min_session_ms` | int | `1500` | Shortest accepted whole session. |
 | `flash_count` | int | `3` | Screen-flash colours per session; 0 disables. |
 | `flash_enforce` | bool | `true` | Reject on flash failure; false records scores only. |
@@ -59,26 +55,16 @@ The same names, upper-cased, are the environment variables that set the defaults
 |---|---|---|---|
 | `client.align_hold_ms` | int | `600` | Face must stay aligned this long before the first frame. |
 | `client.min_face_width_fraction` | float | `0.28` | Face box width / frame width lower bound. |
-| `client.max_face_width_fraction` | float | `0.75` | Face box width / frame width upper bound. |
+| `client.max_face_width_fraction` | float | `0.48` | Face box width / frame width upper bound. Under the face_move start (move_start_max_ratio x the oval), so "move back" happens while aligning and the hold before the walk stops the person from backing off further. |
 | `client.center_tolerance` | float | `0.18` | Allowed offset of the face centre from the frame centre. |
 | `client.neutral_max_yaw` | float | `15` | Max |yaw| in degrees for a neutral frame. |
 | `client.neutral_max_pitch` | float | `15` | Max |pitch| in degrees for a neutral frame. |
-| `client.challenge_timeout_ms` | int | `10000` | Give up on a challenge after this long. |
+| `client.challenge_timeout_ms` | int | `10000` | Give up on the oval after this long. |
 | `client.face_lost_grace_ms` | int | `1500` | Fail when no face is seen for this long. |
-| `client.eye_open_threshold` | float | `0.6` | Eye-open probability that counts as open. |
-| `client.eye_closed_threshold` | float | `0.25` | Eye-open probability that counts as closed. |
-| `client.blink_min_ms` | int | `40` | Shortest genuine blink. |
-| `client.blink_max_ms` | int | `600` | Longest genuine blink. |
-| `client.smile_threshold` | float | `0.7` | Smile probability that counts as smiling. |
-| `client.smile_baseline_max` | float | `0.4` | Smile probability must start below this. |
-| `client.smile_hold_ms` | int | `300` | Smile must be held this long. |
-| `client.turn_min_yaw` | float | `25` | Head yaw in degrees that counts as a turn. |
-| `client.turn_hold_ms` | int | `200` | Turn must be held this long. |
-| `client.parallax_min_shift` | float | `0.08` | Min nose parallax change during a turn; 0 disables. |
-| `client.parallax_when_no_turn` | bool | `true` | Append a client-only turn when the server picked none. |
-| `client.nod_min_pitch` | float | `15` | Head pitch in degrees that counts as a nod. |
-| `client.nod_hold_ms` | int | `200` | Nod must be held this long. |
-| `client.settle_after_challenge_ms` | int | `400` | Pause after a challenge before capturing. |
+| `client.oval_min_fill` | float | `0.85` | face_move: face width / oval width that counts as fitted (centred within a fifth of the oval). |
+| `client.oval_hold_ms` | int | `500` | face_move: the face must stay fitted this long. |
+| `client.move_start_max_ratio` | float | `0.8` | face_move: face width / oval width the challenge must start below, so the move is a real one. |
+| `client.settle_after_challenge_ms` | int | `400` | Pause after the oval is filled before the flash. |
 | `client.settle_after_flash_ms` | int | `800` | Pause after the last flash colour before neutral_end. |
 
 ## Presets
@@ -87,13 +73,13 @@ Each preset is a set of overrides on top of the environment defaults. `GET /v1/p
 
 ### balanced
 
-Calibrated defaults from the environment. Phone-tested attendance check-in.
+Calibrated defaults from the environment: move into the oval, then the flash. Phone-tested attendance check-in.
 
 _No overrides: the environment defaults as they are._
 
 ### strict
 
-Higher match and anti-spoof bars, three challenges, commanded turn direction. Access control, KYC.
+Higher match and anti-spoof bars, a longer walk into a fuller oval, tighter flash correlation. Access control, KYC.
 
 | Field | Value |
 |---|---|
@@ -101,15 +87,14 @@ Higher match and anti-spoof bars, three challenges, commanded turn direction. Ac
 | `spoof_threshold` | `0.6` |
 | `spoof_hard_floor` | `0.35` |
 | `cvpr_threshold` | `0.4` |
-| `challenge_count` | `3` |
+| `move_min_growth` | `1.4` |
 | `flash_min_correlation` | `0.7` |
-| `turn_strict_direction` | `true` |
-| `client.parallax_min_shift` | `0.1` |
-| `client.smile_threshold` | `0.8` |
+| `client.oval_min_fill` | `0.9` |
+| `client.move_start_max_ratio` | `0.5` |
 
 ### relaxed
 
-Lower bars, flash and smile checks record scores only. Low-risk flows, poor lighting, kiosks.
+Lower bars, the flash records scores only, more time for the oval. Low-risk flows, poor lighting, kiosks.
 
 | Field | Value |
 |---|---|
@@ -117,8 +102,7 @@ Lower bars, flash and smile checks record scores only. Low-risk flows, poor ligh
 | `spoof_hard_floor` | `0.2` |
 | `cvpr_threshold` | `0.2` |
 | `flash_enforce` | `false` |
-| `smile_enforce` | `false` |
-| `max_challenge_ms` | `8000` |
+| `max_challenge_ms` | `15000` |
 | `client.challenge_timeout_ms` | `15000` |
 | `client.face_lost_grace_ms` | `2500` |
 | `client.min_face_width_fraction` | `0.2` |

@@ -7,7 +7,7 @@ tab, a history tab with the scores the backend read, and a preset picker. It tal
 ```bash
 bun run dev:backend                       # examples/backend on :8010 (needs the server on :8000)
 cd examples/flutter
-flutter run -d chrome                     # web: MediaPipe, localhost is a secure context
+flutter run -d chrome                     # web: TensorFlow.js BlazeFace, localhost is a secure context
 flutter run -d <android-id> --release     # phone: use --release, debug builds hide R8 problems
 ```
 

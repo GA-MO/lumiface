@@ -1,15 +1,22 @@
 import 'dart:async';
-import 'dart:math';
 import 'dart:ui';
 
 import 'package:lumiface/lumiface.dart';
 
-class FakeSource implements FaceSignalSource, FrameCapturer {
+class FakeSource implements FaceSignalSource, FrameCapturer, VideoRecorder {
   final ctrl = StreamController<FaceSignal>.broadcast(sync: true);
   int captures = 0;
 
+  /// The recorder's state as the controller drove it: started, then stopped.
+  bool recording = false;
+  int recordings = 0;
+  void Function(List<int> data, int tsMs)? _onChunk;
+
   @override
   Stream<FaceSignal> get signals => ctrl.stream;
+
+  @override
+  StreamFormat get format => StreamFormat.h264;
 
   @override
   Future<List<int>> captureJpeg() async {
@@ -17,14 +24,31 @@ class FakeSource implements FaceSignalSource, FrameCapturer {
     return [0xFF, 0xD8, captures];
   }
 
+  @override
+  void startRecording(void Function(List<int> data, int tsMs) onChunk) {
+    recording = true;
+    recordings++;
+    _onChunk = onChunk;
+  }
+
+  @override
+  void stopRecording() {
+    recording = false;
+    _onChunk = null;
+  }
+
+  /// A chunk the recorder cut at [tsMs]; delivered only while recording, like a real encoder.
+  void chunk(int tsMs) => _onChunk?.call([0, 0, 0, 1, tsMs & 0xff], tsMs);
+
   void emit(FaceSignal s) => ctrl.add(s);
 }
 
 class FakeApi extends LumifaceClient {
-  FakeApi(this.challenges, {this.response, this.flashColors = const []}) : super(baseUrl: 'http://x');
+  FakeApi(this.challenges, {this.response, this.flashColors = const [], this.oval}) : super(baseUrl: 'http://x');
 
   final List<Challenge> challenges;
   final List<Color> flashColors;
+  final OvalTarget? oval;
   VerifyResult? response;
   String? planError;
   String? lastSubjectId;
@@ -32,8 +56,9 @@ class FakeApi extends LumifaceClient {
   LivenessConfig? sessionConfig;
   int enrollCalls = 0;
 
-  /// What the controller streamed: frame timestamps and events, in order.
-  final List<int> sentFrames = [];
+  /// What the controller streamed: chunk timestamps and events, in order, and the hello's format.
+  final List<int> sentChunks = [];
+  StreamFormat? format;
   final List<(StreamEventName, int, int?)> sentEvents = [];
   bool ended = false;
   bool closed = false;
@@ -46,7 +71,11 @@ class FakeApi extends LumifaceClient {
   }
 
   @override
-  VerifyStream openStream(FaceSession session, {Map<String, dynamic> clientInfo = const {}}) => _FakeStream(this);
+  VerifyStream openStream(FaceSession session,
+      {Map<String, dynamic> clientInfo = const {}, StreamFormat format = StreamFormat.jpeg}) {
+    this.format = format;
+    return _FakeStream(this);
+  }
 
   /// The fake token names the subject, like the real one does server-side: `tok:<id>:<name>`.
   @override
@@ -65,10 +94,10 @@ class _FakeStream implements VerifyStream {
   @override
   Future<StreamPlan> get plan => api.planError != null
       ? Future.error(LumifaceException(api.planError!))
-      : Future.value(StreamPlan(challenges: api.challenges, flashColors: api.flashColors, clientConfig: api.sessionConfig));
+      : Future.value(StreamPlan(challenges: api.challenges, flashColors: api.flashColors, clientConfig: api.sessionConfig, oval: api.oval));
 
   @override
-  void sendFrame(List<int> jpeg, int tsMs) => api.sentFrames.add(tsMs);
+  void sendChunk(List<int> data, int tsMs) => api.sentChunks.add(tsMs);
 
   @override
   void event(StreamEventName name, int tsMs, {int? index}) => api.sentEvents.add((name, tsMs, index));
@@ -83,33 +112,12 @@ class _FakeStream implements VerifyStream {
   void close() => api.closed = true;
 }
 
-/// A well-framed face with ML Kit-style landmarks. The nose sits in front of
-/// the eye plane, so its x shifts with [yaw] like a real head; [flat] models a
-/// printed photo or screen rotated in front of the camera (foreshortened, but
-/// the nose stays put relative to the eyes).
-FaceSignal neutral(
-  int ts, {
-  double eye = 0.95,
-  double smile = 0.05,
-  double yaw = 0,
-  double pitch = 0,
-  bool flat = false,
-}) {
-  const cx = 0.5, eyeY = 0.45, noseY = 0.55, halfEye = 0.08;
-  final rad = yaw * pi / 180;
-  final half = halfEye * cos(rad);
-  final noseShift = flat ? 0.0 : 0.35 * halfEye * 2 * sin(rad);
-  return FaceSignal(
-    tsMs: ts,
-    faceCount: 1,
-    box: const Rect.fromLTWH(0.3, 0.3, 0.4, 0.45),
-    eyeOpenLeft: eye,
-    eyeOpenRight: eye,
-    smile: smile,
-    yaw: yaw,
-    pitch: pitch,
-    nose: Offset(cx + noseShift, noseY),
-    leftEye: Offset(cx - half, eyeY),
-    rightEye: Offset(cx + half, eyeY),
-  );
-}
+/// A well-framed face, [width] of the frame wide and centred; [yaw]/[pitch] as a detector with
+/// angles (Apple Vision) would report them.
+FaceSignal neutral(int ts, {double yaw = 0, double pitch = 0, double width = 0.45}) => FaceSignal(
+      tsMs: ts,
+      faceCount: 1,
+      box: Rect.fromCenter(center: const Offset(0.5, 0.45), width: width, height: width * 1.125),
+      yaw: yaw,
+      pitch: pitch,
+    );

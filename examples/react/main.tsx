@@ -66,7 +66,14 @@ function App() {
   };
 
   const flow: FaceFlow = mode === "enroll" ? "enroll" : mode === "liveness" ? "liveness" : "verify";
-  const common = { client, strings: thai ? TH : undefined, showDebug: debug, onResult, onDone: () => setMode(null) };
+  const common = {
+    client,
+    strings: thai ? TH : undefined,
+    showDebug: debug,
+    onResult,
+    onDone: () => setMode(null),
+    camera: { modelUrl: "/models/face_detection_short/model.json" },
+  };
   const session = (purpose: string, subject: string | null = subjectId || null) => () => backend.session(subject, purpose);
 
   return (

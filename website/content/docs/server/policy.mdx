@@ -14,7 +14,7 @@ curl $SERVER/v1/policy -H "X-API-Key: $KEY"
   "project": "default",
   "preset": "balanced",
   "overrides": {},
-  "effective": { "match_threshold": 0.45, "challenge_count": 2, "flash_enforce": true, "client": { "parallax_min_shift": 0.08, "...": "..." } }
+  "effective": { "match_threshold": 0.45, "oval_width_fraction": 0.62, "flash_enforce": true, "client": { "oval_min_fill": 0.85, "...": "..." } }
 }
 ```
 
@@ -36,7 +36,7 @@ curl -X PUT ... -d '{"overrides": {"flash_enforce": false}, "merge": false}'
 curl -X DELETE $SERVER/v1/policy -H "X-API-Key: $KEY"
 ```
 
-Unknown fields and wrong types answer `422` with `reason_code: POLICY_INVALID` and the pydantic errors; an unknown preset answers `UNKNOWN_PRESET`. Changes apply to the next session; sessions already issued keep the flash colours and challenges they were given.
+Unknown fields and wrong types answer `422` with `reason_code: POLICY_INVALID` and the pydantic errors; an unknown preset answers `UNKNOWN_PRESET`. Changes apply to the next session; sessions already issued keep the flash colours and the oval they were given.
 
 `GET /v1/policy/presets` lists the presets with their overrides and fully resolved policies; `GET /v1/policy/schema` returns every field with type, default and description (the [policy reference](/docs/policy-reference) is generated from it).
 
@@ -44,9 +44,9 @@ Unknown fields and wrong types answer `422` with `reason_code: POLICY_INVALID` a
 
 | Preset | When |
 |---|---|
-| `balanced` | The phone-calibrated defaults. Attendance check-in. |
-| `strict` | Match 0.55, spoof 0.60, CVPR 0.40, three challenges, commanded turn direction, flash correlation 0.7. Access control, KYC. |
-| `relaxed` | Match 0.40, lower floors, flash and smile record scores only, longer timeouts. Low-risk flows, poor lighting, laptops. |
+| `balanced` | The phone-calibrated defaults: move into the oval, then three flash colours. Attendance check-in. |
+| `strict` | Match 0.55, spoof 0.60, CVPR 0.40, a longer walk into a fuller oval (growth 1.4, fill 0.9 on the device, start under 0.5), flash correlation 0.7. Access control, KYC. |
+| `relaxed` | Match 0.40, lower floors, the flash records scores only, 15 s for the oval. Low-risk flows, poor lighting, laptops. |
 | `emulator` | Flash off, faces from 60 px, smaller minimum face width. Android emulator with a webcam, CI demos. |
 
 ## How the app follows the policy
@@ -55,7 +55,8 @@ Every session response carries `client_config`, the `client.*` fields. `FaceVeri
 
 ## Which knobs matter
 
-- **False rejects of real people**: lower `match_threshold` (0.40), `spoof_hard_floor` (0.20), raise `client.challenge_timeout_ms`, `max_challenge_ms`. Check `challenge_<i>` and `flash` in the verification row's `details` before loosening `smile_*` and `flash_*`.
+- **False rejects of real people**: lower `match_threshold` (0.40), `spoof_hard_floor` (0.20), raise `client.challenge_timeout_ms`, `max_challenge_ms`. Check `challenge_0` (`growth`, `fill`, `centred`) and `flash` in the verification row's `details` before loosening `move_*` and `flash_*`.
+- **People who never get far enough**: lower `client.move_start_max_ratio`; a webcam above a laptop screen sees the face low, so `oval_center_y` may need to move down.
 - **Screen replay getting through**: keep `cvpr_enabled`, keep `flash_enforce`, raise `flash_min_correlation`.
-- **Masks**: `required_challenge=smile` with `smile_enforce` is the only gate; there is no passive detector for silicone.
+- **Masks**: no gate, the flow has no gesture and there is no passive detector for silicone; see [security](/docs/security).
 - **Emulators and webcams**: `flash_enforce=false` (the "screen" is a small window), `min_face_size=60`.

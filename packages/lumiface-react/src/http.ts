@@ -1,4 +1,4 @@
-import { LumifaceError, type FaceSession, type StreamPlan, type Subject, type VerifyResult } from "./types.ts";
+import { LumifaceError, type FaceSession, type OvalTarget, type StreamPlan, type Subject, type VerifyResult } from "./types.ts";
 
 export function reasonCode(body: unknown, status: number): string {
   const detail = (body as { detail?: unknown })?.detail;
@@ -47,12 +47,24 @@ export function sessionFromJson(j: Record<string, unknown>): FaceSession {
   };
 }
 
+function ovalFromJson(o: unknown): OvalTarget | null {
+  if (!o || typeof o !== "object") return null;
+  const j = o as Record<string, unknown>;
+  return {
+    cx: (j.cx as number) ?? 0.5,
+    cy: (j.cy as number) ?? 0.45,
+    width: (j.width as number) ?? 0.62,
+    heightRatio: (j.height_ratio as number) ?? 1.35,
+  };
+}
+
 export function planFromJson(j: Record<string, unknown>): StreamPlan {
   return {
     challenges: (j.challenges as StreamPlan["challenges"]) ?? [],
     flashColors: (j.flash_colors as string[]) ?? [],
     flashHoldMs: (j.flash_hold_ms as number) ?? 450,
     clientConfig: (j.client_config as Record<string, unknown>) ?? null,
+    oval: ovalFromJson(j.oval),
   };
 }
 

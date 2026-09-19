@@ -5,14 +5,14 @@ import type { HastNode } from "@/lib/code.server";
 export const PRESETS: Record<string, { summary: string; when: string; overrides: Record<string, unknown> }> = {
   balanced: { summary: "Calibrated defaults from the environment.", when: "Phone-tested attendance check-in", overrides: {} },
   strict: {
-    summary: "Higher match and anti-spoof bars, three challenges, commanded turn direction.",
+    summary: "Higher match and anti-spoof bars, a longer walk into a fuller oval, tighter flash correlation.",
     when: "Access control, KYC",
-    overrides: { match_threshold: 0.55, spoof_threshold: 0.6, spoof_hard_floor: 0.35, cvpr_threshold: 0.4, challenge_count: 3, flash_min_correlation: 0.7, turn_strict_direction: true, client: { parallax_min_shift: 0.1, smile_threshold: 0.8 } },
+    overrides: { match_threshold: 0.55, spoof_threshold: 0.6, spoof_hard_floor: 0.35, cvpr_threshold: 0.4, move_min_growth: 1.4, flash_min_correlation: 0.7, client: { oval_min_fill: 0.9, move_start_max_ratio: 0.5 } },
   },
   relaxed: {
-    summary: "Lower bars; flash and smile checks record scores only.",
+    summary: "Lower bars; the flash records scores only, more time for the oval.",
     when: "Low-risk flows, poor lighting, kiosks",
-    overrides: { match_threshold: 0.4, spoof_hard_floor: 0.2, cvpr_threshold: 0.2, flash_enforce: false, smile_enforce: false, max_challenge_ms: 8000, client: { challenge_timeout_ms: 15000, face_lost_grace_ms: 2500 } },
+    overrides: { match_threshold: 0.4, spoof_hard_floor: 0.2, cvpr_threshold: 0.2, flash_enforce: false, max_challenge_ms: 15000, client: { challenge_timeout_ms: 15000, face_lost_grace_ms: 2500, min_face_width_fraction: 0.2 } },
   },
   emulator: {
     summary: "Flash off and smaller faces accepted.",

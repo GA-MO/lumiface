@@ -1,14 +1,14 @@
 import type { LumifaceClient } from "./client.ts";
 import { configFromJson, DEFAULT_CONFIG, type LivenessConfig } from "./config.ts";
-import { detectorFor, type ChallengeDetector } from "./detectors.ts";
+import { detectorFor, FaceMoveDetector, type ChallengeDetector } from "./detectors.ts";
 import {
   type Box,
   clientError,
-  eyeOpen,
   isPresent,
   type Challenge,
   type FaceFlow,
   type FaceSession,
+  type StreamFormat,
   type StreamPlan,
   type VerifyStream,
   type FaceSignal,
@@ -29,6 +29,9 @@ export interface LivenessState {
   flashColor: string | null;
   flashIndex: number;
   result: VerifyResult | null;
+  /** The oval a `face_move` challenge asks the face to fill, as fractions of the preview; the guide
+   *  draws it instead of the theme's shape once set. */
+  target: Box | null;
 }
 
 export const IDLE_STATE: LivenessState = {
@@ -40,6 +43,7 @@ export const IDLE_STATE: LivenessState = {
   flashColor: null,
   flashIndex: 0,
   result: null,
+  target: null,
 };
 
 export function isDone(s: LivenessState): boolean {
@@ -68,9 +72,17 @@ export interface FaceSignalSource {
   subscribe(listener: (s: FaceSignal) => void): () => void;
 }
 
-/** Grabs the most recent camera frame as a JPEG blob. */
+/** Grabs the most recent camera frame as a JPEG blob (the enrolment photo). */
 export interface FrameCapturer {
   captureJpeg(): Promise<Blob>;
+}
+
+/** Records the camera while a verification runs and hands out chunks as they are cut; `tsMs` is the
+ *  device time (the signal clock) of the chunk's first frame. The server decodes the stream itself. */
+export interface VideoRecorder {
+  readonly format: StreamFormat;
+  start(onChunk: (data: Blob | ArrayBuffer, tsMs: number) => void): void;
+  stop(): void;
 }
 
 /** The whole camera frame, in frame-normalised coordinates. */
@@ -101,15 +113,24 @@ export function boxInRegion(b: Box, region: Box): Box {
   };
 }
 
-export function alignHint(s: FaceSignal, config: LivenessConfig, region: Box = FULL_FRAME): AlignHint | null {
+/** `maxWidth` overrides `maxFaceWidthFraction`: the controller passes the oval's start width so the
+ *  walk into the oval always begins from where the person held still, whatever the frame's aspect. */
+export function alignHint(s: FaceSignal, config: LivenessConfig, region: Box = FULL_FRAME, maxWidth = config.maxFaceWidthFraction): AlignHint | null {
   if (s.faceCount === 0 || !s.box) return "noFace";
   if (s.faceCount > 1) return "multipleFaces";
   const b = boxInRegion(s.box, region);
   if (b.width < config.minFaceWidthFraction) return "tooFar";
-  if (b.width > config.maxFaceWidthFraction) return "tooClose";
+  if (b.width > maxWidth) return "tooClose";
   const dx = Math.abs(b.left + b.width / 2 - 0.5);
   const dy = Math.abs(b.top + b.height / 2 - 0.5);
   if (dx > config.centerTolerance || dy > config.centerTolerance) return "notCentered";
+  return frontalHint(s, config);
+}
+
+/** After the oval the face is close by design: only its presence and (where the detector reports angles) its pose still matter. */
+export function frontalHint(s: FaceSignal, config: LivenessConfig): AlignHint | null {
+  if (s.faceCount === 0 || !s.box) return "noFace";
+  if (s.faceCount > 1) return "multipleFaces";
   if (Math.abs(s.yaw ?? 0) > config.neutralMaxYaw || Math.abs(s.pitch ?? 0) > config.neutralMaxPitch) {
     return "lookStraight";
   }
@@ -127,10 +148,10 @@ export abstract class FaceFlowController {
   /** What the preview shows of the frame; the view keeps it in step with its layout. See `visibleRegionFor`. */
   visibleRegion: Box = FULL_FRAME;
 
-  constructor(
-    readonly source: FaceSignalSource,
-    readonly capturer: FrameCapturer,
-  ) {}
+  /** The camera frame's width over its height; the view keeps it in step with the source. */
+  frameAspect = 4 / 3;
+
+  constructor(readonly source: FaceSignalSource) {}
 
   abstract readonly flow: FaceFlow;
   abstract get config(): LivenessConfig;
@@ -160,7 +181,8 @@ export abstract class FaceFlowController {
 
 export interface FaceVerifyOptions {
   source: FaceSignalSource;
-  capturer: FrameCapturer;
+  /** Records the camera for the server; `BlazeFaceSource` is one. */
+  recorder: VideoRecorder;
   client: LumifaceClient;
   /**
    * Fetches the session from your backend, which created it with the project key and fixed the
@@ -173,27 +195,23 @@ export interface FaceVerifyOptions {
   /** Overrides the project's client_config; omit to use what the server sends. */
   config?: LivenessConfig;
   clientInfo?: Record<string, unknown>;
-  /** Frames streamed to the server per second of signal time. */
-  streamFps?: number;
-  random?: () => number;
 }
 
 /**
- * Drives one verification: session -> stream -> align -> challenges -> screen flash -> verdict.
- * Frames go to the server continuously while the flow runs; the events sent at each boundary
- * only tell the server where to look, it decides from its own frames and clock. A session the
- * backend created without a subject only proves liveness. When the server picked no turn and
- * `parallaxWhenNoTurn` is set, a client-only turn is appended (not reported). Timing comes from
- * `FaceSignal.tsMs`, so the controller is deterministic under test; a wall-clock watchdog only
- * guards a stalled stream.
+ * Drives one verification: session -> stream -> align -> the oval -> screen flash -> verdict.
+ * The recorder runs from the plan to the verdict and its chunks go to the server as they are cut;
+ * the events sent at each boundary only tell the server where to look, it decides from the frames
+ * it decodes and its own clock. A session the backend created without a subject only proves
+ * liveness. Timing comes from `FaceSignal.tsMs`, so the controller is deterministic under test; a
+ * wall-clock watchdog only guards a stalled stream.
  */
 export class FaceVerifyController extends FaceFlowController {
   readonly client: LumifaceClient;
+  readonly recorder: VideoRecorder;
   readonly sessionProvider: () => Promise<FaceSession>;
   readonly clientInfo: Record<string, unknown>;
   private currentFlow: FaceFlow;
   private readonly explicitConfig: LivenessConfig | undefined;
-  private readonly random: () => number;
   private currentConfig: LivenessConfig = DEFAULT_CONFIG;
 
   session: FaceSession | null = null;
@@ -203,8 +221,7 @@ export class FaceVerifyController extends FaceFlowController {
   private unsubscribe: (() => void) | null = null;
   private watchdog: ReturnType<typeof setTimeout> | null = null;
   private busy = false;
-  private readonly streamFps: number;
-  private lastFrameAt: number | null = null;
+  private recording = false;
   private alignedSince: number | null = null;
   private challengeStartedAt: number | null = null;
   private lastFaceSeenAt: number | null = null;
@@ -215,14 +232,13 @@ export class FaceVerifyController extends FaceFlowController {
   private detector: ChallengeDetector | null = null;
 
   constructor(options: FaceVerifyOptions) {
-    super(options.source, options.capturer);
+    super(options.source);
     this.client = options.client;
+    this.recorder = options.recorder;
     this.sessionProvider = options.sessionProvider;
     this.currentFlow = options.flow ?? "verify";
     this.clientInfo = options.clientInfo ?? {};
-    this.streamFps = options.streamFps ?? 8;
     this.explicitConfig = options.config;
-    this.random = options.random ?? Math.random;
   }
 
   get flow(): FaceFlow {
@@ -245,7 +261,7 @@ export class FaceVerifyController extends FaceFlowController {
     if (this.disposed) return;
     this.currentFlow = this.session.mode === "liveness" ? "liveness" : "verify";
     try {
-      this.stream = this.client.openStream(this.session, this.clientInfo);
+      this.stream = this.client.openStream(this.session, this.clientInfo, this.recorder.format);
       this.serverPlan = await this.stream.plan;
     } catch (e) {
       const code = e instanceof Error && "reasonCode" in e ? (e as { reasonCode: string }).reasonCode : "NETWORK_ERROR";
@@ -254,9 +270,11 @@ export class FaceVerifyController extends FaceFlowController {
     }
     if (this.disposed) return;
     this.currentConfig = this.explicitConfig ?? configFromJson(this.serverPlan.clientConfig ?? this.session.clientConfig);
-    this.plan = this.planChallenges(this.serverPlan.challenges);
+    this.plan = this.serverPlan.challenges;
     this.set({ ...IDLE_STATE, phase: "aligning", hint: "noFace", challengeCount: this.plan.length });
     this.watchdog = setTimeout(() => this.finish(clientError("TIMEOUT")), this.session.ttlSeconds * 1000);
+    this.recording = true;
+    this.recorder.start((data, tsMs) => this.stream?.sendChunk(data, tsMs));
     this.unsubscribe = this.source.subscribe((s) => this.onSignal(s));
   }
 
@@ -266,48 +284,31 @@ export class FaceVerifyController extends FaceFlowController {
 
   override dispose() {
     this.unsubscribe?.();
+    this.stopRecording();
     if (this.watchdog) clearTimeout(this.watchdog);
     this.stream?.close();
     super.dispose();
   }
 
-  private planChallenges(server: Challenge[]): Challenge[] {
-    const hasTurn = server.some((c) => c === "turn_left" || c === "turn_right");
-    if (hasTurn || !this.config.parallaxWhenNoTurn || this.config.parallaxMinShift <= 0) return server;
-    return [...server, this.random() < 0.5 ? "turn_left" : "turn_right"];
-  }
-
-  private isServerChallenge(i: number) {
-    return i < (this.serverPlan?.challenges.length ?? 0);
+  private stopRecording() {
+    if (!this.recording) return;
+    this.recording = false;
+    this.recorder.stop();
   }
 
   private finish(r: VerifyResult) {
     if (this.disposed || isDone(this.state)) return;
     this.unsubscribe?.();
+    this.stopRecording();
     if (this.watchdog) clearTimeout(this.watchdog);
     if (this.state.phase !== "uploading") this.stream?.close();
     const result = this.session && !r.sessionId ? { ...r, sessionId: this.session.id } : r;
     this.set({ phase: result.ok ? "success" : "failed", result, hint: null });
   }
 
-  /** One frame per 1/fps of signal time, whatever the phase, so the server sees the whole flow. */
-  /** One frame per 1/fps of signal time, whatever the phase. `now` skips the limit: a blink is closed
-   *  for ~100 ms, shorter than the gap between frames, so the shut-eyes frame goes the moment it is seen. */
-  private streamFrame(s: FaceSignal, now = false) {
-    if (!this.stream) return;
-    if (!now && this.lastFrameAt !== null && s.tsMs - this.lastFrameAt < 1000 / this.streamFps) return;
-    this.lastFrameAt = s.tsMs;
-    void this.capturer.captureJpeg().then((jpeg) => this.stream?.sendFrame(jpeg, s.tsMs)).catch(() => {});
-  }
-
-  private eyesShut(s: FaceSignal): boolean {
-    return this.state.phase === "challenge" && this.state.challenge === "blink" && (eyeOpen(s) ?? 1) <= this.config.eyeClosedThreshold;
-  }
-
   private onSignal(s: FaceSignal) {
     if (this.busy || this.disposed || isDone(this.state)) return;
     if (isPresent(s)) this.lastFaceSeenAt = s.tsMs;
-    this.streamFrame(s, this.eyesShut(s));
     switch (this.state.phase) {
       case "aligning":
         this.align(s);
@@ -321,8 +322,15 @@ export class FaceVerifyController extends FaceFlowController {
     }
   }
 
+  /** The widest a face may be at alignment: the oval's start, when the plan has one. */
+  private alignMaxWidth(): number {
+    const oval = this.ovalBox();
+    const limit = this.config.maxFaceWidthFraction;
+    return oval ? Math.min(limit, boxInRegion(oval, this.visibleRegion).width * this.config.moveStartMaxRatio) : limit;
+  }
+
   private align(s: FaceSignal) {
-    const hint = alignHint(s, this.config, this.visibleRegion);
+    const hint = alignHint(s, this.config, this.visibleRegion, this.alignMaxWidth());
     if (hint) {
       this.alignedSince = null;
       this.set({ hint });
@@ -336,14 +344,32 @@ export class FaceVerifyController extends FaceFlowController {
     }
   }
 
+  /** The plan's oval in frame-normalised coordinates. Its width is a fraction of the frame's shorter
+   *  side (faces scale with it whatever the orientation), so both fractions depend on the aspect. */
+  private ovalBox(): Box | null {
+    const o = this.serverPlan?.oval;
+    if (!o) return null;
+    const landscape = this.frameAspect > 1;
+    const width = landscape ? o.width / this.frameAspect : o.width;
+    const height = landscape ? o.width * o.heightRatio : o.width * o.heightRatio * this.frameAspect;
+    return { left: o.cx - width / 2, top: o.cy - height / 2, width, height };
+  }
+
   private startChallenge(i: number, s: FaceSignal) {
     const c = this.plan[i];
-    this.detector = detectorFor(c, this.config);
+    const oval = c === "face_move" ? this.ovalBox() : null;
+    this.detector = detectorFor(c, this.config, oval ?? undefined);
     this.detector.feed(s);
     this.challengeStartedAt = s.tsMs;
     this.settleUntil = null;
     this.doneReported = false;
-    this.set({ phase: "challenge", challenge: c, challengeIndex: i, hint: null });
+    this.set({
+      phase: "challenge",
+      challenge: c,
+      challengeIndex: i,
+      hint: null,
+      ...(oval ? { target: boxInRegion(oval, this.visibleRegion) } : {}),
+    });
   }
 
   private faceLost(s: FaceSignal): boolean {
@@ -366,14 +392,14 @@ export class FaceVerifyController extends FaceFlowController {
       const i = this.state.challengeIndex;
       if (!this.doneReported) {
         this.doneReported = true;
-        if (this.isServerChallenge(i)) this.stream?.event("challenge_done", s.tsMs, i);
+        this.stream?.event("challenge_done", s.tsMs, i);
       }
       const next = i + 1;
       if (next < this.plan.length) {
         this.startChallenge(next, s);
         return;
       }
-      const hint = alignHint(s, this.config, this.visibleRegion);
+      const hint = frontalHint(s, this.config);
       if (hint) {
         this.set({ hint });
         return;
@@ -385,9 +411,9 @@ export class FaceVerifyController extends FaceFlowController {
       this.guard(() => this.upload());
       return;
     }
-    // The window closes after the settle, so the frames that show the gesture ending (eyes
-    // open again after a blink, head back) are inside it rather than in the next one.
+    // The window closes after the settle, so the frames with the face at rest in the oval are inside it.
     if (this.detector!.feed(s)) this.settleUntil = s.tsMs + this.config.settleAfterChallengeMs;
+    else if (this.detector instanceof FaceMoveDetector) this.set({ hint: this.detector.hint });
   }
 
   private startFlash(i: number, tsMs: number) {
@@ -414,6 +440,7 @@ export class FaceVerifyController extends FaceFlowController {
   private async upload() {
     this.unsubscribe?.();
     this.set({ phase: "uploading", hint: null });
+    this.stopRecording();
     try {
       this.finish(await this.stream!.end());
     } catch (e) {
@@ -454,9 +481,12 @@ export class FaceEnrollController extends FaceFlowController {
   private busy = false;
   private alignedSince: number | null = null;
 
+  readonly capturer: FrameCapturer;
+
   constructor(options: FaceEnrollOptions) {
-    super(options.source, options.capturer);
+    super(options.source);
     this.options = options;
+    this.capturer = options.capturer;
     this.config = options.config ?? DEFAULT_CONFIG;
   }
 

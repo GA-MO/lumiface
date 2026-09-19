@@ -13,7 +13,7 @@ Whoever can be verified: an employee, a customer, a member. Identified by your o
 
 ## Session and flow
 
-A session is one attempt. It holds the challenges, the flash colours, a TTL and the client tunables. The **flow** decides what the session proves:
+A session is one attempt. It holds the oval, the flash colours, a TTL and the client tunables. The **flow** decides what the session proves:
 
 | Flow | subject_id | Proves |
 |---|---|---|
@@ -25,7 +25,17 @@ A session is one attempt. It holds the challenges, the flash colours, a TTL and 
 
 ## Stream
 
-The app opens a WebSocket for the session, receives the plan (challenges, flash colours) and then streams JPEG frames continuously, about eight a second, while it runs the plan. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own landmarks inside each window to confirm the blink, smile, turn or nod, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof, identity and consistency on the key frames it picked. The device's detectors exist to guide the person; they decide nothing.
+The app opens a WebSocket for the session, receives the plan (the `face_move` challenge, its oval, the flash colours) and then records the camera and streams the recording up in chunks (VP8 or H.264 video; a plain client may send JPEG frames instead) while it runs the plan. The server decodes the video into frames, at the camera's rate. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own face detector inside the challenge window to confirm the face grew into the oval, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof, identity and consistency on the key frames it picked. The device's detector exists to guide the person; it decides nothing.
+
+## The challenge
+
+There is one, `face_move`:
+
+| The person | The device guides with | The server checks |
+|---|---|---|
+| holds still at a normal selfie distance (the alignment says "move back" while the face is wider than the oval's start, `move_start_max_ratio` of the oval, or than `max_face_width_fraction`), then moves closer until the face fills the oval the server drew (`oval_width_fraction` of the frame's shorter side), then holds | a face box from BlazeFace (web, Android) or Apple Vision (iOS): the walk starts from the aligned position (narrower than `move_start_max_ratio` of the oval, which alignment already guarantees) and ends with "hold still" once the box is `oval_min_fill` wide and centred for `oval_hold_ms` | the face box grew (`move_min_growth`) into the oval (`move_min_fill`), centred, inside a window of `min_challenge_ms`..`max_challenge_ms` on its own clock; the closest frame is the key frame every later gate scores |
+
+No gesture is asked for: the device only sees a box, never eyes, mouth or landmarks. The screen flash and the passive gates carry the anti-spoof; a rigid mask is left to them ([security](/docs/security)).
 
 ## Policy
 
@@ -35,12 +45,10 @@ Every threshold and every client tunable, resolved per request as environment de
 
 | Check | Where | Beats |
 |---|---|---|
-| Blink timing, smile hold, turn and nod angles | device (guidance) and **server** (from its own landmarks on the streamed frames) | scripted photos, slow videos, a patched client that skips its checks |
-| Nose parallax during a turn | device | a flat print or screen rotated in front of the camera |
+| Face moved from far into the oval | device (guidance) and **server** (face box growth and fit on the streamed frames) | a still image, a replay that cannot follow the oval in time, a patched client that skips its checks |
 | Timing order and durations | server, on its own clock (device stamps only place frames into windows) | replayed recordings responding at random times, forged timestamps |
-| A frozen or repeated feed | server | a still image streamed as video |
+| A frozen or repeated feed | server | a still image or a frozen feed recorded as video |
 | MiniFASNet ensemble | server | prints, screens with visible bezels |
 | CVPR-2024 ResNet50 on a face crop | server | bezel-free screen replay |
 | Screen-flash reflection and locality | server | any replay that cannot know the colours, phone screens that reflect the whole sheet |
-| Smile re-check from 68 landmarks | server | rigid latex or silicone masks |
 | ArcFace match and cross-frame consistency | server | the wrong person, swapping people mid-session |

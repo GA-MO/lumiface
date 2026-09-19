@@ -8,48 +8,57 @@ import 'dart:ui_web' as ui_web;
 import 'package:flutter/widgets.dart';
 import 'package:web/web.dart' as web;
 
+import '../liveness/signal_source.dart';
 import '../models.dart';
 import 'camera_source.dart';
 
 CameraFaceSource createPlatformCameraFaceSource({CameraFacing facing = CameraFacing.front}) =>
-    MediaPipeCameraSource(facing: facing);
+    BlazeFaceCameraSource(facing: facing);
 
-const _glueAsset = 'packages/lumiface/assets/lumiface_mediapipe.js';
-const _glueGlobal = 'lumifaceMediaPipe';
+const _glueAsset = 'packages/lumiface/assets/lumiface_blazeface.js';
+const _modelAsset = 'packages/lumiface/assets/face_detection_short/model.json';
+const _glueGlobal = 'lumifaceBlazeFace';
 
-/// getUserMedia + MediaPipe FaceLandmarker for Flutter web.
+/// getUserMedia + TensorFlow.js BlazeFace for the signals, MediaRecorder for the stream the
+/// server judges, for Flutter web.
 ///
-/// The JS glue (`assets/lumiface_mediapipe.js`, loaded from the package assets)
-/// imports `@mediapipe/tasks-vision` from jsDelivr and the face_landmarker
-/// model from Google's CDN; pass [tasksVisionUrl] and [modelUrl] to self-host.
-/// Blendshapes give eye-open and smile probabilities, the facial transformation
-/// matrix gives yaw/pitch, nose tip and eye centres give the parallax.
-class MediaPipeCameraSource implements CameraFaceSource {
-  MediaPipeCameraSource({
+/// The JS glue (`assets/lumiface_blazeface.js`, loaded from the package assets) imports
+/// tfjs-core, the WASM and CPU backends and the converter from jsDelivr and loads the short-range
+/// BlazeFace graph model from the package assets; pass [tfjsUrl], [wasmUrl] and [modelUrl] to
+/// self-host. The largest box becomes the [FaceSignal]; BlazeFace reports no head angles.
+class BlazeFaceCameraSource implements CameraFaceSource {
+  BlazeFaceCameraSource({
     this.facing = CameraFacing.front,
     this.jpegQuality = 0.9,
-    this.tasksVisionUrl,
+    this.tfjsUrl,
+    this.wasmUrl,
     this.modelUrl,
-    this.delegate = 'GPU',
-    this.yawSign = 1,
+    this.backend = 'wasm',
     this.detectIntervalMs = 66,
+    this.chunkMs = 250,
+    this.videoBitsPerSecond = 1500000,
   });
 
   final CameraFacing facing;
   final double jpegQuality;
-  final String? tasksVisionUrl;
+  final String? tfjsUrl;
+  final String? wasmUrl;
   final String? modelUrl;
-  final String delegate;
 
-  /// Flip to -1 if a head turn to the user's left reports negative yaw.
-  final double yawSign;
+  /// "wasm" (the default) with the CPU backend as the fallback, or "cpu".
+  final String backend;
   final int detectIntervalMs;
+
+  /// MediaRecorder chunk length and target bit rate of the recording.
+  final int chunkMs;
+  final int videoBitsPerSecond;
+  StreamFormat _format = StreamFormat.webm;
 
   final _signals = StreamController<FaceSignal>.broadcast();
   final String viewType = 'lumiface-video-${DateTime.now().microsecondsSinceEpoch}';
   late final web.HTMLVideoElement _video = web.HTMLVideoElement();
   web.MediaStream? _stream;
-  JSObject? _landmarker;
+  JSObject? _detector;
   Timer? _timer;
   bool _initialized = false;
   bool _detecting = false;
@@ -92,12 +101,32 @@ class MediaPipeCameraSource implements CameraFaceSource {
     await _video.play().toDart;
     await _loadGlue();
     final options = JSObject()
-      ..['delegate'] = delegate.toJS
-      ..['tasksVisionUrl'] = tasksVisionUrl?.toJS
-      ..['modelUrl'] = modelUrl?.toJS;
+      ..['backend'] = backend.toJS
+      ..['tfjsUrl'] = tfjsUrl?.toJS
+      ..['wasmUrl'] = wasmUrl?.toJS
+      ..['modelUrl'] = (modelUrl ?? ui_web.assetManager.getAssetUrl(_modelAsset)).toJS;
     final glue = web.window.getProperty<JSObject>(_glueGlobal.toJS);
-    _landmarker = (await glue.callMethod<JSPromise<JSObject>>('create'.toJS, options).toDart);
+    _detector = (await glue.callMethod<JSPromise<JSObject>>('create'.toJS, options).toDart);
+    final rec = glue.callMethod<JSObject?>('recordingFormat'.toJS);
+    if (rec == null) throw StateError('this browser cannot record video (MediaRecorder)');
+    _format = StreamFormat.values.byName(rec.getProperty<JSString>('format'.toJS).toDart);
     _initialized = true;
+  }
+
+  @override
+  StreamFormat get format => _format;
+
+  @override
+  void startRecording(void Function(List<int> data, int tsMs) onChunk) {
+    final glue = web.window.getProperty<JSObject>(_glueGlobal.toJS);
+    final now = (() => _clock.elapsedMilliseconds.toJS).toJS;
+    final deliver = ((JSArrayBuffer buf, JSNumber ts) => onChunk(Uint8List.view(buf.toDart), ts.toDartInt)).toJS;
+    glue.callMethodVarArgs('startRecording'.toJS, [_video, chunkMs.toJS, videoBitsPerSecond.toJS, now, deliver]);
+  }
+
+  @override
+  void stopRecording() {
+    web.window.getProperty<JSObject>(_glueGlobal.toJS).callMethod('stopRecording'.toJS);
   }
 
   Future<void> _loadGlue() async {
@@ -126,15 +155,15 @@ class MediaPipeCameraSource implements CameraFaceSource {
     _timer = null;
   }
 
-  void _tick() {
-    if (_detecting || _landmarker == null || _signals.isClosed) return;
+  Future<void> _tick() async {
+    if (_detecting || _detector == null || _signals.isClosed) return;
     _detecting = true;
+    final ts = _clock.elapsedMilliseconds;
     try {
-      final ts = _clock.elapsedMilliseconds;
-      final json = _landmarker!.callMethod<JSString>('detect'.toJS, _video, ts.toJS).toDart;
-      _signals.add(_parse(json, ts));
+      final json = (await _detector!.callMethod<JSPromise<JSString>>('detect'.toJS, _video).toDart).toDart;
+      if (!_signals.isClosed) _signals.add(_parse(json, ts));
     } catch (_) {
-      _signals.add(FaceSignal.none(_clock.elapsedMilliseconds));
+      if (!_signals.isClosed) _signals.add(FaceSignal.none(ts));
     } finally {
       _detecting = false;
     }
@@ -143,25 +172,15 @@ class MediaPipeCameraSource implements CameraFaceSource {
   FaceSignal _parse(String json, int ts) {
     final faces = (jsonDecode(json) as Map<String, dynamic>)['faces'] as List;
     if (faces.isEmpty) return FaceSignal.none(ts);
-    final f = faces.first as Map<String, dynamic>;
-    final box = (f['box'] as List).cast<num>();
-    Offset? point(String key) {
-      final p = (f[key] as List?)?.cast<num>();
-      return p == null ? null : Offset(p[0].toDouble(), p[1].toDouble());
+    List<num>? best;
+    for (final f in faces) {
+      final box = ((f as Map<String, dynamic>)['box'] as List).cast<num>();
+      if (best == null || box[2] * box[3] > best[2] * best[3]) best = box;
     }
-    final yaw = (f['yaw'] as num?)?.toDouble();
     return FaceSignal(
       tsMs: ts,
       faceCount: faces.length,
-      box: Rect.fromLTWH(box[0].toDouble(), box[1].toDouble(), box[2].toDouble(), box[3].toDouble()),
-      eyeOpenLeft: (f['eyeOpenLeft'] as num?)?.toDouble(),
-      eyeOpenRight: (f['eyeOpenRight'] as num?)?.toDouble(),
-      smile: (f['smile'] as num?)?.toDouble(),
-      yaw: yaw == null ? null : yaw * yawSign,
-      pitch: (f['pitch'] as num?)?.toDouble(),
-      nose: point('nose'),
-      leftEye: point('leftEye'),
-      rightEye: point('rightEye'),
+      box: Rect.fromLTWH(best![0].toDouble(), best[1].toDouble(), best[2].toDouble(), best[3].toDouble()),
     );
   }
 
@@ -183,9 +202,10 @@ class MediaPipeCameraSource implements CameraFaceSource {
   @override
   Future<void> dispose() async {
     await stopStream();
+    stopRecording();
     await _signals.close();
-    _landmarker?.callMethod('close'.toJS);
-    _landmarker = null;
+    _detector?.callMethod('close'.toJS);
+    _detector = null;
     final tracks = _stream?.getTracks().toDart ?? const [];
     for (final t in tracks) {
       t.stop();

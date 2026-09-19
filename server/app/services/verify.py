@@ -64,25 +64,9 @@ def enroll(photo: bytes) -> EnrollResult:
                         details={"yaw": face.yaw, "pitch": face.pitch, **sp.per_model, "cvpr": sp.cvpr})
 
 
-def _pose_ok(challenge: str, face: FaceResult) -> bool:
-    s = get_policy()
-    if challenge in ("turn_left", "turn_right"):
-        if abs(face.yaw) < s.turn_min_yaw:
-            return False
-        if s.turn_strict_direction:
-            # Observed on un-mirrored uploads: insightface yaw is positive when the
-            # subject turns to their own right (check-in #1 on the Android emulator: +45).
-            want_positive = challenge == "turn_right"
-            return (face.yaw > 0) == want_positive
-        return True
-    if challenge == "nod":
-        return abs(face.pitch) >= s.nod_min_pitch
-    return True
-
-
 def _consistency(faces: list[FaceResult]) -> tuple[float, bool]:
     """Same person in every frame. Frontal frames must agree closely; a frame taken
-    mid turn/nod only has to clear the looser pose threshold against each other frame."""
+    with the head turned away only has to clear the looser pose threshold against each other frame."""
     s = get_policy()
     frontal = [abs(f.yaw) <= s.pose_frame_max_angle and abs(f.pitch) <= s.pose_frame_max_angle for f in faces]
     worst, ok = 1.0, True

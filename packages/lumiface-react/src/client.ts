@@ -4,6 +4,7 @@ import {
   clientError,
   type FaceSession,
   type StreamEventName,
+  type StreamFormat,
   type StreamPlan,
   type Subject,
   type VerifyResult,
@@ -42,7 +43,7 @@ export class LumifaceClient {
    * Opens the session's stream. The server answers with the plan; the controller then sends frames
    * and events and finally `end()`s for the verdict.
    */
-  openStream(session: FaceSession, clientInfo: Record<string, unknown> = {}): VerifyStream {
+  openStream(session: FaceSession, clientInfo: Record<string, unknown> = {}, format: StreamFormat = "jpeg"): VerifyStream {
     if (!this.WebSocketImpl) throw new Error("no WebSocket implementation available");
     const url = `${this.baseUrl.replace(/^http/, "ws")}/v1/sessions/${session.id}/stream`;
     const ws = new this.WebSocketImpl(url);
@@ -65,7 +66,7 @@ export class LumifaceClient {
       rejectPlan(new LumifaceError(r.reasonCode, r));
       resolveEnd?.(r);
     };
-    ws.onopen = () => ws.send(JSON.stringify({ type: "hello", token: session.token, client: clientInfo }));
+    ws.onopen = () => ws.send(JSON.stringify({ type: "hello", token: session.token, client: clientInfo, format }));
     ws.onmessage = (m) => {
       if (typeof m.data !== "string") return;
       const j = JSON.parse(m.data) as Record<string, unknown>;
@@ -80,9 +81,9 @@ export class LumifaceClient {
     const open = () => ws.readyState === ws.OPEN;
     return {
       plan,
-      sendFrame: (jpeg, tsMs) => {
+      sendChunk: (data, tsMs) => {
         if (!open() || ws.bufferedAmount > MAX_QUEUED_BYTES) return;
-        void jpeg.arrayBuffer().then((buf) => {
+        void (data instanceof ArrayBuffer ? Promise.resolve(data) : data.arrayBuffer()).then((buf) => {
           if (!open()) return;
           const out = new Uint8Array(8 + buf.byteLength);
           new DataView(out.buffer).setBigUint64(0, BigInt(Math.max(0, Math.round(tsMs))));

@@ -40,12 +40,12 @@ The camera preview and the flash colour stay underneath and on top respectively;
 
 ## Headless: the controller alone
 
-`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`), a `FrameCapturer` (JPEG bytes on demand — it streams about eight a second to the server while the flow runs) and the `sessionProvider` that asks your backend for the session, observe `state`, and call `start()`:
+`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`), a `VideoRecorder` (`format`, `startRecording(onChunk)`, `stopRecording()`: it records from the plan to the verdict and every chunk goes to the server) and the `sessionProvider` that asks your backend for the session, observe `state`, and call `start()`:
 
 ```dart
-final source = createCameraFaceSource();           // ML Kit or MediaPipe for the platform
+final source = createCameraFaceSource();           // TFLite BlazeFace, Apple Vision or tfjs BlazeFace for the platform
 await source.initialize();
-final c = FaceVerifyController(source: source, capturer: source, client: client, sessionProvider: faceSession);
+final c = FaceVerifyController(source: source, recorder: source, client: client, sessionProvider: faceSession);
 c.state.addListener(() {
   final s = c.state.value;
   if (s.phase == LivenessPhase.flash) fillScreenWith(s.flashColor!);
@@ -55,12 +55,12 @@ await source.startStream();
 await c.start();
 ```
 
-`LivenessState`: `phase` (idle, starting, aligning, challenge, flash, uploading, success, failed), `hint` (noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill), `challenge`, `challengeIndex`, `challengeCount`, `flashColor`, `flashIndex`, `result`, plus `progress` (0..1) and `isDone`.
+`LivenessState`: `phase` (idle, starting, aligning, challenge, flash, uploading, success, failed), `hint` (noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill), `challenge`, `challengeIndex`, `challengeCount`, `target` (the server's oval for a `faceMove` challenge, as fractions of the preview — draw it in place of your guide), `flashColor`, `flashIndex`, `result`, plus `progress` (0..1) and `isDone`.
 
-The flash step **must** fill the whole screen with `flashColor` for at least `session.flashHoldMs`; the server measures the reflection on the cheeks.
+The flash step **must** fill the whole screen with `flashColor` for at least the plan's `flashHoldMs` (the controller keeps each colour up that long and advances `flashIndex`); the server measures the reflection on the cheeks.
 
 `FaceEnrollController` has the same shape for enrolment. Both are deterministic under test: timing comes from `FaceSignal.tsMs`, so the package tests drive them with synthetic signals and a fake client (`test/fakes.dart`).
 
 ## Your own camera or detector
 
-Implement `CameraFaceSource` (`initialize`, `startStream` / `stopStream`, `dispose`, `signals`, `captureJpeg`, `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`, `isInitialized`) and pass it through `sourceFactory`. The widget tests do this with a fake camera to run the whole overlay without a device.
+Implement `CameraFaceSource` (`initialize`, `startStream` / `stopStream`, `dispose`, `signals`, `format` + `startRecording` / `stopRecording` (the `VideoRecorder`; `StreamFormat.jpeg` with one JPEG per chunk is the simplest), `captureJpeg` (the enrolment photo), `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`, `isInitialized`) and pass it through `sourceFactory`. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (normalised to the upright frame) and, if your detector has them, `yaw` and `pitch` in degrees (null otherwise; they only drive the "look straight" hint). Any detector that finds a face box will do; the server judges from its own detector. The widget tests do this with a fake camera to run the whole overlay without a device.

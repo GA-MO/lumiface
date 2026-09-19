@@ -15,11 +15,16 @@ FaceVerifyView(
 ```
 
 - `FaceVerifyView`: camera + flow with a default overlay; `theme`, `strings`, `promptBuilder`, `progressBuilder`, `resultBuilder`, `flashBuilder` or `overlayBuilder` for your own UI.
-- `FaceVerifyController` / `FaceEnrollController`: the headless state machines; feed any `FaceSignalSource` + `FrameCapturer`.
+- `FaceVerifyController` / `FaceEnrollController`: the headless state machines; feed any `FaceSignalSource` + `VideoRecorder` (verify) or `FrameCapturer` (enrol).
 - `LumifaceClient`: the device side — uploads a session's frames or one enrolment photo, with tokens your backend hands it through `sessionProvider` / `enrolTokenProvider`. It cannot take the project key.
 - No backend client on purpose: the key's side is REST from your backend (`POST /v1/sessions`, `GET /v1/sessions/{id}`); `examples/backend` in the repository is a complete one.
 - `LivenessConfig` follows the project's policy (`client_config` in every session) unless you pass one.
 
+Device tests of the encoders (no camera needed): `cd examples/flutter/android && ./gradlew :lumiface:connectedDebugAndroidTest`
+runs the MediaCodec path on an attached phone or emulator (`android/src/androidTest`), `xcodebuild test -workspace
+examples/flutter/ios/Runner.xcworkspace -scheme Runner -destination id=<udid> -only-testing:RunnerTests` the VideoToolbox
+path on an iPhone; both write the access units to the app's files for `server/scripts/check_h264.py`.
+
 Docs: `website/content/docs/flutter`. Example app: `examples/flutter` in the repository.
 
-iOS: `NSCameraUsageDescription`, platform ≥ 15.5. Android: minSdk ≥ 23; release builds work as they are, the package's `android/` module ships the ProGuard keep rules ML Kit needs under R8 (test on a phone with `--release`, debug builds hide the problem). Web: MediaPipe tasks-vision is loaded from jsDelivr by the package asset `assets/lumiface_mediapipe.js`; pass `MediaPipeCameraSource(tasksVisionUrl:, modelUrl:)` through `sourceFactory` to self-host.
+The stream the server judges is H.264 video from the platform encoder (MediaCodec, VideoToolbox), ~30 fps, cut into one access unit per message; on the web MediaRecorder's WebM (Safari: MP4). Detectors: iOS uses Apple Vision (`ios/`, `VNDetectFaceRectanglesRequest`, box plus yaw and pitch), Android TensorFlow Lite BlazeFace bundled in `android/` (box only, with the R8 keep rules; test on a phone with `--release`, debug builds hide R8 problems), the web TensorFlow.js BlazeFace loaded from jsDelivr by the package asset `assets/lumiface_blazeface.js` with the model in `assets/face_detection_short/`; pass `BlazeFaceCameraSource(tfjsUrl:, wasmUrl:, modelUrl:)` through `sourceFactory` to self-host. iOS: `NSCameraUsageDescription`, platform ≥ 15.5. Android: minSdk ≥ 23.

@@ -5,17 +5,20 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import '../liveness/signal_source.dart';
 import '../models.dart';
 import '_http.dart';
 
-/// One verification in flight: frames go up continuously, events tell the server
-/// where to look, [end] resolves with the verdict. The server clocks everything itself.
+/// One verification in flight: video chunks go up as they are recorded, events tell the
+/// server where to look, [end] resolves with the verdict. The server decodes the video into
+/// frames and clocks everything itself.
 abstract class VerifyStream {
   /// The server's plan, or a [LumifaceException] when it refused the session.
   Future<StreamPlan> get plan;
 
-  /// Queues a frame; frames are dropped rather than buffered when the link is congested.
-  void sendFrame(List<int> jpeg, int tsMs);
+  /// Queues a chunk stamped with the device time of its first frame; chunks are dropped rather
+  /// than buffered when the link is congested.
+  void sendChunk(List<int> data, int tsMs);
 
   void event(StreamEventName name, int tsMs, {int? index});
 
@@ -39,10 +42,11 @@ class LumifaceClient {
   final Dio _dio;
 
   /// Opens the session's stream. The server answers with the plan; the controller
-  /// then sends frames and events and finally [VerifyStream.end]s for the verdict.
-  VerifyStream openStream(FaceSession session, {Map<String, dynamic> clientInfo = const {}}) {
+  /// then sends chunks and events and finally [VerifyStream.end]s for the verdict.
+  VerifyStream openStream(FaceSession session,
+      {Map<String, dynamic> clientInfo = const {}, StreamFormat format = StreamFormat.jpeg}) {
     final url = Uri.parse('${_baseUrl.replaceFirst(RegExp(r'^http'), 'ws')}/v1/sessions/${session.id}/stream');
-    return _SocketStream(WebSocketChannel.connect(url), session, clientInfo);
+    return _SocketStream(WebSocketChannel.connect(url), session, clientInfo, format);
   }
 
   /// Enrols one photo as the subject named in [enrolToken].
@@ -54,14 +58,14 @@ class LumifaceClient {
   }
 }
 
-const _maxQueuedFrames = 4; // beyond this, drop frames instead of adding latency
+const _maxQueuedChunks = 8; // beyond this, drop chunks instead of adding latency
 
 class _SocketStream implements VerifyStream {
-  _SocketStream(this._channel, this._session, Map<String, dynamic> clientInfo) {
+  _SocketStream(this._channel, this._session, Map<String, dynamic> clientInfo, StreamFormat format) {
     _channel.ready.then(
       (_) {
         _open = true;
-        _send(jsonEncode({'type': 'hello', 'token': _session.token, 'client': clientInfo}));
+        _send(jsonEncode({'type': 'hello', 'token': _session.token, 'client': clientInfo, 'format': format.wire}));
       },
       onError: (Object e) => _settle(VerifyResult.clientError('NETWORK_ERROR', e.toString())),
     );
@@ -121,18 +125,18 @@ class _SocketStream implements VerifyStream {
   }
 
   @override
-  void sendFrame(List<int> jpeg, int tsMs) {
-    if (!_open || _inFlight >= _maxQueuedFrames) return;
-    final out = Uint8List(8 + jpeg.length);
+  void sendChunk(List<int> data, int tsMs) {
+    if (!_open || _inFlight >= _maxQueuedChunks) return;
+    final out = Uint8List(8 + data.length);
     // Big-endian 64-bit client time, written as two words: dart2js has no setUint64.
     final ms = tsMs < 0 ? 0 : tsMs;
     ByteData.view(out.buffer)
       ..setUint32(0, ms ~/ 0x100000000)
       ..setUint32(4, ms % 0x100000000);
-    out.setRange(8, out.length, jpeg);
+    out.setRange(8, out.length, data);
     _inFlight++;
     _channel.sink.add(out);
-    // The sink has no backpressure signal; count the frame as delivered on the next turn.
+    // The sink has no backpressure signal; count the chunk as delivered on the next turn.
     scheduleMicrotask(() => _inFlight--);
   }
 

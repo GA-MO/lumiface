@@ -7,28 +7,38 @@ Lumiface is not certified liveness (no ISO 30107-3 evaluation). It is a layered 
 
 ## Layers
 
-1. **Random challenges with timing** on the device: a blink must last 40–600 ms, each challenge at least 300 ms and at most 5 s, the whole session at least 1.5 s. A prerecorded video reacts at random times; a still photo cannot blink.
-2. **Nose parallax** during every session (a client-only turn is added when the server picked none): a real head shifts the nose against the eyes by about 0.11–0.15 at 25° of yaw; a rotated print or screen shifts it by 0.026.
-3. **Passive anti-spoof** on the server for every frame: MiniFASNet V2 + V1SE (needs a hard floor per frame and a mean), then the CVPR-2024 ResNet50 on a face crop with margin 0.3, which catches bezel-free screen replay (replay ≤ 0.015 against genuine ≥ 0.30).
-4. **Screen flash**: three random saturated colours chosen by the server, each held on the screen while frames keep streaming; the hue shift on the cheeks across each colour's window must correlate with the commanded sequence and beat every other permutation, and the surroundings may reflect at most 0.8× what the face does (real faces 0.47–0.52 on a phone, 0.04 on a laptop; a replayed phone screen 1.15–2.31 because the whole sheet reflects).
-5. **Smile re-check** from 68 landmarks: a rigid mask passes both passive gates and cannot smile. Mouth width gain ≥ 1.08 or corner lift ≥ 0.04 (genuine 1.14–1.24 and 0.068–0.073).
-6. **Identity**: every frame ≥ `match_threshold` against the enrolled embedding, and every pair of frames ≥ 0.60 (0.40 when one is mid turn or nod) against each other.
+1. **The oval** (`face_move`, the only challenge): the server draws an oval and the person holds still at a normal selfie distance, then moves closer until the face fills it, then holds. The device guides with a face box (BlazeFace on the web and Android, Apple Vision on iOS) and decides nothing; the server reads its own face boxes on the streamed frames: the face must grow by `move_min_growth` (1.15×, from the farthest it was in the window, since a person who aligned close first backs off and then walks in) into `move_min_fill` (75 % of the oval on the server's own box, against 85 % on the device's: InsightFace's box came out up to 7 % narrower than BlazeFace's on a webcam), centred, within the timing limits (the window 300 ms – 10 s, the whole session ≥ 1.5 s). A still image cannot grow into the oval on cue and a replayed video does not follow it in time; the frame that fills the oval is also the closest, sharpest face every later gate scores.
+2. **Passive anti-spoof** on the server for every frame: MiniFASNet V2 + V1SE (needs a hard floor per frame and a mean), then the CVPR-2024 ResNet50 on a face crop with margin 0.3, which catches bezel-free screen replay (replay ≤ 0.015 against genuine ≥ 0.30).
+3. **Screen flash**: three random saturated colours chosen by the server, each held on the screen while frames keep streaming; the hue shift on the cheeks across each colour's window must correlate with the commanded sequence and beat every other permutation, and the surroundings may reflect at most 0.8× what the face does (real faces 0.47–0.52 on a phone, 0.04 on a laptop; a replayed phone screen 1.15–2.31 because the whole sheet reflects).
+4. **Identity**: every frame ≥ `match_threshold` against the enrolled embedding, and every pair of frames ≥ 0.60 (0.40 when one is turned away) against each other.
 
 ## Measured results
 
 | Material | Result |
 |---|---|
-| Genuine (AxonData 14 sessions, team phones, emulator, MacBook) | pass |
-| Phone and monitor replay (12) | 0 pass |
+| Genuine (AxonData 14 sessions, team phones, emulator, MacBook; the oval flow on 2026-09-19: 27 sessions on a Galaxy S25+, Chrome and an iPhone 12, the last 6 over video at ~30 fps) | pass (one Chrome session at server fill 0.79 set the 0.75 floor) |
+| Phone and monitor replay (12; plus 10 videos of the person walking into the oval, replayed on a phone screen, 2026-09-19) | 0 pass: most passed the oval (growth 1.2–2.4) and were refused by the flash's locality (1.5–8.6); one fell short of the oval (`MOVEMENT_MISMATCH`) |
 | Cut-outs (5), paper masks (5) | 0 pass |
-| Latex (3), silicone (3) masks | pass both passive gates; stopped only by the smile challenge |
-| Still photo rotated in front of the camera | never satisfies the turn (parallax) |
+| Latex (3), silicone (3) masks | pass both passive gates and are **not stopped**: the flow has no gesture, so a mask worn by a live person passes (the earlier smile re-check was removed with the gestures on 2026-09-18) |
+| Still photo moved towards the camera | not measured with the oval flow; a still streamed from a fixed position fails `MOVEMENT_MISMATCH` (growth 1.0, API tests), one carried into the oval is left to the passive gates and the flash |
+
+## Without the flash
+
+`flash_count: 0` runs the oval alone. That is a faster check for people who cannot look at flashing colours, and a
+weaker one: on 2026-09-19 every phone-screen replay of a person walking into the oval passed the oval itself and was
+stopped by the flash. Replaying the same ten attack sessions with `flash_enforce: false` shows what is left without
+it: nine were still refused by MiniFASNet (the phone screen scores 0.000–0.0003 on every key frame from a phone
+camera; from the MacBook webcam two of the three key frames scored 0.82–0.90 and only the per-frame hard floor,
+0.07 and 0.0005 on the far frame, caught them) and one by `MOVEMENT_MISMATCH`. So the passive gates held against a
+phone-screen replay, with a thin margin on a webcam, and nothing at all stands against injected video of the person
+walking in (a synthetic camera did exactly that in a test the same day and was stopped only by the flash's colours).
+Offer the no-flash mode as an accessibility path, on a project of its own with `strict` thresholds, not as the default.
 
 ## Not covered
 
-- **A compromised device.** Every server gate scores the pixels the device sends, and the device learns the challenges and the flash colours from the plan so it can run the flow. Since the flow is streamed, the server judges everything from its own evidence: it clocks the session itself, confirms each blink, smile, turn or nod from its own landmarks on the frames inside each window, reads the flash reflection from the frames of each colour window, and rejects a feed that repeats bytes. A patched client therefore cannot skip checks or forge timings; what it can still do is *inject video*: play prepared footage of the victim performing the plan, with the colours painted on, through a virtual camera fast enough to follow the plan live. What is left against that is the passive anti-spoof on every key frame, the consistency of the injected footage with itself, and the ArcFace match. The device tokens do not change this: they bound *what* a leaked credential can do, not *whether* the device is honest. Where the device is the adversary, pair Lumiface with platform attestation (Play Integrity, App Attest) and treat the `relaxed` preset (flash and smile gates score-only) and the `emulator` preset (flash score-only) as development settings.
+- **A compromised device.** Every server gate scores the pixels the device sends, and the device learns the challenges and the flash colours from the plan so it can run the flow. Since the flow is streamed as video, the server judges everything from its own evidence: it decodes the recording itself, clocks the session itself, confirms the move into the oval from its own face boxes on the frames inside the window, reads the flash reflection from the frames of each colour window, and rejects a feed whose frames repeat. A patched client therefore cannot skip checks or forge timings; what it can still do is *inject video*: play prepared footage of the victim performing the plan, with the colours painted on the face and not the wall, through a virtual camera fast enough to follow the plan live (a synthetic camera built exactly that way from a stored genuine frame passed the whole flow in a test on 2026-09-19, which is why the sentence is here). What is left against that is the passive anti-spoof on every key frame, the consistency of the injected footage with itself, and the ArcFace match. The device tokens do not change this: they bound *what* a leaked credential can do, not *whether* the device is honest. Where the device is the adversary, pair Lumiface with platform attestation (Play Integrity, App Attest) and treat the `relaxed` and `emulator` presets (flash score-only) as development settings.
 - Real-time deepfakes injected as a virtual camera: the same point in a different costume.
-- 3D masks that can articulate a mouth.
+- Rigid or articulated masks worn by a live person (see the table above).
 - Twins.
 
 ## Deploying safely

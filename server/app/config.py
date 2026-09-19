@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     max_upload_bytes: int = 32 * 1024 * 1024  # whole request body
     max_frame_bytes: int = 4 * 1024 * 1024  # one JPEG
     max_image_pixels: int = 20_000_000
-    max_stream_frames: int = 900  # ~10 fps for the longest session
+    max_stream_frames: int = 900  # frames the pipeline keeps: ~10 fps of JPEG, or a video thinned to this
+    max_stream_chunks: int = 1800  # messages accepted on the stream: JPEG frames, or video chunks
     store_frames: bool = False
     frames_dir: str = "data/frames"
 
@@ -35,12 +36,6 @@ class Settings(BaseSettings):
     min_face_size: int = 112
     enroll_max_yaw: float = 20.0
     enroll_max_pitch: float = 20.0
-    turn_min_yaw: float = 20.0
-    nod_min_pitch: float = 15.0
-    turn_strict_direction: bool = False
-    smile_enforce: bool = True
-    smile_min_width_gain: float = 1.08
-    smile_min_lift: float = 0.04
 
     session_ttl_seconds: int = 60
     enrol_token_ttl_seconds: int = 300
@@ -48,11 +43,13 @@ class Settings(BaseSettings):
     allow_browser_api_key: bool = False
     retention_interval_seconds: int = 300
     session_purge_grace_seconds: int = 3600
-    challenge_count: int = 2
-    challenge_pool: str = "blink,turn_left,turn_right,smile,nod"
-    required_challenge: str = "smile"
+    oval_width_fraction: float = 0.62
+    oval_center_y: float = 0.45
+    oval_height_ratio: float = 1.35
+    move_min_growth: float = 1.15
+    move_min_fill: float = 0.75
     min_challenge_ms: int = 300
-    max_challenge_ms: int = 5000
+    max_challenge_ms: int = 10000
     min_session_ms: int = 1500
 
     flash_count: int = 3

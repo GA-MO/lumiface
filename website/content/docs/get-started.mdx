@@ -64,7 +64,7 @@ bun run dev:backend    # examples/backend on http://localhost:8010, key from LUM
 <Tabs items={["Flutter", "React"]}>
 <Tab value="Flutter">
 ```bash
-cd examples/flutter && flutter run
+cd examples/flutter && flutter run --release     # release: debug builds hide R8 problems on Android
 ```
 
 Settings tab: the Lumiface URL (the Mac's LAN IP on a phone, `http://10.0.2.2:8000` on the Android emulator),
@@ -115,6 +115,6 @@ them in Python. Details in
 
 ## What a verification looks like
 
-The app asks for a session, opens the stream, aligns the face, performs two random challenges (a smile is always one of them) and flashes three server-chosen colours, streaming JPEG frames the whole time (~8 fps) with an event at each boundary. The server clocks the session itself, confirms each challenge from its own landmarks inside its window, reads the flash reflection from the frames of each colour window, runs both anti-spoof gates on the key frames it picked, matches them against the enrolled embedding and requires the same identity across them. The answer is `ok`, a `reason_code` and three scores.
+The app asks for a session, opens the stream, aligns the face, moves it into the oval the server drew (`face_move`) and flashes three server-chosen colours, recording the camera the whole time (MediaRecorder on the web, H.264 from the phone encoders, streamed in chunks) with an event at each boundary. The server clocks the session itself, confirms the move from its own detector inside its window, reads the flash reflection from the frames of each colour window, runs both anti-spoof gates on the key frames it picked, matches them against the enrolled embedding and requires the same identity across them. The answer is `ok`, a `reason_code` and three scores.
 
-Measured on a MacBook webcam in Chrome (relaxed preset, liveness only): flash correlation 0.99, flash response 2.05, background ratio 0.04, smile width gain 1.24, spoof 0.99, CVPR 0.998.
+Measured on 2026-09-19 with the `balanced` preset, verify against an enrolled subject, one person: Galaxy S25+ (TFLite BlazeFace) `face_move` growth 1.27–1.57 and fill 0.85–0.97, flash response 38–49 with locality 0.45–0.56, match 0.63–0.71; MacBook webcam in Chrome (tfjs BlazeFace) growth 1.20–1.30, fill 0.81–0.88, flash response 7–11 with locality 0.02–0.25, match 0.67–0.71; iPhone 12 (Apple Vision) growth 1.40–1.55, fill 0.87–0.94, flash response 16–24 with locality 0.41–0.50, match 0.68–0.72. With video (the same day, ~30 fps decoded from H.264): S25+ growth 1.40–1.51, fill 0.95–0.98, flash correlation 0.95–0.99 with locality 0.43–0.53; iPhone 12 growth 1.52–1.56, fill 0.93–0.96, flash correlation 0.73–0.97 with locality 0.32–0.45. A video of the same person replayed on a phone screen passed the oval on every device and was refused by the flash's locality (1.5–8.6).

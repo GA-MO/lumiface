@@ -38,7 +38,7 @@ void main() {
 
   setUp(() {
     cam = FakeCamera();
-    api = FakeApi([Challenge.blink, Challenge.smile], flashColors: const [Color(0xFFFF0000)]);
+    api = FakeApi([Challenge.faceMove], flashColors: const [Color(0xFFFF0000)]);
   });
 
   Future<void> settle(WidgetTester tester) async {
@@ -60,7 +60,6 @@ void main() {
       client: api,
       sessionProvider: api.createSession,
       sourceFactory: () => cam,
-      config: const LivenessConfig(parallaxWhenNoTurn: false),
       onResult: results.add,
     )));
     await settle(tester);
@@ -68,25 +67,23 @@ void main() {
     expect(cam.streaming, true);
     expect(find.text('Position your face in the frame'), findsOneWidget);
 
-    await emit(tester, neutral(0));
+    await emit(tester, neutral(0, width: 0.6));
+    expect(find.text('Move back a little'), findsOneWidget);
+    await emit(tester, neutral(100));
     expect(find.text('Hold still…'), findsOneWidget);
-    await emit(tester, neutral(700));
-    expect(find.text('Close your eyes, then open'), findsOneWidget);
+    await emit(tester, neutral(800));
+    expect(find.text('Move closer until your face fills the oval'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
 
-    await emit(tester, neutral(900));
-    await emit(tester, neutral(1000, eye: 0.1));
-    await emit(tester, neutral(1150, eye: 0.95));
-    await emit(tester, neutral(1700));
-    expect(find.text('Smile'), findsOneWidget);
-    await emit(tester, neutral(1800, smile: 0.1));
-    await emit(tester, neutral(1900, smile: 0.9));
-    await emit(tester, neutral(2300, smile: 0.9));
-    await emit(tester, neutral(2800));
+    await emit(tester, neutral(900, width: 0.3));
+    expect(find.text('Move closer until your face fills the oval'), findsOneWidget);
+    await emit(tester, neutral(1200, width: 0.6));
+    await emit(tester, neutral(1800, width: 0.6));
+    await emit(tester, neutral(2300, width: 0.6));
     expect(find.text('Hold still…'), findsOneWidget);
     expect(cam.exposure, [true]);
-    await emit(tester, neutral(3400));
-    await emit(tester, neutral(4300));
+    await emit(tester, neutral(2900));
+    await emit(tester, neutral(3800));
     await settle(tester);
     expect(find.text('Verified'), findsOneWidget);
     expect(find.text('Done'), findsOneWidget);
@@ -110,7 +107,7 @@ void main() {
     )));
     await settle(tester);
     expect(find.text('custom:วางใบหน้าให้อยู่ในกรอบ:liveness'), findsOneWidget);
-    expect(find.text('progress:3'), findsOneWidget);
+    expect(find.text('progress:1'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
     expect(seen!.phase, LivenessPhase.aligning);
   });

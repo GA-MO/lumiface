@@ -81,10 +81,10 @@ function CustomOverlay() {
       </div>
       <div className="absolute inset-x-3 bottom-3 rounded-2xl bg-black/80 p-3 text-center backdrop-blur">
         <div className="text-[14px] font-bold" style={{ color: accent }}>
-          Turn your head left
+          Move closer until your face fills the oval
         </div>
         <div className="mt-1.5 flex items-center justify-center gap-1.5">
-          {[1, 2, 3].map((n) => (
+          {[1, 2].map((n) => (
             <span
               key={n}
               className="grid h-4 w-4 place-items-center rounded-full text-[8px] font-bold"
@@ -93,7 +93,7 @@ function CustomOverlay() {
               {n}
             </span>
           ))}
-          <span className="ml-1 text-[9px] text-white/60">step 2 of 3</span>
+          <span className="ml-1 text-[9px] text-white/60">step 1 of 2</span>
         </div>
       </div>
     </div>
@@ -133,8 +133,8 @@ const VARIANTS = [
     screen: (
       <>
         <FaceGuide theme={DEFAULT_THEME} phase="challenge" />
-        <StepDots done={1} total={3} color={DEFAULT_THEME.progress} track={DEFAULT_THEME.progressBackground} />
-        <Prompt>Smile</Prompt>
+        <StepDots done={1} total={2} color={DEFAULT_THEME.progress} track={DEFAULT_THEME.progressBackground} />
+        <Prompt>Move closer until your face fills the oval</Prompt>
       </>
     ),
   },
@@ -147,7 +147,7 @@ const VARIANTS = [
     screen: (
       <>
         <FaceGuide theme={BRAND} phase="success" />
-        <StepDots done={3} total={3} color="#2dd4bf" track="rgba(255,255,255,0.25)" />
+        <StepDots done={2} total={2} color="#2dd4bf" track="rgba(255,255,255,0.25)" />
         <Prompt color="#2dd4bf">Welcome back, Nan</Prompt>
       </>
     ),

@@ -3,13 +3,13 @@ the plan the server handed it; the server stamps every frame and event with its 
 decides everything from what it received.
 
 The device's events (`aligned`, `challenge_done`, `flash`, `flash_end`, `end`) only tell the
-server *where to look*. Whether a blink, a smile, a turn, a nod or a colour reflection actually
-happened is read off the server's own landmarks and pixels inside those windows, and every
-duration is measured on the server's clock, so a scripted client gains nothing by lying about
-its timestamps.
+server *where to look*. Whether the face really moved into the oval or a colour reflection
+actually happened is read off the server's own face boxes and pixels inside those windows, and
+every duration is measured on the server's clock, so a scripted client gains nothing by lying
+about its timestamps.
 
     align window   frames before `aligned`             -> neutral baseline, spoof, embedding
-    challenge i    (prev boundary, challenge_done_i]    -> expression / pose observed in the frames
+    challenge 0    (aligned, challenge_done_0]          -> the face box grew from far into the oval
     flash i        [flash_i, flash_i+1 or flash_end)    -> face-patch colour under colour i
     end window     after flash_end (or last challenge)  -> neutral again, spoof, embedding, consistency
 """
@@ -22,13 +22,10 @@ import numpy as np
 
 from ..policy import get_policy
 from .antispoof import get_antispoof
-from .expression import mouth_metrics, smile_ok
 from .face import BadImage, FaceResult, cosine, decode_image, get_face_engine
 from .flash import face_patch_mean_rgb, flash_passes, score_flash, surroundings_mean_rgb
-from .verify import VerifyResult, _consistency, _pose_ok, _single_face
+from .verify import VerifyResult, _consistency, _single_face
 
-# iBUG 68: right eye 36-41, left eye 42-47
-_EYES = ((36, 37, 38, 39, 40, 41), (42, 43, 44, 45, 46, 47))
 FLASH_LATENCY_MS = 120  # the screen needs a moment to show a colour before the camera sees it
 MAX_FRAMES_PER_WINDOW = 16  # the detector runs on at most this many frames of a window
 
@@ -64,31 +61,31 @@ class Analysed:
     img: np.ndarray | None = None
 
 
-def eye_aspect_ratio(landmarks: np.ndarray | None) -> float | None:
-    """Mean EAR of both eyes: (|p2-p6| + |p3-p5|) / (2 |p1-p4|). Open ~0.3, closed < 0.15."""
-    if landmarks is None or len(landmarks) < 68:
-        return None
-    pts = np.asarray(landmarks, dtype=np.float32)[:, :2]
-    ratios = []
-    for p1, p2, p3, p4, p5, p6 in _EYES:
-        horizontal = float(np.linalg.norm(pts[p1] - pts[p4]))
-        if horizontal < 1e-3:
-            return None
-        vertical = float(np.linalg.norm(pts[p2] - pts[p6]) + np.linalg.norm(pts[p3] - pts[p5]))
-        ratios.append(vertical / (2 * horizontal))
-    return float(np.mean(ratios))
+def movement_observed(seen: list[Analysed], s) -> tuple[bool, dict, Analysed]:
+    """The face_move challenge as the server sees it: over the window the face box grew from far to
+    filling the oval, the way a head moving towards the camera does. `seen` is in time order; the
+    last frames give the end and the closest of them is the key frame; the start is the farthest the
+    face was before that, because the window opens at `aligned` and a person who aligned close first
+    backs off on the device's "move back" and only then walks in."""
+    def width_fraction(a: Analysed) -> float:
+        # Faces scale with the frame's shorter side: the width of a portrait phone frame, the height
+        # of a landscape webcam frame. The oval is sized in the same unit.
+        return float(a.face.bbox[2] - a.face.bbox[0]) / max(min(a.img.shape[0], a.img.shape[1]), 1)
 
+    def centre_x(a: Analysed) -> float:
+        return float(a.face.bbox[0] + a.face.bbox[2]) / 2 / max(a.img.shape[1], 1)
 
-def blink_observed(ears: list[float], baseline: float, closed_ratio: float = 0.75, open_ratio: float = 0.85) -> bool:
-    """The eyes closed (EAR fell to `closed_ratio` of the open baseline) and opened again afterwards.
-    0.75: a blink shut for ~100 ms is often caught half-closed at 7 fps (real blinks measured 0.65-0.73
-    across three devices; a replayed video reached 0.85), so the prompt also asks for a slow close."""
-    if baseline <= 0 or len(ears) < 2:
-        return False
-    closed_at = next((i for i, e in enumerate(ears) if e <= baseline * closed_ratio), None)
-    if closed_at is None:
-        return False
-    return any(e >= baseline * open_ratio for e in ears[closed_at + 1:])
+    widths = [width_fraction(a) for a in seen]
+    tail_from = max(len(seen) - 3, 0)
+    peak_at = tail_from + max(range(tail_from, len(seen)), key=lambda i: widths[i]) - tail_from
+    peak, end = seen[peak_at], widths[peak_at]
+    start = min(widths[:max(peak_at, 1)])
+    fill = end / max(s.oval_width_fraction, 1e-3)
+    growth = end / max(start, 1e-3)
+    centred = abs(centre_x(peak) - 0.5) <= 0.2
+    info = {"start_width": round(start, 3), "end_width": round(end, 3), "growth": round(growth, 2),
+            "fill": round(fill, 2), "centred": centred}
+    return growth >= s.move_min_growth and fill >= s.move_min_fill and centred, info, peak
 
 
 def build_windows(events: list[StreamEvent], first_frame_ms: int, challenges: list[str],
@@ -229,45 +226,17 @@ def analyze_stream(frames: list[StreamFrame], events: list[StreamEvent], challen
         return VerifyResult(False, "NO_FACE", details={**details, "window": "align"})
     neutral = baseline[-1]
     note("neutral_start", neutral)
-    ears = [e for e in (eye_aspect_ratio(a.face.landmarks) for a in baseline) if e is not None]
-    baseline_ear = float(np.median(ears)) if ears else 0.0
-    neutral_mouth = mouth_metrics(neutral.face.landmarks)
 
-    # Challenges: read off the server's own landmarks inside each window.
+    # The challenge: the face box read off the server's own detector inside the window.
     key_faces: list[Analysed] = [neutral]
     for i, (ch, window) in enumerate(zip(challenges, place.challenges)):
-        # A blink lasts a few frames; look at every frame of its window rather than a sample.
-        seen = _with_face(analyser, _sample(_in(frames, window, by_client), 48 if ch == "blink" else MAX_FRAMES_PER_WINDOW))
+        seen = _with_face(analyser, _sample(_in(frames, window, by_client), MAX_FRAMES_PER_WINDOW))
         if not seen:
             return VerifyResult(False, "NO_FACE", details={**details, "window": f"challenge_{i}"})
-        peak: Analysed | None = None
-        info: dict = {}
-        if ch == "blink":
-            series = [e for e in (eye_aspect_ratio(a.face.landmarks) for a in seen) if e is not None]
-            info = {"baseline_ear": round(baseline_ear, 3), "min_ear": round(min(series), 3) if series else None}
-            ok = blink_observed(series, baseline_ear)
-            peak = min(seen, key=lambda a: eye_aspect_ratio(a.face.landmarks) or 1.0)
-        elif ch == "smile":
-            best_ok, best_info = False, {}
-            for a in seen:
-                ok_i, info_i = smile_ok(neutral_mouth, mouth_metrics(a.face.landmarks))
-                if ok_i or not best_info:
-                    best_ok, best_info, peak = ok_i, info_i, a
-                if ok_i:
-                    break
-            ok = best_ok or not s.smile_enforce
-            info = {**best_info, "enforced": s.smile_enforce}
-        else:  # turn_left, turn_right, nod
-            hits = [a for a in seen if _pose_ok(ch, a.face)]
-            ok = bool(hits)
-            peak = hits[0] if hits else max(seen, key=lambda a: abs(a.face.yaw) + abs(a.face.pitch))
-            info = {"max_yaw": round(max(abs(a.face.yaw) for a in seen), 1),
-                    "max_pitch": round(max(abs(a.face.pitch) for a in seen), 1)}
+        ok, info, peak = movement_observed(seen, s)
         details[f"challenge_{i}"] = {"name": ch, "frames": len(seen), **info}
         if not ok:
-            code = "EXPRESSION_MISMATCH" if ch in ("blink", "smile") else "POSE_MISMATCH"
-            return VerifyResult(False, code, details={**details, "challenge": ch})
-        assert peak is not None
+            return VerifyResult(False, "MOVEMENT_MISMATCH", details={**details, "challenge": ch})
         note(f"challenge_{i}", peak)
         key_faces.append(peak)
 

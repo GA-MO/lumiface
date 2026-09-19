@@ -2,7 +2,6 @@ import { useMemo, useRef } from "react";
 import { LumifaceClient, LumifaceView, type Challenge, type FaceSession, type LivenessState, type VerifyResult, type VerifyStream } from "@lumiface/react";
 import type { DemoLine } from "./live-demo";
 
-const POOL: Challenge[] = ["blink", "smile", "turn_left", "turn_right", "nod"];
 const PALETTE = ["ff0000", "00ff00", "0000ff", "ff00ff", "ffff00", "00ffff"];
 
 function pick<T>(items: T[], n: number): T[] {
@@ -12,10 +11,14 @@ function pick<T>(items: T[], n: number): T[] {
   return out;
 }
 
-/** Plays the server's part in the browser: random challenges and colours, then lets the flow end.
- *  It judges nothing, so a replayed video gets through it; the real server's passive anti-spoof,
- *  screen-flash and identity checks are what stop that. */
+/** Plays the server's part in the browser: the plan (the oval, three colours), then lets the flow end.
+ *  It judges nothing, so a replayed video gets through it; the real server reads the walk, the flash
+ *  reflection, the passive anti-spoof and the identity from the frames. What it does show is the
+ *  protocol: every event the SDK sends, and how many frames went with it. */
 class StandInClient extends LumifaceClient {
+  onEvent: (line: string) => void = () => {};
+  frames = 0;
+
   constructor() {
     super({ baseUrl: "stand-in" });
   }
@@ -25,20 +28,26 @@ class StandInClient extends LumifaceClient {
     return { id: Math.random().toString(16).slice(2, 6), token: "", mode: "liveness", purpose: "demo", ttlSeconds: 60, clientConfig: null };
   }
 
-  /** Plays the server's side of the stream: hands out a plan, swallows frames, answers OK at the end. */
-  override openStream(): VerifyStream {
-    const challenges = ["smile" as Challenge, ...pick(POOL.filter((c) => c !== "smile"), 1)].sort(() => Math.random() - 0.5);
+  /** Plays the server's side of the stream: the balanced plan (the oval, then three colours), swallows frames, lets the flow end. */
+  override openStream(_session: FaceSession, _clientInfo: Record<string, unknown> = {}, format = "jpeg"): VerifyStream {
+    const challenges: Challenge[] = ["face_move"];
+    this.onEvent(`recording as ${format}, chunks every 250 ms`);
     const flashColors = pick(PALETTE, 3);
-    let frames = 0;
+    this.frames = 0;
+    const t0 = performance.now();
+    const at = () => `${((performance.now() - t0) / 1000).toFixed(1)}s`;
     return {
-      plan: Promise.resolve({ challenges, flashColors, flashHoldMs: 450, clientConfig: null }),
-      sendFrame: () => {
-        frames++;
+      plan: Promise.resolve({ challenges, flashColors, flashHoldMs: 450, clientConfig: null, oval: { cx: 0.5, cy: 0.45, width: 0.62, heightRatio: 1.35 } }),
+      sendChunk: () => {
+        this.frames++;
       },
-      event: () => {},
+      event: (name, _ts, index) => {
+        this.onEvent(`${at()}  ▶ ${name}${index === undefined ? "" : ` ${index}`}${name === "flash" ? `  #${flashColors[index ?? 0]}` : ""}  · ${this.frames} chunks so far`);
+      },
       end: async () => {
+        this.onEvent(`${at()}  ▶ end  · ${this.frames} chunks`);
         await new Promise((r) => setTimeout(r, 600));
-        return { ok: true, mode: "liveness", reasonCode: "OK", scores: { match: null, spoof: null, consistency: null }, verificationId: frames };
+        return { ok: true, mode: "liveness", reasonCode: "OK", scores: { match: null, spoof: null, consistency: null }, verificationId: this.frames };
       },
       close: () => {},
     };
@@ -47,30 +56,22 @@ class StandInClient extends LumifaceClient {
 
 export default function LiveDemoRunner({ landscape, onLine, onClose }: { landscape: boolean; onLine: (line: DemoLine) => void; onClose: () => void }) {
   const client = useMemo(() => new StandInClient(), []);
-  const startedAt = useRef<Record<number, number>>({});
   const last = useRef<LivenessState | null>(null);
+  client.onEvent = (text) => onLine({ kind: "ok", text });
 
   const onStateChanged = (s: LivenessState) => {
     const prev = last.current;
     last.current = s;
-    if (prev?.phase !== s.phase) {
-      if (s.phase === "starting") onLine({ kind: "info", text: "Opening the camera, loading MediaPipe" });
-      if (s.phase === "aligning") onLine({ kind: "step", text: `session  ${s.challengeCount} challenges, 3 flash colours` });
-      if (s.phase === "flash") onLine({ kind: "step", text: "flash  3 server colours, one frame each" });
-      if (s.phase === "uploading") onLine({ kind: "step", text: "upload  neutral, challenge and flash frames" });
-      if (s.phase === "success") {
-        onLine({ kind: "step", text: `challenges done  ${s.result?.verificationId} frames streamed to the stand-in` });
-        onLine({ kind: "info", text: "not judged: passive anti-spoof, screen-flash and identity match run on the server" });
-      }
-      if (s.phase === "failed") onLine({ kind: "fail", text: `failed  ${s.result?.reasonCode}` });
+    if (prev?.phase === s.phase) return;
+    if (s.phase === "starting") onLine({ kind: "info", text: "Opening the camera, loading BlazeFace (tfjs, WASM)" });
+    if (s.phase === "aligning") onLine({ kind: "step", text: "plan  face_move into the oval, then 3 colours · the recording starts here" });
+    if (s.phase === "challenge" && prev?.phase === "aligning") onLine({ kind: "step", text: "face_move  walk in until the face fills the oval" });
+    if (s.phase === "flash") onLine({ kind: "step", text: "flash  3 colours, 450 ms each, frames keep streaming" });
+    if (s.phase === "uploading") onLine({ kind: "step", text: "end  a real server answers from the frames" });
+    if (s.phase === "success") {
+      onLine({ kind: "info", text: "stand-in: no verdict. The server would now read the walk (growth, fill), the flash reflection, MiniFASNet + CVPR-2024 and the ArcFace match from these frames" });
     }
-    if (s.phase === "challenge" && s.challenge && (prev?.phase !== "challenge" || prev.challengeIndex !== s.challengeIndex)) {
-      startedAt.current[s.challengeIndex] = performance.now();
-      if (prev && prev.phase === "challenge" && prev.challenge) {
-        onLine({ kind: "ok", text: `${prev.challenge}  ${Math.round(performance.now() - startedAt.current[prev.challengeIndex])} ms` });
-      }
-      onLine({ kind: "step", text: `challenge_${s.challengeIndex}  ${s.challenge}` });
-    }
+    if (s.phase === "failed") onLine({ kind: "fail", text: `failed on the device  ${s.result?.reasonCode}` });
   };
 
   return (
@@ -79,13 +80,14 @@ export default function LiveDemoRunner({ landscape, onLine, onClose }: { landsca
       flow="liveness"
       sessionProvider={() => client.createSession()}
       theme={landscape ? { guideWidthFraction: 0.34, guideCenterY: 0.48 } : {}}
+      camera={{ modelUrl: `${import.meta.env.BASE_URL}models/face_detection_short/model.json` }}
       onStateChanged={onStateChanged}
       onResult={() => {}}
       onDone={onClose}
       renderPrompt={(s) => (
         <div className="pointer-events-none flex justify-center px-4 pb-5">
           <span className={`rounded-full px-4 py-2 text-center text-[15px] font-semibold text-white shadow-lg backdrop-blur ${s.state.phase === "failed" ? "bg-red-600/85" : "bg-black/60"}`}>
-            {s.state.phase === "success" ? "Challenges done. The server's checks did not run here." : s.message}
+            {s.state.phase === "success" ? "Flow complete. Nothing was judged: this is a stand-in server." : s.message}
           </span>
         </div>
       )}

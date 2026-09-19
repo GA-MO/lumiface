@@ -166,7 +166,7 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
       ),
       FaceFlow.verify || FaceFlow.liveness => FaceVerifyController(
         source: source,
-        capturer: source,
+        recorder: source,
         client: widget.client,
         sessionProvider:
             widget.sessionProvider ?? (throw ArgumentError('FaceFlow.verify and liveness need sessionProvider')),
@@ -276,6 +276,7 @@ class _FaceVerifyViewState extends State<FaceVerifyView> {
           controller.visibleRegion = frameH > constraints.maxHeight
               ? visibleRegionFor(aspect, constraints.maxWidth / constraints.maxHeight)
               : fullFrame;
+          controller.frameAspect = aspect;
           return Stack(
             fit: StackFit.expand,
             children: [
@@ -352,7 +353,7 @@ class FaceVerifyOverlay extends StatelessWidget {
     return Stack(
       fit: StackFit.expand,
       children: [
-        FaceGuide(theme: t, phase: st.phase, box: showDebug ? scope.displayBox : null),
+        FaceGuide(theme: t, phase: st.phase, box: showDebug ? scope.displayBox : null, target: st.target),
         SafeArea(
           child: Column(
             children: [
@@ -398,10 +399,13 @@ class FaceVerifyOverlay extends StatelessWidget {
 
 /// Dimmed mask with a face-shaped cut-out whose colour follows the phase.
 class FaceGuide extends StatelessWidget {
-  const FaceGuide({super.key, required this.theme, required this.phase, this.box});
+  const FaceGuide({super.key, required this.theme, required this.phase, this.box, this.target});
   final FaceVerifyTheme theme;
   final LivenessPhase phase;
   final Rect? box;
+
+  /// The server's oval for a face_move challenge, as fractions of this widget; overrides the theme's shape.
+  final Rect? target;
 
   Color get color => switch (phase) {
     LivenessPhase.success => theme.guideSuccessColor,
@@ -412,7 +416,7 @@ class FaceGuide extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => CustomPaint(
-    painter: FaceGuidePainter(theme: theme, color: color, box: box),
+    painter: FaceGuidePainter(theme: theme, color: color, box: box, target: target),
   );
 }
 
@@ -435,15 +439,19 @@ Rect guideRect(FaceVerifyTheme theme, Size size) {
 }
 
 class FaceGuidePainter extends CustomPainter {
-  FaceGuidePainter({required this.theme, required this.color, this.box});
+  FaceGuidePainter({required this.theme, required this.color, this.box, this.target});
   final FaceVerifyTheme theme;
   final Color color;
   final Rect? box;
+  final Rect? target;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (theme.guideShape != FaceGuideShape.none) {
-      final rect = guideRect(theme, size);
+      final t = target;
+      final rect = t == null
+          ? guideRect(theme, size)
+          : Rect.fromLTWH(t.left * size.width, t.top * size.height, t.width * size.width, t.height * size.height);
       final cutout = Path();
       if (theme.guideShape == FaceGuideShape.oval) {
         cutout.addOval(rect);
@@ -476,7 +484,8 @@ class FaceGuidePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(FaceGuidePainter old) => old.color != color || old.box != box || old.theme != theme;
+  bool shouldRepaint(FaceGuidePainter old) =>
+      old.color != color || old.box != box || old.theme != theme || old.target != target;
 }
 
 /// One line of raw detector values, for calibration sessions.
@@ -495,8 +504,8 @@ class FaceDebugBar extends StatelessWidget {
     color: Colors.black54,
     padding: const EdgeInsets.all(8),
     child: Text(
-      'faces=${signal.faceCount} w=${_f(signal.box?.width)} eye=${_f(signal.eyeOpen)} '
-      'smile=${_f(signal.smile)} yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} px=${_f(signal.noseParallax)} '
+      'faces=${signal.faceCount} w=${_f(signal.box?.width)} h=${_f(signal.box?.height)} '
+      'yaw=${_f(signal.yaw)} pitch=${_f(signal.pitch)} '
       'cx=${_f(signal.box?.center.dx)} cy=${_f(signal.box?.center.dy)} '
       'min(w,h)=${signal.box == null ? '-' : math.min(signal.box!.width, signal.box!.height).toStringAsFixed(2)}',
       style: const TextStyle(color: Colors.white, fontSize: 11, fontFamily: 'monospace'),

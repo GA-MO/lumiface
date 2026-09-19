@@ -40,7 +40,8 @@ uv run uvicorn app.main:app --port 8000
 curl -X POST localhost:8000/v1/subjects -H "X-API-Key: lf_sk_change-me" \\
   -F external_id=E001 -F photo=@me.jpg
 
-flutter run -d chrome      # examples/flutter
+bun run dev:backend        # examples/backend holds the key
+flutter run --release      # examples/flutter, on a phone
 bun run dev:react          # examples/react`;
 
 export async function loader() {
@@ -61,26 +62,26 @@ export function meta() {
 
 const STATS = [
   ["2", "anti-spoof models", "MiniFASNet + CVPR-2024"],
-  ["4", "device challenges", "blink, smile, turn, nod"],
-  ["55", "policy fields", "tuned per project, no redeploy"],
+  ["3", "device detectors", "BlazeFace on web and Android, Apple Vision on iOS"],
+  ["43", "policy fields", "tuned per project, no redeploy"],
   ["1", "stream per session", "frames + events over WebSocket, server clock"],
 ] as const;
 
 const STEPS = [
   { icon: KeyRound, title: "Enrol once", body: "POST a photo per subject from your backend. The key never reaches a device; the embedding never leaves your server." },
-  { icon: ScanFace, title: "Stream from the device", body: "Your backend mints a session; the SDK opens its stream, gets the plan and sends frames the whole time while it guides the person through the challenges and the flash." },
-  { icon: ShieldCheck, title: "Judge on the server", body: "The server clocks the stream itself, reads every blink, smile, turn and flash from its own landmarks, runs anti-spoof and identity, and your backend reads the verdict." },
+  { icon: ScanFace, title: "Stream from the device", body: "Your backend mints a session; the SDK opens its stream, gets the plan and sends frames the whole time while it guides the person into the oval and through the flash." },
+  { icon: ShieldCheck, title: "Judge on the server", body: "The server clocks the stream itself, reads the move into the oval and the flash from its own detector, runs anti-spoof and identity, and your backend reads the verdict." },
 ] as const;
 
 const DEVICE_CHECKS: readonly [LucideIcon, string, string][] = [
-  [Sparkles, "Prompts the challenges", "Blink, smile, turn or nod from the server's plan; ML Kit or MediaPipe tell the person when to move on. The server re-reads each one itself."],
-  [Eye, "Nose parallax", "During a turn the nose must move against the eyes; a rotated print or screen cannot do that. The one check that stays on the device, as an extra hurdle."],
+  [Sparkles, "Guides into the oval", "Move closer until the face fills the oval the server drew; the device tells the person to move back, come closer, hold still. The server re-reads the move itself."],
+  [Eye, "A face box is all it needs", "TensorFlow.js BlazeFace in the browser, TensorFlow Lite BlazeFace on Android, Apple Vision on iOS. A face box, nothing more, is all the device needs."],
   [Zap, "Shows the flash", "Three colours from the plan fill the screen in turn while the frames keep flowing; the server reads the reflection."],
-  [Timer, "Streams and marks", "About eight frames a second plus a marker at each boundary. The markers say where to look; the device's timestamps are recorded, not trusted."],
+  [Timer, "Streams and marks", "About eight frames a second plus a marker at each boundary. The markers say where to look; the device's timestamps only place frames into windows, the server keeps the time."],
 ];
 
 const SERVER_CHECKS: readonly [LucideIcon, string, string][] = [
-  [ScanFace, "Reads the challenges itself", "68 landmarks on the streamed frames: a blink is an eye-aspect-ratio dip and recovery, a smile a wider mouth, a turn a yaw. A patched client cannot skip them."],
+  [ScanFace, "Reads the oval itself", "Its own face boxes on the streamed frames: the oval is a face that grew from far into it, centred, inside the window. A patched client cannot skip it."],
   [Timer, "Its own clock", "Every frame and event is stamped on arrival; durations, order and a repeated feed are judged server-side."],
   [Zap, "Flash reflection", "The cheeks must follow the colour sequence in each colour's window and reflect more than the wall behind."],
   [ShieldCheck, "Anti-spoof and identity", "MiniFASNet and the CVPR-2024 ResNet50 on the key frames, then ArcFace against the enrolled face and across frames."],
@@ -93,8 +94,8 @@ const POLICY_POINTS: readonly [LucideIcon, string][] = [
 ];
 
 const PLATFORMS: readonly [LucideIcon, string, string, string][] = [
-  [Smartphone, "Flutter", "iOS and Android with ML Kit, the web with MediaPipe, from one package.", "/docs/flutter"],
-  [Code2, "React", "LumifaceView and useLumiface on React 18 and 19, MediaPipe in the browser.", "/docs/react"],
+  [Smartphone, "Flutter", "iOS with Apple Vision, Android with TFLite BlazeFace, the web with TensorFlow.js, from one package.", "/docs/flutter"],
+  [Code2, "React", "LumifaceView and useLumiface on React 18 and 19, TensorFlow.js BlazeFace in the browser.", "/docs/react"],
   [Globe, "HTTP", "Any client that can open a camera talks to the same five endpoints.", "/docs/api"],
 ];
 
@@ -170,8 +171,8 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
                 Is a real person there, and is it them?
               </h1>
               <p className="mt-7 max-w-lg text-lg leading-relaxed text-fd-muted-foreground">
-                Lumiface answers both from your own server. Random challenges and a screen flash on the device, two anti-spoof
-                models and face matching behind an API key, and a policy per project that you tune without shipping an update.
+                Lumiface answers both from your own server. The oval and a screen flash on the device, two anti-spoof models
+                and face matching behind an API key, and a policy per project that you tune without shipping an update.
               </p>
               <div className="mt-9 flex flex-wrap gap-3">
                 <Link to="/docs/get-started" className={primaryButton}>
@@ -260,7 +261,7 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
                 ))}
               </ul>
               <Link to="/docs/policy-reference" className="mt-8 inline-flex items-center gap-1.5 font-medium text-fd-foreground no-underline hover:text-brand">
-                See all 55 fields
+                See all 43 fields
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
@@ -292,7 +293,7 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
             <SectionHeading
               eyebrow="Platforms"
               title="One server, every client"
-              body="The SDKs run the camera side and the challenge state machine; anything that can capture JPEGs can talk to the same API."
+              body="The SDKs run the camera side and the oval-and-flash state machine; anything that can record a camera, or just capture JPEGs, can talk to the same API."
             />
             <div className="mt-12 grid gap-6 lg:grid-cols-[1fr_1.2fr]">
               <div className="grid overflow-hidden rounded-3xl border border-fd-border bg-fd-card">
@@ -332,8 +333,8 @@ export default function HomeRoute({ loaderData }: Route.ComponentProps) {
                 <div>
                   <h2 className="font-display text-2xl font-semibold tracking-[-0.03em]">What it does not stop</h2>
                   <p className="mt-3 max-w-3xl leading-relaxed text-fd-muted-foreground">
-                    Lumiface is not certified liveness. It stops prints, screen replays, cut-outs and paper masks; it stops latex
-                    and silicone masks only through the smile challenge; it does not stop a real-time deepfake injected as a
+                    Lumiface is not certified liveness. It stops prints, screen replays, cut-outs and paper masks; it does not stop
+                    latex and silicone masks on a live person (the flow asks for no gesture) nor a real-time deepfake injected as a
                     virtual camera. The measured numbers behind every threshold are on the security page.
                   </p>
                   <Link to="/docs/security" className="mt-4 inline-flex items-center gap-1.5 font-medium text-fd-foreground no-underline hover:text-brand">

@@ -18,7 +18,7 @@ Two credentials, two audiences:
 Never ship the project key in an app or web bundle. The loop is:
 
 1. Backend: `POST /sessions` with the key, **with the `subject_id` it wants checked** (or none for liveness), and forwards the JSON to the device.
-2. Device: opens the stream with the session token, gets the plan, streams frames while it runs it. The subject is fixed; the stream has no field to name one.
+2. Device: opens the stream with the session token, gets the plan, streams its recording while it runs it. The subject is fixed; the stream has no field to name one.
 3. Device tells the backend it is done. **Do not trust that message.**
 4. Backend: `GET /sessions/{session_id}` with the key and acts on `result.ok` / `verification_id`.
 
@@ -62,22 +62,25 @@ See [security](/docs/security#retention).
 }
 ```
 
-The challenges and the flash colours are **not** in this answer. They only reach the device once it has opened the
+The challenge, the oval and the flash colours are **not** in this answer. They only reach the device once it has opened the
 stream, and the server judges them from what it receives, not from what the device reports.
 
 ### The stream
 
-`WS /sessions/{id}/stream`. The device speaks first, the server answers with the plan, then frames flow up until
-the device says it is done and the server sends the verdict. The session is spent as soon as the hello is accepted.
+`WS /sessions/{id}/stream`. The device speaks first, the server answers with the plan, then the recording flows up
+in chunks until the device says it is done and the server sends the verdict. The session is spent as soon as the
+hello is accepted.
 
 ```
 device                                            server
 ──────                                            ──────
-{"type":"hello","token":"kQx7…","client":{…}}  ▶
-                                                ◀ {"type":"plan","challenges":["smile","blink"],
+{"type":"hello","token":"kQx7…","client":{…},
+ "format":"webm"}                                ▶  webm | mp4 | h264 | jpeg (default)
+                                                ◀ {"type":"plan","challenges":["face_move"],
+                                                   "oval":{"cx":0.5,"cy":0.45,"width":0.62,"height_ratio":1.35},
                                                    "flash_colors":["ff0000","00ff00","0000ff"],
                                                    "flash_hold_ms":450,"client_config":{…}}
-<binary: 8-byte big-endian client ms + JPEG>   ▶  …continuously, ~8 fps, whatever the phase
+<binary: 8-byte big-endian device ms + chunk>  ▶  …as the recorder cuts them, whatever the phase
 {"type":"event","name":"aligned","ts":…}        ▶
 {"type":"event","name":"challenge_done","index":0,"ts":…} ▶
 {"type":"event","name":"flash","index":0,"ts":…} ▶  …one per colour, as it is shown
@@ -87,16 +90,23 @@ device                                            server
                                                 ◀ {"type":"error","reason_code":"SESSION_USED"}  on refusal
 ```
 
-What the server does with it: every frame and event is stamped with the **server's** clock on receipt; the events
-only say where to look. Inside each window it runs its own face detector and 68-point landmarks on the frames it
-got and checks that the blink (eye aspect ratio dip and recovery), the smile (mouth width and corner lift against
-the neutral frames), the turn or the nod (yaw / pitch) actually happened; the colour on the face during each
-flash window is read from those frames; passive anti-spoof, identity and consistency run on the key frames it
-chose. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
-repeats the same bytes is refused (`FRAMES_STATIC`). The device's `ts` values (frame header and event `ts`) decide only which window a frame falls into — a phone uploads each frame a few hundred ms after the camera took it while its events arrive at once, so placing frames by arrival would put a colour's reflection in the next colour's window — and never a duration; a client that sends no `ts` is placed by arrival.
+`format` says what each binary message carries: `webm` (VP8, what MediaRecorder cuts on Chrome, Firefox and Edge,
+one chunk every 250 ms) or `mp4` (H.264, Safari's MediaRecorder), which concatenate into one stream whose frame times
+start at the first chunk's device time; `h264`, one Annex-B access unit per message with its own frame time (the
+phone SDKs, from MediaCodec and VideoToolbox); or `jpeg`, one still per message (any client that can capture
+JPEGs). The server decodes video into frames with both clocks before the pipeline runs (`services/video.py`), so the
+verdict is judged the same way whatever the device sent.
 
-Limits: `MAX_FRAME_BYTES` per frame (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_FRAMES` (900),
-`MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). Frames beyond what the link can carry are dropped by the SDKs
+What the server does with it: every frame and event is stamped with the **server's** clock on receipt; the events
+only say where to look. Inside the challenge window it runs its own face detector on the frames it got and
+checks that the face moved from far into the oval (`face_move`: box growth and fit, centred); the colour on the
+face during each flash window is read from those frames; passive anti-spoof, identity and consistency run on the key frames it
+chose. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
+repeats the same bytes is refused (`FRAMES_STATIC`). The device's `ts` values (chunk header and event `ts`) decide only which window a frame falls into — a decoded frame's device time is the chunk's time plus its offset in the video, and a phone uploads a chunk a few hundred ms after the camera took it while its events arrive at once, so placing frames by arrival would put a colour's reflection in the next colour's window — and never a duration; a client that sends no `ts` is placed by arrival.
+
+Limits: `MAX_FRAME_BYTES` per message (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_CHUNKS`
+messages (1800), `MAX_STREAM_FRAMES` decoded frames kept (900, a longer video is thinned evenly),
+`MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). Chunks beyond what the link can carry are dropped by the SDKs
 rather than queued.
 
 Answer:
@@ -112,7 +122,7 @@ Answer:
 }
 ```
 
-`details` is empty for the device; the backend sees the server's windows, per-challenge readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
+`details` is empty for the device; the backend sees the server's windows, the `face_move` readings, flash scores and key frames in the audit log (`GET /verifications` is the summary, the row's `details` the full record). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
 
 `GET /sessions/{id}` (project key) is how the backend learns the outcome; `result` is the verify answer above, or `null` while nothing was uploaded:
 

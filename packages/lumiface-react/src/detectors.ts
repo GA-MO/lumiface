@@ -1,133 +1,58 @@
 import type { LivenessConfig } from "./config.ts";
-import { eyeOpen, noseParallax, type Challenge, type FaceSignal } from "./types.ts";
+import type { Box, Challenge, FaceSignal } from "./types.ts";
 
 /** Fed with signals, returns true once the challenge is satisfied. Single use. */
 export interface ChallengeDetector {
   feed(s: FaceSignal): boolean;
 }
 
-/** open -> closed (blinkMinMs..blinkMaxMs) -> open. Closed too long resets. */
-export class BlinkDetector implements ChallengeDetector {
-  private seenOpen = false;
-  private closedAt: number | null = null;
+export type MoveHint = "tooClose" | "notCentered" | "holdStill" | null;
 
-  constructor(private readonly config: LivenessConfig) {}
-
-  feed(s: FaceSignal): boolean {
-    const e = eyeOpen(s);
-    if (e === null) return false;
-    if (this.closedAt === null) {
-      if (e >= this.config.eyeOpenThreshold) this.seenOpen = true;
-      if (this.seenOpen && e <= this.config.eyeClosedThreshold) this.closedAt = s.tsMs;
-      return false;
-    }
-    const closedFor = s.tsMs - this.closedAt;
-    if (closedFor > this.config.blinkMaxMs) {
-      this.closedAt = null;
-      this.seenOpen = false;
-      return false;
-    }
-    if (e >= this.config.eyeOpenThreshold) {
-      if (closedFor >= this.config.blinkMinMs) return true;
-      this.closedAt = null;
-    }
-    return false;
-  }
-}
-
-/** Non-smiling baseline first, then smile >= threshold held for smileHoldMs. */
-export class SmileDetector implements ChallengeDetector {
-  private baseline = false;
-  private smilingSince: number | null = null;
-
-  constructor(private readonly config: LivenessConfig) {}
-
-  feed(s: FaceSignal): boolean {
-    const v = s.smile;
-    if (v === null) return false;
-    if (!this.baseline) {
-      if (v <= this.config.smileBaselineMax) this.baseline = true;
-      return false;
-    }
-    if (v >= this.config.smileThreshold) {
-      this.smilingSince ??= s.tsMs;
-      return s.tsMs - this.smilingSince >= this.config.smileHoldMs;
-    }
-    this.smilingSince = null;
-    return false;
-  }
-}
-
-/**
- * Yaw beyond turnMinYaw in the requested direction held for turnHoldMs, and
- * (parallaxMinShift > 0) the nose must have moved relative to the eyes since
- * the frontal baseline, which a rotated flat picture cannot do.
- */
-export class TurnDetector implements ChallengeDetector {
-  private since: number | null = null;
-  private baseline: number | null = null;
+/** Start far (face narrower than `moveStartMaxRatio` of the oval), move closer until the face box is
+ *  `ovalMinFill` of the oval's width and centred within a fifth of it, hold for `ovalHoldMs`. `oval` and
+ *  the boxes are in frame-normalised coordinates. `hint` is what the person should do next; null while
+ *  approaching, when the challenge text itself is the instruction. */
+export class FaceMoveDetector implements ChallengeDetector {
+  private startedFar = false;
+  private fittedSince: number | null = null;
+  hint: MoveHint = null;
 
   constructor(
     private readonly config: LivenessConfig,
-    private readonly left: boolean,
+    readonly oval: Box,
   ) {}
 
-  private get needParallax() {
-    return this.config.parallaxMinShift > 0;
-  }
-
   feed(s: FaceSignal): boolean {
-    const yaw = s.yaw;
-    if (yaw === null) return false;
-    if (this.needParallax && Math.abs(yaw) <= this.config.neutralMaxYaw) {
-      this.baseline = noseParallax(s) ?? this.baseline;
-    }
-    const dirOk = this.left ? yaw >= this.config.turnMinYaw : yaw <= -this.config.turnMinYaw;
-    if (!dirOk) {
-      this.since = null;
-      return false;
-    }
-    if (this.needParallax) {
-      const p = noseParallax(s);
-      if (this.baseline === null || p === null || Math.abs(p - this.baseline) < this.config.parallaxMinShift) {
-        this.since = null;
+    const b = s.box;
+    if (!b) return false;
+    const o = this.oval;
+    if (!this.startedFar) {
+      if (b.width > o.width * this.config.moveStartMaxRatio) {
+        this.hint = "tooClose";
         return false;
       }
+      this.startedFar = true;
     }
-    this.since ??= s.tsMs;
-    return s.tsMs - this.since >= this.config.turnHoldMs;
+    const filled = b.width >= o.width * this.config.ovalMinFill;
+    const offCentre =
+      Math.abs(b.left + b.width / 2 - (o.left + o.width / 2)) > o.width * 0.2 ||
+      Math.abs(b.top + b.height / 2 - (o.top + o.height / 2)) > o.height * 0.2;
+    if (filled && !offCentre) {
+      this.hint = "holdStill";
+      this.fittedSince ??= s.tsMs;
+      return s.tsMs - this.fittedSince >= this.config.ovalHoldMs;
+    }
+    this.fittedSince = null;
+    this.hint = filled && offCentre ? "notCentered" : null;
+    return false;
   }
 }
 
-/** |pitch| beyond nodMinPitch held for nodHoldMs. */
-export class NodDetector implements ChallengeDetector {
-  private since: number | null = null;
+export const DEFAULT_OVAL: Box = { left: 0.19, top: 0.2, width: 0.62, height: 0.5 };
 
-  constructor(private readonly config: LivenessConfig) {}
-
-  feed(s: FaceSignal): boolean {
-    const p = s.pitch;
-    if (p === null) return false;
-    if (Math.abs(p) < this.config.nodMinPitch) {
-      this.since = null;
-      return false;
-    }
-    this.since ??= s.tsMs;
-    return s.tsMs - this.since >= this.config.nodHoldMs;
-  }
-}
-
-export function detectorFor(challenge: Challenge, config: LivenessConfig): ChallengeDetector {
+export function detectorFor(challenge: Challenge, config: LivenessConfig, oval?: Box): ChallengeDetector {
   switch (challenge) {
-    case "blink":
-      return new BlinkDetector(config);
-    case "smile":
-      return new SmileDetector(config);
-    case "turn_left":
-      return new TurnDetector(config, true);
-    case "turn_right":
-      return new TurnDetector(config, false);
-    case "nod":
-      return new NodDetector(config);
+    case "face_move":
+      return new FaceMoveDetector(config, oval ?? DEFAULT_OVAL);
   }
 }

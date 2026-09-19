@@ -8,9 +8,8 @@ os.environ.update({
     "ADMIN_API_KEY": "admin-key",
     "MIN_FACE_SIZE": "60",
     "ENROLL_MAX_PITCH": "35",
-    "CHALLENGE_POOL": "smile",
-    "SMILE_ENFORCE": "0",  # API tests stream the same still for every frame; see test_smile_enforced_rejects_static_face
-    "FLASH_ENFORCE": "0",  # same reason; see test_flash_enforced_rejects_unlit_frames
+    "OVAL_WIDTH_FRACTION": "0.35",  # the person crops carry a margin of one face width; see run_stream
+    "FLASH_ENFORCE": "0",  # API tests stream the same still for every frame; see test_flash_enforced_rejects_unlit_frames
     "MIN_SESSION_MS": "0",  # the server clocks the stream itself; see test_too_fast_on_the_server_clock
     "MIN_CHALLENGE_MS": "0",
     "DEBUG": "1",
@@ -59,28 +58,70 @@ def person_crops():
     return crops
 
 
-def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, order=None, pause=0.0):
+def far_frame(jpeg: bytes) -> bytes:
+    """The same still seen from twice the distance: padded to twice its size, so the face box halves."""
+    img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        return jpeg
+    h, w = img.shape[:2]
+    return _jpeg(cv2.copyMakeBorder(img, h // 2, h // 2, w // 2, w // 2, cv2.BORDER_REPLICATE))
+
+
+def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, order=None, pause=0.0, move=True,
+               fmt="jpeg"):
     """Drive a session's WebSocket the way a device does: hello, frames, events, end.
 
     Every frame gets a distinct tail so it hashes differently (a real camera never repeats bytes);
     device stamps run 200 ms per frame with each event raised 150 ms before the frame that follows it;
-    `order` overrides the event sequence; `pause` sleeps before the end so server-clock tests can
-    make the session take real time. Returns (plan, last message).
+    the face_move window opens with a padded, far copy of the still and closes with the still itself
+    (`move=False` streams the still throughout, so the server sees no movement); `order` overrides the
+    event sequence; `pause` sleeps before the end so server-clock tests can make the session take real
+    time. `fmt="h264"` sends each frame as one encoded access unit the way the phone plugins do;
+    `fmt="webm"` records the whole session as one VP8 stream and sends it in chunks the way
+    MediaRecorder does. Returns (plan, last message).
     """
     import time
 
+    from tests.video_util import access_units, encode_container
+
     sid, tok = session["session_id"], token if token is not None else session["session_token"]
     seq = 0
+    far = far_frame(jpeg) if move else jpeg
+    decoded = {}
+
+    def image(data):
+        # One size for the whole stream, with even sides: the far frame's, so its face stays detectable.
+        if data not in decoded:
+            img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+            big = cv2.imdecode(np.frombuffer(far, np.uint8), cv2.IMREAD_COLOR)
+            h, w = (big.shape[0] // 2) * 2, (big.shape[1] // 2) * 2
+            decoded[data] = cv2.resize(img, (w, h)) if img.shape[:2] != (h, w) else img[:h, :w]
+        return decoded[data]
+
+    def uniform(img, i):
+        # A camera never repeats bytes: a small marker wanders across the top rows frame by frame.
+        img = img.copy()
+        x = (i * 17) % max(img.shape[1] - 8, 1)
+        img[0:8, x:x + 8] = (255, 255, 255)
+        return img
+
+    recorded = []
     with client.websocket_connect(f"/v1/sessions/{sid}/stream") as ws:
-        ws.send_json({"type": "hello", "token": tok, "client": {"platform": "test"}})
+        ws.send_json({"type": "hello", "token": tok, "client": {"platform": "test"}, "format": fmt})
         plan = ws.receive_json()
         if plan.get("type") != "plan":
             return plan, None
 
-        def frames(n=per_window):
+        def frames(n=per_window, data=jpeg):
             nonlocal seq
             for _ in range(n):
-                ws.send_bytes((seq * 200).to_bytes(8, "big") + jpeg + seq.to_bytes(4, "big"))
+                if fmt == "jpeg":
+                    ws.send_bytes((seq * 200).to_bytes(8, "big") + data + seq.to_bytes(4, "big"))
+                elif fmt == "h264":
+                    recorded.append(uniform(image(data), seq))
+                    ws.send_bytes((seq * 200).to_bytes(8, "big") + access_units([recorded[-1]], fps=5)[0])
+                else:
+                    recorded.append(uniform(image(data), seq))
                 seq += 1
 
         def event(name, index=None):
@@ -91,6 +132,7 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
             frames()
             event("aligned")
             for i in range(len(plan["challenges"])):
+                frames(data=far)
                 frames()
                 event("challenge_done", i)
             for i in range(len(plan["flash_colors"])):
@@ -108,5 +150,10 @@ def run_stream(client, session, jpeg, *, per_window=2, token=None, sleep=0.13, o
                     event(name, int(idx) if idx else None)
         if pause:
             time.sleep(pause)
+        if fmt == "webm":
+            blob = encode_container(recorded, "webm", "libvpx", fps=5)
+            size = len(blob) // 4 + 1
+            for i in range(0, len(blob), size):
+                ws.send_bytes((i // size * 800).to_bytes(8, "big") + blob[i:i + size])
         ws.send_json({"type": "end"})
         return plan, ws.receive_json()

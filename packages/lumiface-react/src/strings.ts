@@ -34,17 +34,13 @@ export const EN: LivenessStrings = {
     holdStill: "Hold still…",
   },
   challenges: {
-    blink: "Close your eyes, then open",
-    smile: "Smile",
-    turn_left: "Turn your head left",
-    turn_right: "Turn your head right",
-    nod: "Nod your head",
+    face_move: "Move closer until your face fills the oval",
   },
   reasons: {
     SPOOF: "Could not confirm a live person",
     NO_MATCH: "Face does not match the registered photo",
     INCONSISTENT: "Face changed during the check",
-    POSE_MISMATCH: "Head movement not detected",
+    MOVEMENT_MISMATCH: "Move closer into the oval, please try again",
     POSE_NOT_FRONTAL: "Look straight at the camera",
     TIMEOUT: "Timed out, please try again",
     FACE_LOST: "Face left the frame",
@@ -58,7 +54,6 @@ export const EN: LivenessStrings = {
     TIMING_TOO_FAST: "Please try again more slowly",
     TIMING_TOO_SLOW: "Too slow, please try again",
     FLASH_FAIL: "Could not confirm a live person (screen reflection)",
-    EXPRESSION_MISMATCH: "Smile not detected, please try again",
     CAPTURE_ERROR: "Camera error, please try again",
     CANCELLED: "Cancelled",
   },
@@ -85,24 +80,19 @@ export const TH: LivenessStrings = {
     holdStill: "อยู่นิ่งๆ สักครู่…",
   },
   challenges: {
-    blink: "หลับตาแล้วลืมตา",
-    smile: "ยิ้ม",
-    turn_left: "หันหน้าไปทางซ้าย",
-    turn_right: "หันหน้าไปทางขวา",
-    nod: "พยักหน้า",
+    face_move: "ขยับเข้ามาให้ใบหน้าเต็มวงรี",
   },
   reasons: {
     ...EN.reasons,
     SPOOF: "ไม่สามารถยืนยันได้ว่าเป็นบุคคลจริง",
     NO_MATCH: "ใบหน้าไม่ตรงกับรูปที่ลงทะเบียน",
     INCONSISTENT: "ใบหน้าเปลี่ยนระหว่างการตรวจ",
-    POSE_MISMATCH: "ตรวจไม่พบการขยับศีรษะ",
+    MOVEMENT_MISMATCH: "ขยับเข้ามาให้เต็มวงรี กรุณาลองใหม่",
     TIMEOUT: "หมดเวลา กรุณาลองใหม่",
     FACE_LOST: "ใบหน้าหลุดออกจากกรอบ",
     NETWORK_ERROR: "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้",
     NO_FACE: "ไม่พบใบหน้า",
     FLASH_FAIL: "ไม่สามารถยืนยันบุคคลจริงได้ (แสงสะท้อนจากหน้าจอ)",
-    EXPRESSION_MISMATCH: "ตรวจไม่พบรอยยิ้ม กรุณาลองใหม่",
     CANCELLED: "ยกเลิก",
   },
   retry: "ลองใหม่",
@@ -122,7 +112,7 @@ export function messageFor(strings: LivenessStrings, state: LivenessState, flow:
     case "aligning":
       return strings.hints[state.hint ?? "noFace"];
     case "challenge":
-      return state.hint ? strings.hints[state.hint] : strings.challenges[state.challenge ?? "blink"];
+      return state.hint ? strings.hints[state.hint] : strings.challenges[state.challenge ?? "face_move"];
     case "flash":
       return strings.flashing;
     case "uploading":
