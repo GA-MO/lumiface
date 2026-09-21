@@ -69,7 +69,7 @@ What the demo's copy promises, and the box must keep (both are in `server/fly.to
 Measured 2026-09-21 from a laptop in Bangkok: with the server *stopped* (the previous setting, and what happens after
 a deploy) the session arrived after 25 s and the plan 17 s later while the models loaded, and visitors left; with the
 server *suspended* the first request resumes it in 0.8 s, then the session arrives in 0.2 s, the plan 0.2 s later, and
-the verdict about 11 s after `end` (3 s on an M-series laptop). The server sits at ~950 MB with the models loaded and
+the verdict about 9 s after `end` with `INFERENCE_THREADS=2` (11 s with one thread; 2–3 s on an M-series laptop — the judging runs only once `end` arrives). The server sits at ~950 MB with the models loaded and
 peaks at ~1.2 GB while judging.
 
 Locally: run the server (`cd server && uv run uvicorn app.main:app --port 8000`), this app, then
