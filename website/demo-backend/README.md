@@ -35,7 +35,7 @@ the stream on the server directly, `wss://`):
 
 | App | Config | Machine | URL |
 |---|---|---|---|
-| `lumiface-demo` (server) | `server/fly.toml` | shared-cpu-2x, 4 GB, volume `lumiface_data` 3 GB (SQLite + the InsightFace models via `INSIGHTFACE_HOME`) | https://lumiface-demo.fly.dev |
+| `lumiface-demo` (server) | `server/fly.toml` | shared-cpu-2x, 2 GB, volume `lumiface_data` 3 GB (SQLite + the InsightFace models via `INSIGHTFACE_HOME`) | https://lumiface-demo.fly.dev |
 | `lumiface-demo-api` (this app) | `website/demo-backend/fly.toml` | shared-cpu-1x, 256 MB | https://lumiface-demo-api.fly.dev |
 
 ```bash
@@ -61,12 +61,16 @@ What the demo's copy promises, and the box must keep (both are in `server/fly.to
 - Sessions are single use, expire with their TTL and are purged after `SESSION_PURGE_GRACE_SECONDS`.
 - `MAX_OPEN_STREAMS=8` (the server closes the socket `SERVER_BUSY` past it, and the demo shows that as a failed
   attempt to retry), `DEMO_RATE` on, `DEMO_ORIGINS` set to the docs site's origin.
-- Both machines `auto_stop` when idle and are billed only while awake (a few dollars a month at demo traffic); the
-  first visitor after a pause waits ~40 s in all while the server starts and loads the models, and the demo log says so.
+- Both machines are billed only while awake (well under a dollar a month at demo traffic). The server is
+  *suspended* when idle (`auto_stop_machines = "suspend"`: a RAM snapshot, so the models stay loaded and the next
+  request resumes it in under a second); suspend needs the machine at 2 GB or less, hence `MAX_CONCURRENT_ANALYSES=1`
+  (a second session queues in the pool). The demo backend simply stops and starts in a second or two.
 
-Measured 2026-09-21 from a laptop in Bangkok, both machines stopped: the session arrives after 25 s, the plan 17 s
-later (the server sends it once its models are loaded), and the verdict about 10 s after `end` (3 s on an M-series
-laptop); warm, the session is immediate.
+Measured 2026-09-21 from a laptop in Bangkok: with the server *stopped* (the previous setting, and what happens after
+a deploy) the session arrived after 25 s and the plan 17 s later while the models loaded, and visitors left; with the
+server *suspended* the first request resumes it in 0.8 s, then the session arrives in 0.2 s, the plan 0.2 s later, and
+the verdict about 11 s after `end` (3 s on an M-series laptop). The server sits at ~950 MB with the models loaded and
+peaks at ~1.2 GB while judging.
 
 Locally: run the server (`cd server && uv run uvicorn app.main:app --port 8000`), this app, then
 `VITE_LUMIFACE_DEMO_URL=http://localhost:8020 bun run dev:site` and open http://localhost:3002.

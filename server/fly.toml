@@ -13,10 +13,12 @@ primary_region = "sin"
   STORE_FRAMES = "0"
   BOOTSTRAP_PRESET = "balanced"
   INSIGHTFACE_HOME = "/srv/data/insightface"
-  # Capacity for one shared-cpu-2x machine: two sessions judged at once, eight sockets before SERVER_BUSY.
+  # Capacity for one shared-cpu-2x / 2GB machine: one session judged at a time (a second one queues in the
+  # pool), eight sockets before SERVER_BUSY. Measured 2026-09-21 (Mac, replay of a genuine session with these
+  # settings): 900 MB idle with the models loaded, 1.2 GB peak while judging — 2GB is the ceiling for suspend.
   DET_SIZE = "320"
   INFERENCE_THREADS = "1"
-  MAX_CONCURRENT_ANALYSES = "2"
+  MAX_CONCURRENT_ANALYSES = "1"
   MAX_OPEN_STREAMS = "8"
   RETENTION_INTERVAL_SECONDS = "300"
   SESSION_PURGE_GRACE_SECONDS = "3600"
@@ -28,9 +30,10 @@ primary_region = "sin"
 [http_service]
   internal_port = 8000
   force_https = true
-  # Billed only while awake: the machine stops after a few idle minutes and the next request starts it
-  # (the port answers in a few seconds, the models load behind it; the demo page says "waking the demo server" meanwhile).
-  auto_stop_machines = "stop"
+  # Billed only while awake: the machine is suspended (RAM snapshot, models stay loaded) after a few idle
+  # minutes and the next request resumes it in well under a second. "stop" instead would reload the models on
+  # every wake (~40 s measured 2026-09-21, and visitors left). Suspend needs memory <= 2GB.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
   min_machines_running = 0
 
@@ -48,4 +51,4 @@ primary_region = "sin"
 
 [[vm]]
   size = "shared-cpu-2x"
-  memory = "4gb"
+  memory = "2gb"
