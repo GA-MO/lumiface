@@ -1,0 +1,31 @@
+# python
+server/.venv/
+server/**/__pycache__/
+examples/backend/.venv/
+examples/backend/__pycache__/
+website/demo-backend/__pycache__/
+server/weights/*.pth
+server/weights/cvpr2024/*
+!server/weights/cvpr2024/README.md
+server/*.db
+server/data/
+server/.env
+# flutter
+**/.dart_tool/
+**/build/
+**/.flutter-plugins*
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/ephemeral/
+**/android/.gradle/
+**/android/local.properties
+**/*.iml
+# bun workspace
+node_modules/
+website/.react-router/
+website/.source/
+pages-site/
+examples/react/dist/
+# misc
+.claude/ui-shots/
+.DS_Store

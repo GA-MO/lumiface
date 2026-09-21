@@ -1,0 +1,32 @@
+name: lumiface
+description: Face verification with active liveness (move into the oval, screen flash, anti-spoof) for iOS, Android and web, backed by the Lumiface server.
+version: 0.4.0
+
+environment:
+  sdk: ^3.12.2
+  flutter: ">=3.35.0"
+
+dependencies:
+  camera: ^0.12.1
+  flutter:
+    sdk: flutter
+  web: ^1.1.1
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  mocktail: ^1.0.5
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: ai.lumiface.lumiface
+        pluginClass: LumifacePlugin
+      ios:
+        pluginClass: LumifacePlugin
+  assets:
+    - assets/lumiface_blazeface.js
+    - assets/face_detection_short/

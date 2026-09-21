@@ -1,0 +1,90 @@
+---
+title: Calibration
+description: Measure your own people and your own attack material before trusting a preset.
+---
+
+Thresholds were calibrated on one team, a Galaxy S25+, an Android emulator with a Mac webcam, the AxonData sample set and a MacBook in Chrome. Your cameras, lighting and screens differ. Three scripts and one flag help.
+
+## scripts/calibrate.py
+
+```
+server/data/samples/
+  real/<person>/*.jpg         genuine photos, several per person, including the one used as the reference
+  fake/*.jpg                  prints, screens, whatever you want to reject
+```
+
+```bash
+cd server && uv run python scripts/calibrate.py data/samples
+```
+
+Prints the distribution of match cosine (genuine vs cross-person) and of the MiniFASNet and CVPR scores (real vs fake), so you can pick `match_threshold`, `spoof_threshold` and `cvpr_threshold` with a margin.
+
+## scripts/eval_videos.py
+
+Runs whole recorded sessions (folders of frames per attempt) through the verify pipeline and reports the reason codes. Used with the AxonData set (genuine, replay, cut-out, paper mask, latex, silicone).
+
+## scripts/eval_lfw.py
+
+Scores the matcher alone on the public [LFW](http://vis-www.cs.umass.edu/lfw/) protocol: 6,000 pairs (3,000 same person, 3,000 different) over 7,701 photos, embedded with the same `buffalo_l` engine the server uses. First run downloads 233 MB into `data/lfw/` and embeds every photo once (about 30 minutes on a laptop CPU, cached afterwards).
+
+```bash
+cd server && uv run python scripts/eval_lfw.py --at 0.30 0.35
+```
+
+Results on 2026-09-18:
+
+| | |
+|---|---|
+| 10-fold accuracy | **99.52% ± 0.34** (insightface reports 99.83 with its own crops) |
+| EER | 0.83% at cosine 0.147 |
+| TAR at FAR 0.1% | 99.07% (threshold 0.212) |
+| Genuine cosine | p1 0.28 · p5 0.48 · median 0.68 · p95 0.82 |
+| Impostor cosine | median 0.00 · p99 0.14 · **max 0.23** |
+| No face at 250 px | 27 photos, 43 pairs counted as rejects |
+
+| `match_threshold` | FAR | FRR (single frame) |
+|---|---|---|
+| 0.30 | 0.00% | 1.07% |
+| 0.35 | 0.00% | 1.27% |
+| 0.40 `relaxed` | 0.00% | 1.93% |
+| 0.45 `balanced` | 0.00% | 3.20% |
+| 0.55 `strict` | 0.00% | 10.67% |
+
+How to read it: no impostor pair in LFW reaches 0.25, so every preset sits well above the false-accept region; the cost of a higher threshold is false rejects, and the server takes the **minimum over the key frames** (neutral, the peak of each challenge, neutral again), so the per-session FRR is higher than the single-frame column. Genuine phone frames on the reference device scored 0.63–0.80, so `balanced` rejects almost nobody in practice. LFW impostors are random public figures; look-alikes, siblings and a single-ethnicity user base are harder, which is why `strict` keeps 0.55 for access control. Run `calibrate.py` on your own people before lowering anything.
+
+## Replaying stored sessions
+
+`STORE_FRAMES=1` keeps every frame of a session together with `session.json`: the plan, both clocks of every frame
+and event, the client, and the verdict. `scripts/replay_sessions.py` runs the pipeline over such folders again, so
+a change to a window, a threshold or the frame placement is checked against real sessions instead of asking someone
+back in front of the camera:
+
+```bash
+cd server && uv run python scripts/replay_sessions.py data/frames/1            # every stored session, verdict now vs then
+FLASH_MIN_RESPONSE=4 uv run python scripts/replay_sessions.py data/frames/1    # the same under another policy
+```
+
+Sort sessions you have labelled into `data/sessions/genuine/` and `data/sessions/attack/` (each folder carries its
+`reference.npy`; sessions from before reference photos name a `subject_id` and use `data/sessions/subjects/<id>.npy`)
+and `tests/test_replay.py` turns them into a regression gate:
+genuine must pass, attack must be refused, under the balanced preset.
+
+## STORE_FRAMES and DEBUG
+
+`STORE_FRAMES=1` keeps every decoded frame of a failed verification under `data/frames/<project>/<session_id>/` (with `session.json` for both clocks, the events and the plan, and the raw `stream.webm` / `.mp4` / `.h264` the device sent); with `DEBUG=1` every verification is kept. The verdict's [`details`](/docs/reason-codes#the-details-object) — the server's windows, the `face_move` readings, flash scores, key frames and every gate's verdict — are in the verification row's `details` column, whatever the session was refused for. `POST /v1/debug/score` scores a single photo.
+
+## Numbers from the reference devices
+
+| Signal | Genuine | Attack |
+|---|---|---|
+| Flash correlation (S25+, streamed) | 0.83–0.99 | replay on a phone screen 0.77–0.96 (correlation alone does not separate) |
+| Flash response (S25+, streamed) | 26–53 | replay 13–26, emulator 0.3 |
+| Flash background ratio | 0.38–0.45 (S25+), 0.28 (MacBook, Chrome) | replay 1.15–2.31 (phone camera), 1.27–1.39 (streamed, phone and webcam) |
+| Flash response (MacBook, Chrome, 640×480 stage) | 13.2 | replay 2.5 |
+| Flash response / locality (iPhone 12, Safari, both SDKs) | 6.9–15.9 / 0.39–0.52 | replay 0.95 / 3.04 |
+| Flash response / locality (iPhone 12, Flutter native) | 17–27 / 0.37–0.47 | replay 0.49 / 7.26 |
+| MiniFASNet real score, key frames (iPhone 12 native, upright frames) | 0.91–0.999 | sideways frames (a rotation bug) scored 0.22–0.5: orientation matters more than the threshold |
+| CVPR live prob, crop margin 0.3 | ≥ 0.30 | replay ≤ 0.015 |
+| `face_move` growth / fill, server box (2026-09-19; S25+ TFLite BlazeFace, Chrome tfjs BlazeFace, iPhone 12 Vision) | 1.20–1.66 / 0.81–0.97 | a still: growth 1.0; a replayed video of the walk passes this gate (1.4–2.4) and is stopped by the flash |
+| Flash locality with the oval flow (same devices) | 0.02–0.25 (MacBook), 0.41–0.56 (S25+, iPhone 12); over video 0.32–0.53 | phone-screen replay 1.5–3.1 (S25+, MacBook), 6.6–8.6 (iPhone 12); over video 2.4–7.0 |
+| Frames per session | JPEG 6–8 fps; video ~30 fps (S25+ MediaCodec 360×640, iPhone 12 VideoToolbox 720×1280, Chrome MediaRecorder 1280×720 ~13 fps in a synthetic run) | |

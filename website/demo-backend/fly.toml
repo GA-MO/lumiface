@@ -1,0 +1,33 @@
+# The docs-site demo backend: mints liveness sessions for the live demo and holds the demo project's key.
+# Secrets: LUMIFACE_KEY (the same value as the server's BOOTSTRAP_API_KEY). The site is built with
+# VITE_LUMIFACE_DEMO_URL=https://lumiface-demo-api.fly.dev (repository variable LUMIFACE_DEMO_URL).
+app = "lumiface-demo-api"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  LUMIFACE_URL = "https://lumiface-demo.fly.dev"
+  LUMIFACE_PUBLIC_URL = "https://lumiface-demo.fly.dev"
+  DEMO_ORIGINS = "https://ga-mo.github.io,http://localhost:3002"
+  DEMO_RATE = "20"
+  DEMO_TRUST_PROXY = "1"
+
+[http_service]
+  internal_port = 8020
+  force_https = true
+  auto_stop_machines = "stop"   # starts in a second or two on the next request
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "5s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

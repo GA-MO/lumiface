@@ -1,0 +1,36 @@
+{
+  "name": "@lumiface/react",
+  "version": "0.3.0",
+  "description": "Face verification with active liveness for React: TensorFlow.js BlazeFace on the client, the Lumiface server behind it.",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "src",
+    "models"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./core": "./src/core.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^18.3.0 || ^19.0.0",
+    "react-dom": "^18.3.0 || ^19.0.0"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-backend-cpu": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.2.0"
+  }
+}

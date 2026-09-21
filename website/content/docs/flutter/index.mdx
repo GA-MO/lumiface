@@ -1,0 +1,124 @@
+---
+title: Flutter package
+description: Install lumiface, show FaceVerifyView, read the result. iOS, Android and web from one code base.
+---
+
+## Install
+
+```yaml
+dependencies:
+  lumiface:
+    path: ../lumiface/packages/lumiface   # or a git url with a tag
+```
+
+- iOS: `NSCameraUsageDescription` in `Info.plist`, platform 15.5 or newer. Xcode 26 refuses pods that declare a deployment target under 15, so the example's `Podfile` pins every pod to 15.5 in `post_install`; copy that block.
+- Android: `minSdk` 23 or newer and `<uses-permission android:name="android.permission.INTERNET" />` in your manifest (Flutter adds it to debug builds only; ML Kit used to bring it into release builds, TensorFlow Lite does not). The package's plugin bundles TensorFlow Lite (`org.tensorflow:tensorflow-lite`) and the short-range BlazeFace model (230 KB) and ships the R8 keep rules it needs.
+- iOS: the plugin uses Apple Vision (`VNDetectFaceRectanglesRequest`), part of the OS, no pods beyond Flutter's.
+- Web: nothing to add; the TensorFlow.js glue and the BlazeFace model are loaded from the package assets. See [Web](/docs/flutter/web).
+
+## The view
+
+```dart
+FaceVerifyView(
+  client: LumifaceClient(baseUrl: 'https://faces.example.com'),
+  sessionProvider: () async => FaceSession.fromJson(await myApi.createFaceSession('E001')),
+  strings: LivenessStrings.th,
+  theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme),
+  onResult: (VerifyResult r) { ... },
+  onFlashChanged: (on) => ...,  // push brightness to max while the screen flashes
+)
+```
+
+It fills its parent, so put it in a `Scaffold` body or any sized box. The result arrives once through `onResult`; the default overlay then shows a Done or Try again button that pops the route.
+
+## The app holds no secret
+
+`LumifaceClient` takes a URL and nothing else — there is no way to give it the project key — and it can do
+exactly one thing: stream the recording of a session it was handed. The session comes from your backend, which is
+the only place the key and the users' photos live:
+
+```dart
+// app
+FaceVerifyView(
+  client: LumifaceClient(baseUrl: 'https://faces.example.com'),
+  sessionProvider: () async {
+    final r = await myApi.post('/face/session', {'user': 'E001'});   // your route, behind your login
+    return FaceSession.fromJson(r);
+  },
+  onResult: (r) => myApi.post('/face/done', {'session': r.sessionId}),
+)
+```
+
+```python
+# your backend, any language: two REST calls with the key (Python shown; examples/backend and examples/backend-node have the whole thing)
+photo = base64.b64encode(user.photo_bytes).decode()   # the photo you already hold for this user
+session = httpx.post(f"{LUMIFACE}/v1/sessions", headers=KEY, json={"reference_photo": photo, "purpose": "checkin"}).json()
+return session                                   # → the app, as is; the server keeps the photo for this session only
+
+# later, when the app says it is done:
+status = httpx.get(f"{LUMIFACE}/v1/sessions/{session_id}", headers=KEY).json()
+if status["result"] and status["result"]["ok"]: mark_checked_in(user)
+```
+
+There is no backend SDK on purpose: the key's side of the API is a handful of REST calls
+([reference](/docs/api)), and the packages the app depends on then contain nothing a key could leak
+through. The server also refuses the key from any browser origin but localhost.
+
+The `VerifyResult` the app receives is for the UI; the decision is the `GET /v1/sessions/{id}` on your backend.
+
+<TypeTable
+  type={{
+    client: { type: "LumifaceClient", required: true, description: "Server URL. Holds no secret." },
+    sessionProvider: { type: "Future<FaceSession> Function()", description: "Fetches the session your backend created with the reference photo (FaceSession.fromJson of its JSON). Required." },
+    flow: { type: "FaceFlow", description: "verify (default) or liveness: the copy shown until the session arrives; the session decides." },
+    config: { type: "LivenessConfig?", description: "Overrides the project's client_config. Leave null to follow the policy." },
+    strings: { type: "LivenessStrings", description: "Every text. en and th are built in; copyWith changes single lines." },
+    theme: { type: "FaceVerifyTheme", description: "Colours, guide shape and geometry, progress bar, message style." },
+    facing: { type: "CameraFacing", description: "front (default) or back." },
+    sourceFactory: { type: "CameraFaceSource Function()?", description: "Your own camera + detector in place of the platform one; see Custom UI." },
+    showDebug: { type: "bool", description: "Draws the face box and a line of raw signals." },
+    autoStart: { type: "bool", description: "false hands you the controller through onController to start later." },
+    onController: { type: "void Function(FaceVerifyController)?", description: "Receives the controller once the camera is up." },
+    clientInfo: { type: "Map<String, dynamic>", description: "Sent in the stream hello and stored with the verification (platform, app version)." },
+    loadingBuilder: { type: "WidgetBuilder?", description: "Shown while the camera opens." },
+    errorBuilder: { type: "Widget Function(BuildContext, Object)?", description: "Shown when the camera cannot start." },
+    overlayBuilder: { type: "FaceScopeBuilder?", description: "Replaces the whole overlay; the camera stays underneath." },
+    promptBuilder: { type: "FaceScopeBuilder?", description: "Replaces the message line." },
+    progressBuilder: { type: "FaceScopeBuilder?", description: "Replaces the progress bar." },
+    resultBuilder: { type: "FaceScopeBuilder?", description: "Replaces the Done / Try again area." },
+    flashBuilder: { type: "FaceScopeBuilder?", description: "Draws the flash; must fill the screen with scope.state.flashColor." },
+    onResult: { type: "void Function(VerifyResult)", required: true, description: "Called once when the flow ends." },
+    onFlashChanged: { type: "void Function(bool)?", description: "true when the flash step starts, false when it ends." },
+    onStateChanged: { type: "void Function(LivenessState)?", description: "Every state change." },
+  }}
+/>
+
+## The result
+
+```dart
+class VerifyResult {
+  bool ok;
+  String mode;            // verify | liveness
+  String reasonCode;      // OK or a code from the reason-codes page
+  VerifyScores scores;    // match, spoof, consistency (null when not applicable)
+  int? verificationId;    // set on success for verify and liveness
+  String? sessionId;      // hand it to your backend for GET /v1/sessions/{id}
+  String? message;        // detail for client-side codes (NETWORK_ERROR, CAPTURE_ERROR)
+}
+```
+
+## The client
+
+`LumifaceClient` is the device side only: `openStream(session, format:)` returns a `VerifyStream` (`plan`, `sendChunk`, `event`, `end`, `close`) that the controller drives. Errors other than a verdict throw `LumifaceException(reasonCode, details)`.
+
+## Theme
+
+`FaceVerifyTheme` covers `backgroundColor`, `maskColor`, `guideColor` / `guideActiveColor` / `guideSuccessColor` / `guideFailedColor`, `guideShape` (`oval`, `roundedRect`, `none`), `guideWidthFraction`, `guideAspectRatio`, `guideCenterY`, `guideStrokeWidth`, `progressColor`, `progressBackgroundColor`, `messageStyle`, `messagePadding`, `showProgress`, `showButtons`. `FaceVerifyTheme.fromScheme(colorScheme)` derives the colours from your Material theme.
+
+## Strings
+
+`LivenessStrings.en` and `LivenessStrings.th`. `copyWith` replaces single lines and merges `reasons`, so a login screen can say "Welcome back" instead of "Verified" without redefining the rest:
+
+```dart
+strings: LivenessStrings.en.copyWith(success: 'Welcome back'),
+```

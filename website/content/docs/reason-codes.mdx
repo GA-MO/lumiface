@@ -1,0 +1,80 @@
+---
+title: Reason codes
+description: Every code a verification, a reference photo or the SDK can end with, who raises it, and what the user should do.
+---
+
+## Verify pipeline (server)
+
+| Code | Meaning | Usual fix |
+|---|---|---|
+| `OK` | passed | |
+| `FRAME_COUNT` | no frames reached the server, or the video stream did not decode | client bug, network, an unsupported recording |
+| `TIMING_ORDER` | the events did not follow the plan (missing, repeated, reordered) | client bug |
+| `TIMING_TOO_FAST` | whole session under `min_session_ms` or the `face_move` window under `min_challenge_ms`, on the server's clock | scripted client |
+| `TIMING_TOO_SLOW` | the `face_move` window over `max_challenge_ms` | retry |
+| `FRAMES_STATIC` | the decoded frames repeat (the same picture again and again) | a still image played as video, a frozen feed |
+| `NO_FACE` | no face in the frames of a window (`details.window`) | lighting, framing |
+| `MULTIPLE_FACES` | more than one comparable face | one person in frame |
+| `FACE_TOO_SMALL` | face box under `min_face_size` | move closer |
+| `SPOOF` | MiniFASNet or CVPR gate failed (`details.gate`) | real face, no screen |
+| `MOVEMENT_MISMATCH` | in the `face_move` window the face did not grow from far into the oval (`details.challenge_<i>`: `start_width`, `end_width`, `growth`, `fill`, `centred`) | start further away, then move in until the oval is filled |
+| `FLASH_FAIL` | reflection did not follow the colours or the surroundings reflected as much as the face | full brightness, no screen |
+| `NO_MATCH` | a frame below `match_threshold` against the reference photo | wrong person or a poor reference photo |
+| `INCONSISTENT` | frames not the same person | one person for the whole session |
+
+## The `details` object
+
+The verdict the device gets is just `ok`, `reason_code` and the three headline `scores`; the full
+`details` object lives in the verification row (`GET /v1/verifications` is the summary, the row's
+`details` column the record) and in a stored session's `session.json`. It is where a backend reads
+*why*, and where a change to the pipeline is checked without another live round
+(`scripts/replay_sessions.py`).
+
+**Every gate runs, whatever an earlier one found.** A session refused at the flash still carries its
+MiniFASNet, CVPR and match scores; the `reason_code` is the first gate that failed *and counts* (a
+flash failure counts only when `flash_enforce` is on). So the fields below are present regardless of
+the verdict, and `details.gates` names each gate's own outcome. This is deliberate: gates can be
+added, reordered or retired, so read `details.gates` for what ran rather than assuming a fixed set.
+
+| Field | Shape | Meaning |
+|---|---|---|
+| `gates` | `{name: "pass" \| "skipped" \| <reason_code>}` | every gate in pipeline order with its own verdict; `skipped` when it had nothing to score (e.g. `match` on a liveness session, a gate after a window that found no face) |
+| `frames` | int | frames the pipeline judged after decoding |
+| `unique_frames` | int | distinct frame bytes (a replayed still repeats; drives `FRAMES_STATIC`) |
+| `placement` | `"client" \| "server"` | which clock placed frames into windows (client stamps when every event carried a `ts`, else server arrival) |
+| `windows` | `{align_ms, challenges_ms[], flash_ms[], end_ms}` | each window's duration on the server clock |
+| `challenge_<i>` | `{name, frames, start_width, end_width, growth, fill, centred}` | the `face_move` reading; `growth`/`fill` against `move_min_growth`/`move_min_fill` |
+| `flash` | `{correlation, response, order_ok, deltas, background_ratio, enforced}` | the flash score; `enforced` is `flash_enforce`, `background_ratio` the surroundings/face ratio |
+| `key_frames` | `[{kind, t, yaw, pitch, det, spoof?, cvpr?}]` | the frames identity was read on: the passive gates' key frames (`neutral_start`, `challenge_<i>`, `neutral_end`, each with its MiniFASNet `spoof` and CVPR `cvpr`) followed by the middle frame of each flash window (`flash_<i>`, identity only) |
+| `cvpr_mean` | float | mean CVPR live score over the key frames (absent when CVPR is off) |
+| `match` | `[float]` | cosine against the reference photo per entry of `key_frames`, in the same order (absent for a liveness session) |
+| `consistency` | float | worst cross-frame cosine (drives `INCONSISTENT`) |
+| `gate` | `"minifasnet" \| "cvpr2024"` | which passive gate a `SPOOF` verdict came from |
+| `window` | `"align" \| "challenge_<i>" \| "end"` | which window a `NO_FACE` verdict came from |
+| `challenge` | str | the challenge a `MOVEMENT_MISMATCH` came from |
+
+`scripts/replay_sessions.py` prints `details.gates` as a line per session; add `--details` for the
+rest of the object. With `flash_enforce` off, a gate the flash would have stopped shows as
+`flash=FLASH_FAIL(shadow)` — scored, not counted — so a passive-only run shows what each later gate
+would have said.
+
+## Reference photo (server, at `POST /v1/sessions`)
+
+`BAD_IMAGE`, `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL`, `POSE_NOT_FRONTAL` (422) and `PAYLOAD_TOO_LARGE` (413): the
+backend's photo could not be used, answered before any session exists. It is not anti-spoof checked.
+
+## HTTP level
+
+`SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE`, `SERVER_BUSY` (the worker holds `MAX_OPEN_STREAMS` sockets; the session is unspent, retry), `PROJECT_EXISTS`, `PROJECT_NOT_FOUND`, `UNKNOWN_PRESET`, `POLICY_INVALID`, `API_KEY_MISSING` and `API_KEY_INVALID` (401, no or an unknown `X-API-Key`), `API_KEY_FROM_BROWSER` (a project key sent from a browser page other than localhost), `TOKEN_INVALID` (401, a malformed bearer token or one whose project is gone), `ADMIN_KEY_UNSET` (403, `ADMIN_API_KEY` is not configured) and `ADMIN_KEY_INVALID` (401), and `HTTP_<status>` when the server answered without a code. Every refusal is `{"detail": {"reason_code": …}}`. `BAD_IMAGE` is the reference photo's verdict when it does not decode (a streamed frame that does not decode is skipped).
+
+## SDK (device)
+
+| Code | Meaning |
+|---|---|
+| `TIMEOUT` | the oval was not filled within `challenge_timeout_ms`, or the session TTL passed |
+| `FACE_LOST` | no face for longer than `face_lost_grace_ms` |
+| `CANCELLED` | `cancel()` was called |
+| `NETWORK_ERROR` | session or verify request failed |
+| `CAPTURE_ERROR` | the camera could not deliver a frame |
+
+Both SDKs map every code to a user-facing line in `LivenessStrings` (en, th); unknown codes are shown as is.

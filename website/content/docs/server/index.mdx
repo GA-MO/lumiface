@@ -1,0 +1,69 @@
+---
+title: Server
+description: Deploy the FastAPI server with Docker or uv, configure it through the environment, keep the weights and the database.
+---
+
+## Docker
+
+```bash
+cd server
+cp .env.example .env            # BOOTSTRAP_API_KEY, ADMIN_API_KEY, defaults for the balanced preset
+docker compose up --build       # buffalo_l is downloaded into a volume on first start
+```
+
+The image bundles the MiniFASNet ONNX files and expects `weights/cvpr2024/resnet50.onnx` (convert it once, see [Get started](/docs/get-started)). Video from the devices is decoded with PyAV (`av`, FFmpeg bundled in the wheel: VP8, H.264), no system FFmpeg needed. `data/` holds the SQLite database and, with `STORE_FRAMES=1`, the frames of failed verifications for calibration.
+
+## Environment
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `sqlite:///./data/lumiface.db` | any SQLAlchemy URL, Postgres included |
+| `BOOTSTRAP_PROJECT_NAME` | `default` | project created on first start when the table is empty |
+| `BOOTSTRAP_API_KEY` | random | its API key (logged when generated) |
+| `BOOTSTRAP_PRESET` | `balanced` | its preset |
+| `ADMIN_API_KEY` | unset | enables `/v1/projects` (`X-Admin-Key`) |
+| `DEBUG` | `0` | mounts `/v1/debug/score`; with `STORE_FRAMES` keeps the frames of every verification, not only failed ones |
+| `STORE_FRAMES` | `0` | keep the decoded frames (and the raw video, `stream.<format>`, and the reference embedding, `reference.npy`) of failed (or, with DEBUG, all) verifications under `FRAMES_DIR/<project>/<session>/` |
+| `FRAMES_DIR` | `data/frames` | where those frames go |
+| `WEIGHTS_DIR` | `weights` | ONNX files |
+| `DET_SIZE` | `320` | detector input size; the SDKs stream a 640 px long side, so 320 judges the same set as 640 at half the cost (replay set, 2026-09-20) |
+| `INFERENCE_THREADS` | `2` | intra-op threads of every ONNX session |
+| `MAX_CONCURRENT_ANALYSES` | cores ÷ `INFERENCE_THREADS` | sessions decoded and judged at once per worker; the rest queue |
+| `MAX_OPEN_STREAMS` | 4 × `MAX_CONCURRENT_ANALYSES` | sockets a worker holds open (streaming or queued); beyond it a new socket closes `SERVER_BUSY` |
+| `WORKERS` | `1` | uvicorn processes in the Docker image; each loads its own models (about 1 GB) and its own pool, so keep `WORKERS × MAX_CONCURRENT_ANALYSES × INFERENCE_THREADS` at the core count |
+| `MAX_STREAM_CHUNKS` | `1800` | messages accepted on one stream (video chunks or JPEG frames) |
+| `MAX_STREAM_FRAMES` | `900` | decoded frames kept per session; a longer video is thinned evenly |
+| `SESSION_TTL_SECONDS` | `60` | how long a session can be started |
+| `RETENTION_INTERVAL_SECONDS` | `300` | purge loop period, `0` disables |
+| `SESSION_PURGE_GRACE_SECONDS` | `3600` | how long a spent session row stays |
+| `CVPR_ENABLED` | `1` | load the CVPR-2024 gate (can also be switched per project) |
+| every policy field | see reference | the defaults of the `balanced` preset |
+
+Policy fields in the environment (`MATCH_THRESHOLD`, `FLASH_ENFORCE`, ...) are the server-wide defaults; per-project changes go through the [policy API](/docs/server/policy).
+
+## Capacity
+
+A session costs the CPU about 24 detector passes (SCRFD, the 68-point landmark model and ArcFace on each key
+frame the pipeline picks) and five anti-spoof passes, all at the end of the stream; while the device streams,
+the socket only buffers. Every CPU step of a session (video decode, the pipeline, the frame store) runs in one
+pool of `MAX_CONCURRENT_ANALYSES` threads, each ONNX session on `INFERENCE_THREADS` cores, so sessions never
+oversubscribe the machine: measured on an Apple M4 (10 cores) with eight stored genuine sessions
+on 2026-09-20, the default threading of ONNX Runtime judged 0.18 sessions/s one at a time and fell to 0.10–0.12
+with four to eight in flight, while the pool as shipped (five analyses on two threads each, `DET_SIZE=320`)
+judges eight in flight at 1.17 sessions/s. A 2-core host gets one analysis at a time and four open sockets; the last of four people who end
+together waits for the three before them. Past `MAX_OPEN_STREAMS` a socket is closed `SERVER_BUSY` before its
+hello is read and the session stays unspent, so the device can retry. Scaling out is one Postgres and any number
+of hosts behind a plain load balancer: a stream holds its state in the socket that carries it, and the session
+is claimed atomically in the database, so no host affinity is needed.
+
+## Database
+
+SQLite works for a team. For more than one worker or host, point `DATABASE_URL` at Postgres. Tables: `project`, `verifysession`, `verification`. The server adds columns it introduced later on start (`preset`, `policy_overrides`, `purpose`, `token`, `reference`, `reference_embedding`, `api_key_hash`), hashes the keys of a database that still holds them in `api_key`, rebuilds a table to lose columns the model no longer has (`api_key`, `subject_id`, `subject_external_id`), and drops the `subject` and `enroltoken` tables of a database from before enrolment was removed, embeddings included. Project keys are stored as SHA-256 only (`project.api_key_hash`). Nothing biometric stays in a row past the session: `verifysession.reference_embedding` is cleared when the stream claims the session. The verdict's full `details` (windows, the `face_move` readings, flash scores, key frames, and every gate's own verdict) live in `verification.details` for your backend; the device only ever gets the verdict. See [the `details` object](/docs/reason-codes#the-details-object).
+
+## Health and versions
+
+`GET /health` returns `{"ok": true, "presets": [...]}`. The OpenAPI document is at `/docs` (FastAPI) when the server runs.
+
+## Licences
+
+InsightFace `buffalo_l` weights are non-commercial research only. MiniFASNet weights are Apache-2.0, the CVPR-2024 model MIT, the rest MIT or Apache-2.0.

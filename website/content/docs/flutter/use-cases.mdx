@@ -1,0 +1,69 @@
+---
+title: Use cases
+description: The same view configured for attendance, login, a kiosk and a fully custom screen, as in the example app.
+---
+
+All four live in `examples/flutter/lib/pages/usecases_page.dart`. `backend` below is the app's HTTP client for
+*your* backend (`examples/flutter/lib/example_backend.dart`), which creates the session with the project key,
+the user's photo as the reference and the purpose; the app only passes the session on.
+
+## Attendance check-in
+
+Verify the logged-in user against the photo on file, label it `checkin`, a custom success line (`LivenessStrings.th` for Thai):
+
+```dart
+FaceVerifyView(
+  client: client,
+  sessionProvider: () => backend.createSession(userId: employeeId, purpose: 'checkin'),
+  strings: LivenessStrings.en.copyWith(success: 'Checked in'),
+  onResult: done,
+  onFlashChanged: setMaxBrightness,
+)
+```
+
+## Login with face
+
+Same flow, the app's colours and a rounded guide:
+
+```dart
+FaceVerifyView(
+  client: client,
+  sessionProvider: () => backend.createSession(userId: userId, purpose: 'login'),
+  strings: LivenessStrings.en.copyWith(success: 'Welcome back'),
+  theme: FaceVerifyTheme.fromScheme(Theme.of(context).colorScheme).copyWith(
+    guideShape: FaceGuideShape.roundedRect,
+    guideWidthFraction: 0.8,
+    guideAspectRatio: 1.2,
+  ),
+  onResult: done,
+)
+```
+
+## Liveness only (kiosk, gating a form)
+
+The backend creates the session without a reference photo: the server proves a live person and records the verification with `reference: false`.
+
+```dart
+FaceVerifyView(
+  client: client,
+  flow: FaceFlow.liveness,
+  sessionProvider: () => backend.createSession(purpose: 'kiosk'),
+  onResult: done,
+)
+```
+
+## Custom UI
+
+`overlayBuilder` receives a `FaceVerifyScope` (state, latest signal, strings, theme, flow, `message`, `displayBox`, `cancel()`) and draws everything on top of the preview. See [Custom UI](/docs/flutter/custom-ui).
+
+## Screen brightness
+
+The flash check works best at full brightness. The package adds no brightness plugin; the example uses `screen_brightness` in `onFlashChanged`:
+
+```dart
+Future<void> setMaxBrightness(bool on) async {
+  if (kIsWeb) return;
+  final sb = ScreenBrightness.instance;
+  on ? await sb.setApplicationScreenBrightness(1.0) : await sb.resetApplicationScreenBrightness();
+}
+```

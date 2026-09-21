@@ -1,0 +1,30 @@
+{
+  "title": "Docs",
+  "pages": [
+    "---Start---",
+    "get-started",
+    "concepts",
+    "---Backend---",
+    "backend",
+    "---Flutter---",
+    "flutter/index",
+    "flutter/use-cases",
+    "flutter/custom-ui",
+    "flutter/web",
+    "---React---",
+    "react/index",
+    "react/custom-ui",
+    "---Server---",
+    "server/index",
+    "server/projects",
+    "server/policy",
+    "server/calibration",
+    "---Reference---",
+    "policy-reference",
+    "api",
+    "protocol",
+    "reason-codes",
+    "security",
+    "roadmap"
+  ]
+}

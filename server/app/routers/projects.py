@@ -1,0 +1,78 @@
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy import func
+from sqlmodel import Session, col, delete, select
+
+from ..db import get_db
+from ..deps import admin_key
+from ..keys import hash_api_key, new_api_key
+from ..models import Project, Verification, VerifySession
+from ..policy import PRESETS
+
+router = APIRouter(prefix="/v1/projects", tags=["projects"], dependencies=[Depends(admin_key)])
+
+
+class ProjectCreate(BaseModel):
+    name: str
+    preset: str = "balanced"
+
+
+class ProjectOut(BaseModel):
+    id: int
+    name: str
+    preset: str
+    created_at: str
+    api_key: str | None = None
+    verifications: int = 0
+
+
+def _out(p: Project, db: Session, api_key: str | None = None) -> ProjectOut:
+    verifications = db.exec(select(func.count()).select_from(Verification).where(Verification.project_id == p.id)).one()
+    return ProjectOut(id=p.id, name=p.name, preset=p.preset, created_at=p.created_at.isoformat() + "Z",
+                      api_key=api_key, verifications=verifications)
+
+
+@router.post("", response_model=ProjectOut, status_code=201)
+def create_project(body: ProjectCreate, db: Session = Depends(get_db)):
+    if body.preset not in PRESETS:
+        raise HTTPException(422, {"reason_code": "UNKNOWN_PRESET", "presets": list(PRESETS)})
+    if db.exec(select(Project).where(Project.name == body.name)).first():
+        raise HTTPException(409, {"reason_code": "PROJECT_EXISTS"})
+    key = new_api_key()
+    p = Project(name=body.name, api_key_hash=hash_api_key(key), preset=body.preset)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return _out(p, db, api_key=key)
+
+
+@router.get("", response_model=list[ProjectOut])
+def list_projects(db: Session = Depends(get_db)):
+    return [_out(p, db) for p in db.exec(select(Project).order_by(Project.id)).all()]
+
+
+@router.post("/{project_id}/rotate-key", response_model=ProjectOut)
+def rotate_key(project_id: int, db: Session = Depends(get_db)):
+    p = db.get(Project, project_id)
+    if not p:
+        raise HTTPException(404, {"reason_code": "PROJECT_NOT_FOUND"})
+    key = new_api_key()
+    p.api_key_hash = hash_api_key(key)
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return _out(p, db, api_key=key)
+
+
+@router.delete("/{project_id}", status_code=204)
+def delete_project(project_id: int, db: Session = Depends(get_db)):
+    p = db.get(Project, project_id)
+    if not p:
+        raise HTTPException(404, {"reason_code": "PROJECT_NOT_FOUND"})
+    # Sessions go too: SQLite reuses ids, so a live session token must not outlive its tenant.
+    # Bulk statements, so the children are gone before the project row (the ORM has no relationship to order by).
+    for model in (Verification, VerifySession):
+        db.exec(delete(model).where(col(model.project_id) == p.id))
+    db.delete(p)
+    db.commit()

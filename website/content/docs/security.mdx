@@ -1,0 +1,70 @@
+---
+title: Security model
+description: What Lumiface stops, what it does not, the numbers behind the thresholds, and how to deploy it safely.
+---
+
+Lumiface is not certified liveness (no ISO 30107-3 evaluation). It is a layered defence that was measured against printed photos, phone and monitor replays, cut-outs, paper masks and latex or silicone masks.
+
+## Layers
+
+1. **The oval** (`face_move`, the only challenge): the server draws an oval and the person holds still at a normal selfie distance, then moves closer until the face fills it, then holds. The device guides with a face box (BlazeFace on the web and Android, Apple Vision on iOS) and decides nothing; the server reads its own face boxes on the streamed frames: the face must grow by `move_min_growth` (1.15×, from the farthest it was in the window, since a person who aligned close first backs off and then walks in) into `move_min_fill` (75 % of the oval on the server's own box, against 85 % on the device's: InsightFace's box came out up to 7 % narrower than BlazeFace's on a webcam), centred, within the timing limits (the window 300 ms – 10 s, the whole session ≥ 1.5 s). A still image cannot grow into the oval on cue and a replayed video does not follow it in time; the frame that fills the oval is also the closest, sharpest face every later gate scores.
+2. **Passive anti-spoof** on the server for every frame: MiniFASNet V2 + V1SE (needs a hard floor per frame and a mean), then the CVPR-2024 ResNet50 on a face crop with margin 0.3, which catches bezel-free screen replay (replay ≤ 0.015 against genuine ≥ 0.30).
+3. **Screen flash**: three random saturated colours chosen by the server, each held on the screen while frames keep streaming; the hue shift on the cheeks across each colour's window must correlate with the commanded sequence and beat every other permutation, and the surroundings may reflect at most 0.8× what the face does (real faces 0.47–0.52 on a phone, 0.04 on a laptop; a replayed phone screen 1.15–2.31 because the whole sheet reflects).
+4. **Identity**: on six frames — the three key frames (aligned, oval filled, end) and the middle frame of each flash window — every one ≥ `match_threshold` against the reference photo's embedding, and every pair ≥ 0.60 (0.40 when one is turned away) against each other. A face swapped in for the flash alone (another person reflects the colours while the reference person takes the key frames) fails here; on the 27 genuine sessions of the replay set (2026-09-19) the flash frames match 0.62–0.76 against 0.63–0.81 for the key frames, so the tint costs nothing at the 0.45 threshold. The flash frames stay out of anti-spoof, which the tint would bias.
+
+## Measured results
+
+| Material | Result |
+|---|---|
+| Genuine (AxonData 14 sessions, team phones, emulator, MacBook; the oval flow on 2026-09-19: 27 sessions on a Galaxy S25+, Chrome and an iPhone 12, the last 6 over video at ~30 fps) | pass (one Chrome session at server fill 0.79 set the 0.75 floor) |
+| Phone and monitor replay (12; plus 10 videos of the person walking into the oval, replayed on a phone screen, 2026-09-19) | 0 pass: most passed the oval (growth 1.2–2.4) and were refused by the flash's locality (1.5–8.6); one fell short of the oval (`MOVEMENT_MISMATCH`) |
+| Cut-outs (5), paper masks (5) | 0 pass |
+| Latex (3), silicone (3) masks | pass both passive gates and are **not stopped**: the flow has no gesture, so a mask worn by a live person passes (the earlier smile re-check was removed with the gestures on 2026-09-18) |
+| Still photo moved towards the camera | not measured with the oval flow; a still streamed from a fixed position fails `MOVEMENT_MISMATCH` (growth 1.0, API tests), one carried into the oval is left to the passive gates and the flash |
+
+## Without the flash
+
+`flash_count: 0` runs the oval alone. That is a faster check for people who cannot look at flashing colours, and a
+weaker one: on 2026-09-19 every phone-screen replay of a person walking into the oval passed the oval itself and was
+stopped by the flash. Replaying the same ten attack sessions with `flash_enforce: false` shows what is left without
+it: nine were still refused by MiniFASNet (the phone screen scores 0.000–0.0003 on every key frame from a phone
+camera; from the MacBook webcam two of the three key frames scored 0.82–0.90 and only the per-frame hard floor,
+0.07 and 0.0005 on the far frame, caught them) and one by `MOVEMENT_MISMATCH`. So the passive gates held against a
+phone-screen replay, with a thin margin on a webcam, and nothing at all stands against injected video of the person
+walking in (a synthetic camera did exactly that in a test the same day and was stopped only by the flash's colours).
+Offer the no-flash mode as an accessibility path, on a project of its own with `strict` thresholds, not as the default.
+
+## Not covered
+
+- **A compromised device.** Every server gate scores the pixels the device sends, and the device learns the challenges and the flash colours from the plan so it can run the flow. Since the flow is streamed as video, the server judges everything from its own evidence: it decodes the recording itself, clocks the session itself, confirms the move into the oval from its own face boxes on the frames inside the window, reads the flash reflection from the frames of each colour window, and rejects a feed whose frames repeat. A patched client therefore cannot skip checks or forge timings; what it can still do is *inject video*: play prepared footage of the victim performing the plan, with the colours painted on the face and not the wall, through a virtual camera fast enough to follow the plan live (a synthetic camera built exactly that way from a stored genuine frame passed the whole flow in a test on 2026-09-19, which is why the sentence is here). What is left against that is the passive anti-spoof on every key frame, the consistency of the injected footage with itself, and the ArcFace match. The device tokens do not change this: they bound *what* a leaked credential can do, not *whether* the device is honest. Where the device is the adversary, pair Lumiface with platform attestation (Play Integrity, App Attest) and treat the `relaxed` and `emulator` presets (flash score-only) as development settings.
+- Real-time deepfakes injected as a virtual camera: the same point in a different costume.
+- Rigid or articulated masks worn by a live person (see the table above).
+- Twins.
+
+## Deploying safely
+
+- Keep the server private (VPN, allow-list) and terminate TLS in front of it.
+- The project API key stays on your backend. Devices only ever hold a **session token** (issued with the session, good for that one verify of the photo the backend chose); see [API authentication](/docs/api#authentication). A key embedded in an app or web bundle lets anyone create sessions against any photo, read every verification and lower the policy's thresholds — so three things make that hard to do by accident: the device SDKs (`LumifaceClient`) cannot take a key, there is no server-side SDK to bundle by mistake (your backend calls the REST API), and the server answers 401 `API_KEY_FROM_BROWSER` to a key sent from any page but localhost. Keys start with `lf_sk_` so secret scanners catch them in a repo, and the server stores only their SHA-256: a key is shown once, at creation or rotation, and a copy of the database does not reveal it.
+- Read the outcome yourself: after the device reports "done", call `GET /v1/sessions/{id}` with the key. The device's copy of the answer is just bytes it can edit.
+- The `reference_photo` on `POST /v1/sessions` is trusted as *your* record of the person: it is checked for one frontal face and not for spoofing, because it arrives with the project key from your backend, never from a device. Pick it from your own store by the user your backend has authenticated; a device must never be able to choose it.
+- Streams are capped (`MAX_FRAME_BYTES` per frame, `MAX_UPLOAD_BYTES` and `MAX_STREAM_FRAMES` per session, `MAX_IMAGE_PIXELS` per decoded frame) and die with the session's TTL; a reference photo by `MAX_FRAME_BYTES`.
+- `STORE_FRAMES=1` writes every streamed frame of failed attempts to `FRAMES_DIR/<project>/<session>/`; nothing deletes them, so keep it off in production or purge the directory yourself.
+- One project per app and per environment, so `relaxed` on a developer laptop never applies to production.
+- Set `ADMIN_API_KEY` only where project management runs; rotate keys with `POST /v1/projects/{id}/rotate-key`.
+- Leave `DEBUG=0` and `STORE_FRAMES=0` in production; both keep or return more than the verdict.
+- Embeddings are biometric data. The server holds none between sessions (see below); the photos live in *your* store, under your own retention.
+- The InsightFace `buffalo_l` weights are non-commercial research only.
+
+## Retention
+
+Nothing biometric lives on the server beyond a session:
+
+- The **reference photo** given with a session is never written anywhere: its embedding sits on the session row and is
+  deleted in the same statement that marks the session used, before the verify runs; a session that is never opened
+  loses it with the purge. The audit row keeps the scores and `reference: true`, no face.
+- **Sessions** are single use and expire after `session_ttl_seconds`; the row stays `SESSION_PURGE_GRACE_SECONDS`
+  (default one hour) so a late client still sees `SESSION_EXPIRED`.
+- A **purge loop** runs every `RETENTION_INTERVAL_SECONDS` (default 300, `0` disables) and deletes spent sessions.
+- **Verifications** are the audit log and are kept: `ok`, `reason_code`, the scores and the server's `details`.
+- `STORE_FRAMES=1` is the exception, for development: it writes the frames and the reference embedding
+  (`reference.npy`) of a session to `FRAMES_DIR` so the pipeline can be replayed; keep it off in production.

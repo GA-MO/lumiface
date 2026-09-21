@@ -1,0 +1,208 @@
+---
+title: HTTP API
+description: Every endpoint of the Lumiface server with its headers, bodies and answers.
+---
+
+Base path `/v1`. Project endpoints authenticate with `X-API-Key` from a backend; the one device-facing call, the session stream, with the session token (see below); admin endpoints with `X-Admin-Key`. Errors are `{"detail": {"reason_code": "...", ...}}` (or a string for framework errors). CORS is open.
+
+## Authentication
+
+Two credentials, two audiences:
+
+| Credential | Header | Who holds it | Can call |
+|---|---|---|---|
+| Project API key (`lf_sk_…`) | `X-API-Key: <key>` | your backend | everything under `/v1` for the project |
+| Session token | `hello` message on the stream | the device, for one session | `WS /sessions/{id}/stream` of that session only |
+
+Never ship the project key in an app or web bundle. The loop is:
+
+1. Backend: `POST /sessions` with the key, **with the `reference_photo` of the person it wants checked** (from its own records; none for liveness), and forwards the JSON to the device.
+2. Device: opens the stream with the session token, gets the plan, streams its recording while it runs it. Who is matched is fixed; the stream has no field to name anyone.
+3. Device tells the backend it is done. **Do not trust that message.**
+4. Backend: `GET /sessions/{session_id}` with the key and acts on `result.ok` / `verification_id`.
+
+A request without the header answers 401 `API_KEY_MISSING`, an unknown key 401 `API_KEY_INVALID`. The server refuses `X-API-Key` on any request whose `Origin` is a browser page other than localhost (401 `API_KEY_FROM_BROWSER`; policy `allow_browser_api_key` lifts it for a development project), and the SDKs have no place to put a key at all: `LumifaceClient` takes a URL. The key's side of the API is REST from your backend ([Your backend](/docs/backend)); `examples/backend` (Python) and `examples/backend-node` (TypeScript) in the repository are complete ones.
+
+A leaked session token is worth one attempt against the photo the backend chose, and it dies with the session (`ttl_seconds`).
+
+There is no enrolment and no subject store: the server holds no face between sessions. The photo to match comes with each session and its embedding is dropped when the device opens the stream (see [security](/docs/security#retention)).
+
+## Sessions
+
+`POST /sessions` (project key), body:
+
+```json
+{
+  "reference_photo": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBD…",
+  "purpose": "checkin"
+}
+```
+
+Answer, `201`:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "session_token": "kQx7pL2mN8vB4cD6fG1hJ3kL5nM7pQ9r",
+  "mode": "verify",
+  "purpose": "checkin",
+  "expires_at": "2026-09-19T09:01:00Z",
+  "ttl_seconds": 60,
+  "client_config": {
+    "align_hold_ms": 600,
+    "min_face_width_fraction": 0.28,
+    "max_face_width_fraction": 0.48,
+    "center_tolerance": 0.18,
+    "neutral_max_yaw": 15,
+    "neutral_max_pitch": 15,
+    "challenge_timeout_ms": 10000,
+    "face_lost_grace_ms": 1500,
+    "oval_min_fill": 0.85,
+    "oval_hold_ms": 500,
+    "move_start_max_ratio": 0.8,
+    "settle_after_challenge_ms": 400,
+    "settle_after_flash_ms": 800
+  }
+}
+```
+
+`client_config` is the project policy's `client.*` block ([policy reference](/docs/policy-reference#client-fields)); the SDKs apply it, your backend passes it through.
+
+The challenge, the oval and the flash colours are **not** in this answer. They only reach the device once it has opened the
+stream, and the server judges them from what it receives, not from what the device reports.
+
+`mode` is `verify` with a `reference_photo`, `liveness` without one.
+
+**`reference_photo`** is the person to match: your own photo of them (a registration selfie, an ID scan) as base64 JPEG or PNG (a `data:` URL prefix is tolerated, `MAX_FRAME_BYTES` applies, 413 `PAYLOAD_TOO_LARGE`). The server requires one face, large enough (`min_face_size`) and frontal (`reference_max_yaw` / `reference_max_pitch`), and answers 422 with `BAD_IMAGE`, `NO_FACE`, `MULTIPLE_FACES`, `FACE_TOO_SMALL` or `POSE_NOT_FRONTAL` when it cannot use it, so a bad photo fails at creation, not in front of the camera. It is not anti-spoof checked: it arrives with the project key from your backend, never from a device, so a photo of a printed ID is a valid reference where a streamed frame of one is `SPOOF`. The photo itself is never stored: only its embedding is kept on the session row, and it is deleted the moment the stream claims the session (an unused session loses it when the retention loop purges the session). The audit row records `reference: true`.
+
+### The stream
+
+`WS /sessions/{id}/stream`. The full wire protocol — for porting to React Native, native or a kiosk — is on [Stream protocol](/docs/protocol); the essentials here. The device speaks first, the server answers with the plan, then the recording flows up
+in chunks until the device says it is done and the server sends the verdict. The session is spent as soon as the
+hello is accepted.
+
+```
+device                                            server
+──────                                            ──────
+{"type":"hello","token":"kQx7…","client":{…},
+ "format":"webm"}                                ▶  webm | mp4 | h264 | jpeg (default)
+                                                ◀ {"type":"plan","challenges":["face_move"],
+                                                   "oval":{"cx":0.5,"cy":0.45,"width":0.62,"height_ratio":1.35},
+                                                   "flash_colors":["ff0000","00ff00","0000ff"],
+                                                   "flash_hold_ms":450,"client_config":{…}}
+<binary: 8-byte big-endian device ms + chunk>  ▶  …as the recorder cuts them, whatever the phase
+{"type":"event","name":"aligned","ts":…}        ▶
+{"type":"event","name":"challenge_done","index":0,"ts":…} ▶
+{"type":"event","name":"flash","index":0,"ts":…} ▶  …one per colour, as it is shown
+{"type":"event","name":"flash_end","ts":…}      ▶
+{"type":"end"}                                  ▶
+                                                ◀ {"type":"result", …verdict below…}   then close
+                                                ◀ {"type":"error","reason_code":"SESSION_USED"}  on refusal
+```
+
+`format` says what each binary message carries: `webm` (VP8, what MediaRecorder cuts on Chrome, Firefox and Edge,
+one chunk every 250 ms) or `mp4` (H.264, Safari's MediaRecorder), which concatenate into one stream whose frame times
+start at the first chunk's device time; `h264`, one Annex-B access unit per message with its own frame time (the
+phone SDKs, from MediaCodec and VideoToolbox); or `jpeg`, one still per message (any client that can capture
+JPEGs). The server decodes video into frames with both clocks before the pipeline runs (`services/video.py`), so the
+verdict is judged the same way whatever the device sent.
+
+What the server does with it: every frame and event is stamped with the **server's** clock on receipt; the events
+only say where to look. Inside the challenge window it runs its own face detector on the frames it got and
+checks that the face moved from far into the oval (`face_move`: box growth and fit, centred); the colour on the
+face during each flash window is read from those frames; passive anti-spoof runs on the key frames it chose, identity and
+consistency on those and on the middle frame of each flash window. Durations (`min_session_ms`, `min_challenge_ms`, `max_challenge_ms`) are measured server-side. A feed that
+repeats the same bytes is refused (`FRAMES_STATIC`). The device's `ts` values (chunk header and event `ts`) decide only which window a frame falls into — a decoded frame's device time is the chunk's time plus its offset in the video, and a phone uploads a chunk a few hundred ms after the camera took it while its events arrive at once, so placing frames by arrival would put a colour's reflection in the next colour's window — and never a duration; a client that sends no `ts` is placed by arrival.
+
+Limits: `MAX_FRAME_BYTES` per message (4 MB), `MAX_UPLOAD_BYTES` per session (32 MB), `MAX_STREAM_CHUNKS`
+messages (1800), `MAX_STREAM_FRAMES` decoded frames kept (900, a longer video is thinned evenly),
+`MAX_IMAGE_PIXELS` per decoded frame (20 Mpx). Chunks beyond what the link can carry are dropped by the SDKs
+rather than queued.
+
+Answer:
+
+```json
+{
+  "ok": true,
+  "mode": "verify",
+  "reason_code": "OK",
+  "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+  "verification_id": 42,
+  "details": {}
+}
+```
+
+`details` is empty for the device; the backend sees the server's windows, the `face_move` readings, flash scores and key frames in the audit log — every gate's score is there whatever the verdict (`GET /verifications` is the summary, the row's `details` the full record; see [the `details` object](/docs/reason-codes#the-details-object)). Refusals arrive as `{"type":"error","reason_code":…}` and close the socket: `SESSION_NOT_FOUND`, `SESSION_USED`, `SESSION_EXPIRED`, `HELLO_INVALID`, `EVENT_INVALID`, `PAYLOAD_TOO_LARGE` (close code 1009), `SERVER_BUSY` (1013, before the hello: the session is unspent, retry). A frame that does not decode is skipped; a window with no usable frame ends as `NO_FACE`, no frames at all as `FRAME_COUNT`.
+
+`GET /sessions/{id}` (project key) is how the backend learns the outcome; `result` is the verify answer above, or `null` while nothing was uploaded:
+
+```json
+{
+  "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+  "mode": "verify",
+  "reference": true,
+  "purpose": "checkin",
+  "used": true,
+  "expires_at": "2026-09-19T09:01:00Z",
+  "result": {
+    "ok": true,
+    "mode": "verify",
+    "reason_code": "OK",
+    "scores": { "match": 0.71, "spoof": 0.93, "consistency": 0.88 },
+    "verification_id": 42,
+    "details": {}
+  }
+}
+```
+
+Field by field, with a refused example, on [Your backend](/docs/backend#2-read-the-verdict-and-decide).
+
+## Verifications
+
+`GET /verifications?from&to&session_id&purpose&ok&limit`, newest first (`reference` true = verify, false = liveness only):
+
+```json
+[
+  {
+    "id": 42,
+    "session_id": "3f9c1e6a8b2d4f7e9a0c1b2d3e4f5a6b",
+    "reference": true,
+    "purpose": "checkin",
+    "ok": true,
+    "reason_code": "OK",
+    "match_score": 0.71,
+    "spoof_score": 0.93,
+    "consistency_score": 0.88,
+    "created_at": "2026-09-18T09:00:12Z"
+  }
+]
+```
+
+## Policy
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| `GET` | `/policy` | | `{project, preset, overrides, effective}` |
+| `PUT` | `/policy` | `{preset?, overrides?, merge?}` | same; 422 `UNKNOWN_PRESET` / `POLICY_INVALID` |
+| `DELETE` | `/policy` | | reset to `balanced`, no overrides |
+| `GET` | `/policy/presets` | | `[{name, summary, overrides, effective}]` |
+| `GET` | `/policy/schema` | | `[{name, type, default, description}]` |
+
+## Projects (admin)
+
+| Method | Path | Body | Answer |
+|---|---|---|---|
+| `POST` | `/projects` | `{name, preset?}` | 201 `{id, name, preset, api_key, ...}`; the key is shown here once, the server keeps only its SHA-256 |
+| `GET` | `/projects` | | list with counts, no keys |
+| `POST` | `/projects/{id}/rotate-key` | | project with the new `api_key` |
+| `DELETE` | `/projects/{id}` | | 204 |
+
+Without `ADMIN_API_KEY` these answer 403.
+
+## Debug
+
+`POST /debug/score` (multipart `photo`, `DEBUG=1` only): per face `bbox`, `det_score`, `yaw`, `pitch`, `roll`, `spoof_real`, `spoof_per_model`, `cvpr_live`, `embedding`.
+
+## Health
+
+`GET /health` → `{"ok": true, "presets": ["balanced", "strict", "relaxed", "emulator"]}`.

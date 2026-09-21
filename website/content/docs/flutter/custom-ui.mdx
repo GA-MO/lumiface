@@ -1,0 +1,68 @@
+---
+title: Custom UI
+description: Replace one part of the overlay, all of it, or skip the view and drive the headless controller with your own camera source.
+---
+
+## Replace one part
+
+Each builder gets the same `FaceVerifyScope`:
+
+```dart
+FaceVerifyView(
+  client: client,
+  sessionProvider: faceSession,
+  promptBuilder: (context, scope) => Chip(label: Text(scope.message)),
+  progressBuilder: (context, scope) => StepDots(done: scope.state.challengeIndex, total: scope.state.challengeCount),
+  resultBuilder: (context, scope) => scope.state.phase == LivenessPhase.success
+      ? const SizedBox()
+      : TextButton(onPressed: () => Navigator.pop(context), child: Text(scope.strings.retry)),
+  onResult: done,
+)
+```
+
+`FaceVerifyScope` fields: `controller`, `state` (`LivenessState`), `signal` (latest `FaceSignal` or null), `strings`, `theme`, `flow`, `source`, and helpers `message`, `result`, `isDone`, `displayBox` (the face box flipped for a mirrored preview) and `cancel()`.
+
+## Replace the whole overlay
+
+```dart
+FaceVerifyView(
+  client: client,
+  sessionProvider: faceSession,
+  overlayBuilder: (context, scope) => Stack(children: [
+    if (scope.displayBox != null) FaceBoxOutline(box: scope.displayBox!),
+    Align(alignment: Alignment.bottomCenter, child: MyPromptCard(scope)),
+  ]),
+  onResult: done,
+)
+```
+
+The camera preview and the flash colour stay underneath and on top respectively; `FaceGuide`, `FaceGuidePainter` and `FaceDebugBar` are exported for reuse inside your overlay. The example's `custom_ui_page.dart` draws a live box around the face, step dots and a result card this way.
+
+## Headless: the controller alone
+
+`FaceVerifyController` owns no widget. Give it any `FaceSignalSource` (a stream of `FaceSignal`), a `VideoRecorder` (`format`, `startRecording(onChunk)`, `stopRecording()`: it records from the plan to the verdict and every chunk goes to the server) and the `sessionProvider` that asks your backend for the session, observe `state`, and call `start()`:
+
+```dart
+final source = createCameraFaceSource();           // TFLite BlazeFace, Apple Vision or tfjs BlazeFace for the platform
+await source.initialize();
+final c = FaceVerifyController(source: source, recorder: source, client: client, sessionProvider: faceSession);
+c.state.addListener(() {
+  final s = c.state.value;
+  if (s.phase == LivenessPhase.flash) fillScreenWith(s.flashColor!);
+  if (s.isDone) handle(s.result!);
+});
+await source.startStream();
+await c.start();
+```
+
+`LivenessState`: `phase` (idle, starting, aligning, challenge, flash, uploading, success, failed), `hint` (noFace, multipleFaces, tooFar, tooClose, notCentered, lookStraight, holdStill), `challenge`, `challengeIndex`, `challengeCount`, `target` (the server's oval for a `faceMove` challenge, as fractions of the preview — draw it in place of your guide), `flashColor`, `flashIndex`, `result`, plus `progress` (0..1) and `isDone`.
+
+The flash step **must** fill the whole screen with `flashColor` for at least the plan's `flashHoldMs` (the controller keeps each colour up that long and advances `flashIndex`); the server measures the reflection on the cheeks.
+
+It is deterministic under test: timing comes from `FaceSignal.tsMs`, so the package tests drive it with synthetic signals and a fake client (`test/fakes.dart`).
+
+## Your own camera or detector
+
+Implement `CameraFaceSource` (`initialize`, `startStream` / `stopStream`, `dispose`, `signals`, `format` + `startRecording` / `stopRecording` (the `VideoRecorder`; `StreamFormat.jpeg` with one JPEG per chunk is the simplest), `buildPreview`, `setExposureLocked`, `previewAspectRatio`, `isMirrored`, `isInitialized`) and pass it through `sourceFactory`. A `FaceSignal` is `tsMs`, `faceCount`, the largest face's `box` (normalised to the upright frame) and, if your detector has them, `yaw` and `pitch` in degrees (null otherwise; they only drive the "look straight" hint). Any detector that finds a face box will do; the server judges from its own detector. The widget tests do this with a fake camera to run the whole overlay without a device.
+
+To run the flow from a client neither SDK covers, the WebSocket it speaks is the [stream protocol](/docs/protocol).

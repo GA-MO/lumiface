@@ -1,0 +1,51 @@
+# The public demo server (docs-site live demo). Secrets: BOOTSTRAP_API_KEY (fly secrets set).
+# The demo backend (website/demo-backend) and the browsers both reach it at https://lumiface-demo.fly.dev
+# (uvicorn binds IPv4 only, so the IPv6-only private network is not used).
+app = "lumiface-demo"
+primary_region = "sin"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # What the demo copy promises: no frame outlives the verdict.
+  DEBUG = "0"
+  STORE_FRAMES = "0"
+  BOOTSTRAP_PRESET = "balanced"
+  INSIGHTFACE_HOME = "/srv/data/insightface"
+  # Capacity for one shared-cpu-2x machine: two sessions judged at once, eight sockets before SERVER_BUSY.
+  DET_SIZE = "320"
+  INFERENCE_THREADS = "1"
+  MAX_CONCURRENT_ANALYSES = "2"
+  MAX_OPEN_STREAMS = "8"
+  RETENTION_INTERVAL_SECONDS = "300"
+  SESSION_PURGE_GRACE_SECONDS = "3600"
+
+[[mounts]]
+  source = "lumiface_data"
+  destination = "/srv/data"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Billed only while awake: the machine stops after a few idle minutes and the next request starts it
+  # (the port answers in a few seconds, the models load behind it; the demo page says "waking the demo server" meanwhile).
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    soft_limit = 16
+    hard_limit = 32
+
+  [[http_service.checks]]
+    interval = "10s"
+    timeout = "5s"
+    grace_period = "15s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "4gb"

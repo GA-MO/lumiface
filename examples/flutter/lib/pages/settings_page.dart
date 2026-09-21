@@ -1,0 +1,124 @@
+import 'package:lumiface/lumiface.dart';
+import 'package:flutter/material.dart';
+
+import '../main.dart';
+
+class SettingsPage extends StatefulWidget {
+  const SettingsPage({super.key, required this.settings});
+  final AppSettings settings;
+
+  @override
+  State<SettingsPage> createState() => _SettingsPageState();
+}
+
+class _SettingsPageState extends State<SettingsPage> {
+  late final _url = TextEditingController(text: widget.settings.baseUrl);
+  late final _backend = TextEditingController(text: widget.settings.backendUrl);
+  late final _user = TextEditingController(text: widget.settings.userId);
+  ProjectPolicy? _policy;
+  List<PolicyPreset>? _presets;
+  String? _policyError;
+
+  Future<void> _loadPolicy() async {
+    try {
+      final client = widget.settings.backend;
+      final policy = await client.getPolicy();
+      final presets = await client.listPresets();
+      setState(() {
+        _policy = policy;
+        _presets = presets;
+        _policyError = null;
+      });
+    } catch (e) {
+      setState(() => _policyError = e.toString());
+    }
+  }
+
+  Future<void> _applyPreset(String preset) async {
+    try {
+      final policy = await widget.settings.backend.setPreset(preset);
+      setState(() => _policy = policy);
+    } catch (e) {
+      setState(() => _policyError = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.settings;
+    final policy = _policy;
+    return Scaffold(
+      appBar: AppBar(title: const Text('Settings')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          TextField(
+            controller: _url,
+            decoration: const InputDecoration(
+              labelText: 'Lumiface server URL',
+              helperText: 'Where the app uploads frames, with a session token. No key in the app.',
+              helperMaxLines: 2,
+            ),
+          ),
+          TextField(
+            controller: _backend,
+            decoration: const InputDecoration(
+              labelText: 'Your backend URL',
+              helperText: 'examples/backend (bun run dev:backend): holds the key, creates sessions, reads the verdict.',
+              helperMaxLines: 2,
+            ),
+          ),
+          TextField(controller: _user, decoration: const InputDecoration(labelText: 'User to verify (registered on the Users tab)')),
+          SwitchListTile(
+            title: const Text('Thai strings'),
+            value: s.thai,
+            onChanged: (v) => s.save(thai: v),
+          ),
+          SwitchListTile(
+            title: const Text('Debug overlay (face box + signals)'),
+            value: s.debug,
+            onChanged: (v) => s.save(debug: v),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: () async {
+              await s.save(baseUrl: _url.text.trim(), backendUrl: _backend.text.trim(), userId: _user.text.trim());
+              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Saved')));
+            },
+            child: const Text('Save'),
+          ),
+          const Divider(height: 48),
+          Row(
+            children: [
+              Text('Project policy', style: Theme.of(context).textTheme.titleMedium),
+              const Spacer(),
+              TextButton.icon(onPressed: _loadPolicy, icon: const Icon(Icons.refresh), label: const Text('Load')),
+            ],
+          ),
+          if (_policyError != null) Text(_policyError!, style: const TextStyle(color: Colors.red)),
+          if (policy != null && _presets != null) ...[
+            Text('Project "${policy.project}", preset ${policy.preset}'
+                '${policy.overrides.isEmpty ? '' : ', ${policy.overrides.length} override(s)'}'),
+            const SizedBox(height: 8),
+            RadioGroup<String>(
+              groupValue: policy.preset,
+              onChanged: (v) => _applyPreset(v!),
+              child: Column(children: [
+                for (final p in _presets!)
+                  RadioListTile<String>(value: p.name, title: Text(p.name), subtitle: Text(p.summary)),
+              ]),
+            ),
+            const SizedBox(height: 8),
+            Text('Effective: match ≥ ${policy.effective['match_threshold']}, '
+                'oval ${policy.effective['oval_width_fraction']} of the short side, growth ≥ ${policy.effective['move_min_growth']}, '
+                'flash ${policy.effective['flash_enforce'] == true ? 'enforced' : 'shadow'}, '
+                'client oval fill ≥ ${policy.clientConfig.ovalMinFill}'),
+          ],
+          const SizedBox(height: 24),
+          const Text('Tip: on a phone use your Mac\'s LAN IP for the server URL, e.g. http://192.168.1.10:8000. '
+              'On the Android emulator use http://10.0.2.2:8000 and the emulator preset.'),
+        ],
+      ),
+    );
+  }
+}

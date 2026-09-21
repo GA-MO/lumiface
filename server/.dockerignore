@@ -1,0 +1,12 @@
+# The build needs app/, weights/*.onnx, pyproject, uv.lock and the entrypoint; nothing else.
+data/
+.venv/
+tests/
+scripts/
+__pycache__/
+**/__pycache__/
+weights/*.pth
+weights/cvpr2024/*.pth
+weights/cvpr2024/mobilenet*
+.env
+*.db

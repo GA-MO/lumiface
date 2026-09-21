@@ -1,0 +1,22 @@
+PODS:
+  - Flutter (1.0.0)
+  - lumiface (0.3.0):
+    - Flutter
+
+DEPENDENCIES:
+  - Flutter (from `Flutter`)
+  - lumiface (from `.symlinks/plugins/lumiface/ios`)
+
+EXTERNAL SOURCES:
+  Flutter:
+    :path: Flutter
+  lumiface:
+    :path: ".symlinks/plugins/lumiface/ios"
+
+SPEC CHECKSUMS:
+  Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
+  lumiface: 765c783cb7553b90141d69542d1cd99ec2d5f340
+
+PODFILE CHECKSUM: a53f2402cc12cebbfea3de42de2afee379e11523
+
+COCOAPODS: 1.16.2

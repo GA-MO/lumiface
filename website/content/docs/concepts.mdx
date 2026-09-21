@@ -1,0 +1,64 @@
+---
+title: Concepts
+description: Projects, reference photos, sessions, flows, frames and policies, and how the server and the SDKs split the work.
+---
+
+## One verification
+
+Three parties and one session. The app holds a session token and the camera; your backend holds the project
+key, the users and their photos, and makes the decision; Lumiface judges the stream and keeps no face. Nothing
+that names the user ever reaches the device, and the key never leaves your backend.
+
+<FlowSwimlane />
+
+The [backend page](/docs/backend) walks through steps 1–6 and 14–18 with the request and response bodies; the
+SDKs ([Flutter](/docs/flutter), [React](/docs/react)) do 7–13.
+
+## Project
+
+A tenant. It owns an API key (`X-API-Key`, backend only), its verifications and its [policy](/docs/server/policy). Devices authenticate with a short-lived `session_token` the backend obtains with that key, one per session. Projects are created with the admin key (`POST /v1/projects`), or bootstrapped from the environment on first start.
+
+## Reference photo
+
+Who the person must be. Your backend keeps the users and their photos (a registration selfie, an ID scan); when it creates a session it sends that user's photo as `reference_photo`, and the server matches the streamed frames against it. The server reduces the photo to an ArcFace embedding at once, keeps that on the session row only until the device opens the stream, and never stores the photo: there is no enrolment and no face outlives a session (see [sessions](/docs/api#sessions) and [retention](/docs/security#retention)).
+
+## Session and flow
+
+A session is one attempt. It holds the oval, the flash colours, a TTL and the client tunables. Whether it carries a reference photo decides what it proves — the **flow**:
+
+| Flow | reference_photo | Proves |
+|---|---|---|
+| `verify` | given | a live person who matches the photo |
+| `liveness` | omitted | a live person (kiosks, gating a form, pre-checks) |
+
+`purpose` is a free label (`checkin`, `login`, `kiosk`, ...) stored with the verification for filtering; it does not change the checks.
+
+## Stream
+
+The app opens a WebSocket for the session, receives the plan (the `face_move` challenge, its oval, the flash colours) and then records the camera and streams the recording up in chunks (VP8 or H.264 video; a plain client may send JPEG frames instead) while it runs the plan. The server decodes the video into frames, at the camera's rate. Events (`aligned`, `challenge_done`, `flash`, `flash_end`) mark the boundaries. The server stamps everything with its own clock, runs its own face detector inside the challenge window to confirm the face grew into the oval, reads the flash reflection from the frames of each colour window, and only then scores anti-spoof on the key frames it picked (the aligned face, the face that filled the oval, the face at the end) and identity and consistency on those plus the middle frame of every flash window, so the face that reflected the colours is the same person too. The device's detector exists to guide the person; it decides nothing. The wire format is the [stream protocol](/docs/protocol).
+
+## The challenge
+
+There is one, `face_move`:
+
+| The person | The device guides with | The server checks |
+|---|---|---|
+| holds still at a normal selfie distance (the alignment says "move back" while the face is wider than the oval's start, `move_start_max_ratio` of the oval, or than `max_face_width_fraction`), then moves closer until the face fills the oval the server drew (`oval_width_fraction` of the frame's shorter side), then holds | a face box from BlazeFace (web, Android) or Apple Vision (iOS): the walk starts from the aligned position (narrower than `move_start_max_ratio` of the oval, which alignment already guarantees) and ends with "hold still" once the box is `oval_min_fill` wide and centred for `oval_hold_ms` | the face box grew (`move_min_growth`) into the oval (`move_min_fill`), centred, inside a window of `min_challenge_ms`..`max_challenge_ms` on its own clock; the closest frame is the key frame every later gate scores |
+
+No gesture is asked for: the device only sees a box, never eyes, mouth or landmarks. The screen flash and the passive gates carry the anti-spoof; a rigid mask is left to them ([security](/docs/security)).
+
+## Policy
+
+Every threshold and every client tunable, resolved per request as environment defaults → preset → overrides. Server fields drive the pipeline; `client` fields are sent to the app in `client_config` and applied by the SDKs. See the [policy reference](/docs/policy-reference).
+
+## Who checks what
+
+| Check | Where | Beats |
+|---|---|---|
+| Face moved from far into the oval | device (guidance) and **server** (face box growth and fit on the streamed frames) | a still image, a replay that cannot follow the oval in time, a patched client that skips its checks |
+| Timing order and durations | server, on its own clock (device stamps only place frames into windows) | replayed recordings responding at random times, forged timestamps |
+| A frozen or repeated feed | server | a still image or a frozen feed recorded as video |
+| MiniFASNet ensemble | server | prints, screens with visible bezels |
+| CVPR-2024 ResNet50 on a face crop | server | bezel-free screen replay |
+| Screen-flash reflection and locality | server | any replay that cannot know the colours, phone screens that reflect the whole sheet |
+| ArcFace match and cross-frame consistency | server | the wrong person, swapping people mid-session |

@@ -1,0 +1,23 @@
+{
+  "name": "lumiface-monorepo",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/lumiface-react",
+    "examples/react",
+    "examples/backend-node",
+    "website"
+  ],
+  "scripts": {
+    "dev:site": "bun run --cwd website dev",
+    "build:site": "bun run --cwd website build",
+    "build:pages": "bun run --cwd website build:static",
+    "dev:backend": "cd examples/backend && uv run uvicorn main:app --host 0.0.0.0 --port 8010",
+    "dev:backend:node": "bun run --cwd examples/backend-node dev",
+    "dev:demo-backend": "cd website/demo-backend && uv run uvicorn main:app --host 0.0.0.0 --port 8020",
+    "dev:react": "bun run --cwd examples/react dev",
+    "test:react": "bun run --cwd packages/lumiface-react test",
+    "check:docs": "bun website/scripts/check-docs.ts",
+    "typecheck": "bun run --cwd packages/lumiface-react typecheck && bun run --cwd examples/react typecheck && bun run --cwd website typecheck && bun run --cwd examples/backend-node typecheck"
+  }
+}

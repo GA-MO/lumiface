@@ -1,0 +1,14 @@
+{
+  "name": "lumiface-example-backend-node",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run --watch main.ts",
+    "start": "bun run main.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.2"
+  }
+}
